@@ -1,20 +1,15 @@
-import java.awt.Dimension;
 import java.awt.Rectangle;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
-import java.util.Enumeration;
 import java.util.List;
 
 import javax.swing.DropMode;
-import javax.swing.JScrollPane;
 import javax.swing.JTree;
 import javax.swing.JViewport;
 import javax.swing.SwingUtilities;
-import javax.swing.event.TreeModelEvent;
-import javax.swing.event.TreeModelListener;
-import javax.swing.event.TreeSelectionEvent;
-import javax.swing.event.TreeSelectionListener;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreePath;
@@ -84,6 +79,25 @@ public class RequestTree extends JTree {
             CustomTreeCellRenderer renderer = new CustomTreeCellRenderer();
             this.setCellRenderer(renderer);
             this.setCellEditor(new CustomTreeCellEditor(this, renderer));
+            this.setRowHeight(-1);
+            this.addComponentListener(new ComponentAdapter() {
+                @Override
+                public void componentResized(ComponentEvent e) {
+                    RequestTree.this.revalidate();
+                    RequestTree.this.repaint();
+                }
+            });
+    }
+
+    @Override
+    public void setBounds(int x, int y, int width, int height) {
+        int prevW = getWidth();
+        super.setBounds(x, y, width, height);
+        if (prevW != width && getUI() instanceof CustomTreeUI ui) {
+            ui.invalidateNodeLayoutCache();
+            revalidate();
+            repaint();
+        }
     }
 
     public DefaultTreeModel getTreeModel() {

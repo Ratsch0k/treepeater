@@ -1,4 +1,5 @@
 import java.awt.BorderLayout;
+import java.awt.Dimension;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.util.HashMap;
@@ -17,6 +18,8 @@ import javax.swing.event.TreeModelEvent;
 import javax.swing.event.TreeModelListener;
 
 public class TreepeaterUI extends JSplitPane {
+    private static final Dimension MIN_LEFT_PANEL_SIZE = new Dimension(240, 0);
+
     JTabbedPane requestResponseTabbedPane;
 
     public TreepeaterUI(TreepeaterModel model) {
@@ -40,10 +43,12 @@ public class TreepeaterUI extends JSplitPane {
                 if (model.getRequestCount() > 0) {
                     JPanel leftPanel = new JPanel();
                     leftPanel.setLayout(new BorderLayout());
+                    leftPanel.setMinimumSize(MIN_LEFT_PANEL_SIZE);
 
                     JScrollPane scrollPane = new JScrollPane(model.getTree());
                     scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-                    
+                    scrollPane.setMinimumSize(MIN_LEFT_PANEL_SIZE);
+
                     leftPanel.add(scrollPane, BorderLayout.CENTER);
 
                     JButton syncButton = new JButton("Sync");

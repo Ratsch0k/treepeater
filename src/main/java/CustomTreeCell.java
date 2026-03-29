@@ -2,19 +2,13 @@ import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Dimension;
-import java.awt.FlowLayout;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.awt.event.MouseEvent;
-import java.time.Instant;
-import java.time.LocalTime;
-
 import javax.swing.BorderFactory;
 import javax.swing.Box;
-import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
@@ -25,19 +19,21 @@ import javax.swing.event.DocumentListener;
 
 
 public class CustomTreeCell extends JPanel implements DocumentListener {
+    static final int MIN_TREE_ROW_INNER_WIDTH = 160;
+
     private JComboBox box;
     private JLabel label;
     private JTextField field;
     private CardLayout card;
     private JPanel textPanel;
     private RequestTreeNode node;
-    private JPanel cellContent;
+    private RoundedPanel cellContent;
 
     public CustomTreeCell() {
-        super();
+        super(new BorderLayout());
 
         JButton button = new JButton("Click");
-        Status[] statuStrings = {Status.TODO, Status.WORKING_ON_IT, Status.DONE, Status.COLLECTION};
+        Status[] statuStrings = {Status.TODO, Status.DONE, Status.FINDING, Status.COLLECTION};
         JComboBox<Status> box = new JComboBox<>(statuStrings);
         box.setRenderer(new StatusComboBoxRenderer());
         box.setEnabled(true);
@@ -49,7 +45,7 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
                     break;
                 }
                 case 1: {
-                    this.node.setStatus(Status.WORKING_ON_IT);
+                    this.node.setStatus(Status.FINDING);
                     break;
                 }
                 case 2: {
@@ -71,11 +67,14 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
             
         });
 
-        this.cellContent = new JPanel(new GridBagLayout());
+        this.cellContent = new RoundedPanel();
+        this.cellContent.setLayout(new GridBagLayout());
+        this.cellContent.setOpaque(true);
+        this.cellContent.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
 
         GridBagConstraints gc = new GridBagConstraints();
         gc.gridy = 0;
-        gc.insets = new Insets(2, 2, 2, 2);
+        gc.insets = new Insets(2, 3, 2, 3);
 
         button.setEnabled(true);
         this.box = box;
@@ -104,16 +103,17 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
 
         this.textPanel.add(this.label, "label");
         this.textPanel.add(this.field, "field");
-        this.textPanel.setPreferredSize(new Dimension(500, 20));
+        int textRowHeight = Math.max(this.field.getPreferredSize().height, this.label.getPreferredSize().height);
+        this.textPanel.setPreferredSize(new Dimension(0, textRowHeight));
+        this.textPanel.setMinimumSize(new Dimension(MIN_TREE_ROW_INNER_WIDTH, textRowHeight));
 
         gc.gridx = 2;
         gc.weightx = 1;
         gc.fill =  GridBagConstraints.HORIZONTAL;
         this.cellContent.add(this.textPanel, gc);
 
-        this.setBorder(BorderFactory.createEmptyBorder(1, 0, 1, 0));
-        this.cellContent.setOpaque(true);
-        this.add(this.cellContent);
+        this.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 8));
+        this.add(this.cellContent, BorderLayout.CENTER);
     }
 
     public int getButtonWidth() {
@@ -137,10 +137,14 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
         this.label.setText(this.node.getName());
         this.field.setText(this.node.getName());
         this.box.setSelectedItem(this.node.getStatus());
-        this.cellContent.setBackground(this.node.getStatus().getColor());
-        this.label.setBackground(this.node.getStatus().getColor());
-        this.field.setBackground(this.node.getStatus().getColor());
-        this.box.setBackground(this.node.getStatus().getColor());
+        Color fill = this.node.getStatus().getBackgroundColor();
+        Color borderColor = this.node.getStatus().getBorderColor();
+        this.cellContent.setBorderColor(borderColor);
+        this.cellContent.setBackground(fill);
+        this.label.setBackground(fill);
+        this.field.setBackground(fill);
+        this.box.setBackground(fill);
+        this.cellContent.repaint();
     }
 
     @Override

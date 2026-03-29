@@ -1,8 +1,10 @@
+import javax.swing.BorderFactory;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import java.awt.FlowLayout;
+import java.awt.Insets;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.util.HashSet;
@@ -32,6 +34,8 @@ public class RequestResponseTab extends JPanel {
         closeButton.setContentAreaFilled(false);
         closeButton.setFocusPainted(false);
         closeButton.setOpaque(false);
+        closeButton.setMargin(new Insets(0, 4, 0, 0));
+        closeButton.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
         this.add(closeButton);
 
         node.addListener(new RequestTreeNodeListener() {

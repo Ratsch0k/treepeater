@@ -4,6 +4,8 @@ import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.ui.contextmenu.ContextMenuEvent;
 import burp.api.montoya.ui.contextmenu.ContextMenuItemsProvider;
 import burp.api.montoya.ui.contextmenu.MessageEditorHttpRequestResponse;
+import burp.api.montoya.ui.hotkey.HotKey;
+import burp.api.montoya.ui.hotkey.HotKeyHandler;
 
 import javax.swing.*;
 import javax.swing.event.TreeModelEvent;
@@ -40,25 +42,32 @@ public class Treepeater implements BurpExtension {
             @Override
             public List<Component> provideMenuItems(ContextMenuEvent event) {
                 JMenuItem item = new JMenuItem("Send to Treepeater");
-                
-                item.addActionListener(l -> {
-                    montoyaApi.logging().logToOutput("Sent to Treepeater");
 
-                    Optional<MessageEditorHttpRequestResponse> requestAndResponse = event.messageEditorRequestResponse();
-
-                    if (requestAndResponse.isPresent()) {
-                        model.insertNode(requestAndResponse.get().requestResponse());
-                    }
-
-                    for (HttpRequestResponse r : event.selectedRequestResponses()) {
-                        model.insertNode(r);
-                    }
-                });
-                
+                item.addActionListener(l -> sendSelectionToTreepeater(montoyaApi, model,
+                        event.messageEditorRequestResponse(),
+                        event.selectedRequestResponses()));
 
                 return List.of(item);
             }
         });
+
+        HotKey sendHotKey = HotKey.hotKey("Send to Treepeater", "Ctrl+Alt+Shift+T");
+        HotKeyHandler sendHotKeyHandler = event -> sendSelectionToTreepeater(montoyaApi, model,
+                event.messageEditorRequestResponse(),
+                event.selectedRequestResponses());
+        montoyaApi.userInterface().registerHotKeyHandler(sendHotKey, sendHotKeyHandler);
+    }
+
+    private static void sendSelectionToTreepeater(
+            MontoyaApi api,
+            TreepeaterModel model,
+            Optional<MessageEditorHttpRequestResponse> messageEditorRequestResponse,
+            List<HttpRequestResponse> selectedRequestResponses) {
+        api.logging().logToOutput("Sent to Treepeater");
+        messageEditorRequestResponse.ifPresent(e -> model.insertNode(e.requestResponse()));
+        for (HttpRequestResponse r : selectedRequestResponses) {
+            model.insertNode(r);
+        }
     }
 
 

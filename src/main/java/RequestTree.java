@@ -72,7 +72,7 @@ public class RequestTree extends JTree {
                 }
             });
             this.setUI(new CustomTreeUI());
-            this.root = new RequestTreeNode("Treepeater", null, null);
+            this.root = new RequestTreeNode(0, "Treepeater", null, null);
             this.model = new DefaultTreeModel(this.root);
             //this.setMinimumSize(new Dimension(300, 0));
             this.expandRow(0);

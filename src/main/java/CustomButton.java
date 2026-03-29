@@ -1,4 +1,3 @@
-import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FontMetrics;
@@ -7,36 +6,93 @@ import java.awt.Graphics2D;
 import java.awt.Insets;
 import java.awt.RenderingHints;
 
+import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.UIManager;
-import javax.swing.border.EmptyBorder;
+import javax.swing.border.Border;
 
-/**
- * Flat button with reliable custom background and hover colors.
- * Designed to avoid Look & Feel rollover painting overriding custom colors.
- */
+
 public class CustomButton extends JButton {
-    private static final int ARC = 8;
+    private Color defaultForeground;
+    private Color defaultBackgroundColor;
+    private Color defaultHoverBackgroundColor;
 
+    private int arc = 6;
     private String text;
-    private final Color baseTextColor;
-    private final Color baseBackgroundColor;
-    private final Color hoverBackgroundColor;
+    private int verticalPadding = 6;
 
-    public CustomButton(String text, Color textColor, Color backgroundColor, Color hoverColor) {
+    public CustomButton(String text) {
         super(text);
         this.text = text;
         this.setText(text);
 
-        this.baseTextColor = textColor;
-        this.baseBackgroundColor = backgroundColor;
-        this.hoverBackgroundColor = hoverColor;
+        // Set default colors
+        this.defaultForeground = UIManager.getColor("Button.foreground");
+        this.defaultBackgroundColor = UIManager.getColor("Button.background");
+        this.defaultHoverBackgroundColor = UIManager.getColor("Button.hoverBackground");
 
-        setForeground(this.baseTextColor);
+        setForeground(defaultForeground);
         setRolloverEnabled(true);
-        setMargin(new Insets(4, 12, 4, 12));
-        setBorder(new EmptyBorder(4, 12, 4, 12));
-        setPreferredSize(new Dimension(90, 28));
+        setPreferredSize(new Dimension(90, 32));
+        setBorder(BorderFactory.createEmptyBorder(2, 0, 2, 0));
+    }
+
+    @Override
+    public void setForeground(Color color) {
+        super.setForeground(color);
+        if (color != null) {
+            defaultForeground = color;
+        }
+    }
+
+    @Override
+    public void setBackground(Color color) {
+        super.setBackground(color);
+        if (color != null) {
+            defaultBackgroundColor = color;
+        }
+    }
+
+    public void setArc(int arc) {
+        this.arc = arc;
+    }
+
+    public int getArc() {
+        return this.arc;
+    }
+
+    public void setHoverBackground(Color color) {
+        if (color != null) {
+            defaultHoverBackgroundColor = color;
+        }
+    }
+
+    @Override
+    public void setText(String text) {
+        this.text = text;
+        super.setText(text);
+    }
+
+    public void setVerticalPadding(int padding) {
+        this.verticalPadding = padding;
+        updatePreferredSize();
+        revalidate();
+        repaint();
+    }
+
+    @Override
+    public void addNotify() {
+        super.addNotify();
+        updatePreferredSize();
+    }
+
+    private void updatePreferredSize() {
+        FontMetrics fm = getFontMetrics(getFont());
+        if (fm == null) return;
+        Insets insets = getInsets();
+        int height = fm.getHeight() + 2 * verticalPadding + insets.top + insets.bottom;
+        int width = Math.max(90, fm.stringWidth(text != null ? text : "") + insets.left + insets.right);
+        setPreferredSize(new Dimension(width, height));
     }
 
     @Override
@@ -46,33 +102,32 @@ public class CustomButton extends JButton {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
             FontMetrics fm = g2.getFontMetrics();
-
-            Color fill = colorForState();
-            Color border = fill.darker();
-
+            Insets insets = getInsets();
             int w = getWidth();
             int h = getHeight();
 
-            int buttonWidth = getWidth();
-            int buttonHeight = getHeight() + fm.getHeight();
+            int innerX = insets.left;
+            int innerY = insets.top;
+            int innerW = Math.max(0, w - insets.left - insets.right);
+            int innerH = Math.max(0, h - insets.top - insets.bottom);
 
-            g2.setColor(fill);
-            g2.fillRoundRect(0, 0, buttonWidth - 1, buttonHeight - 1, ARC, ARC);
-
-            g2.setColor(border);
-            g2.setStroke(new BasicStroke(1f));
-            g2.drawRoundRect(0, 0, buttonWidth - 1, buttonHeight - 1, ARC, ARC);
+            Color fill = this.getColorForState();
+            if (fill != null) {
+                g2.setColor(fill);
+                g2.fillRoundRect(0, 0, w, h, this.getArc(), this.getArc());
+            }
 
             if (this.text != null && !this.text.isEmpty()) {
-                g2.setFont(getFont());
-                g2.setColor(getForeground());
-                int textX = (w - fm.stringWidth(text)) / 2;
-                int textY = (h - fm.getHeight()) / 2 + fm.getAscent();
-                if (getModel().isPressed()) {
-                    textX += 1;
-                    textY += 1;
-                }
-                g2.drawString(text, textX, textY);
+                g2.setFont(this.getFont());
+                g2.setColor(this.getForegroundForState());
+                int textX = innerX + (innerW - fm.stringWidth(this.text)) / 2;
+                int textY = innerY + (innerH - fm.getHeight()) / 2 + fm.getAscent();
+                g2.drawString(this.text, textX, textY);
+            }
+
+            Border border = this.getBorder();
+            if (border != null) {
+                border.paintBorder(this, g2, 0, 0, w, h);
             }
 
         } finally {
@@ -80,46 +135,23 @@ public class CustomButton extends JButton {
         }
     }
 
-    private Color colorForState() {
+    private Color getColorForState() {
         if (!isEnabled()) {
-            return blend(baseBackgroundColor, uiDisabledBackground(), 0.45f);
+            return defaultBackgroundColor.darker();
         }
         if (getModel().isPressed() || getModel().isArmed()) {
-            return hoverBackgroundColor.darker();
+            return defaultHoverBackgroundColor.darker();
         }
         if (getModel().isRollover()) {
-            return hoverBackgroundColor;
+            return defaultHoverBackgroundColor;
         }
-        return baseBackgroundColor;
+        return defaultBackgroundColor;
     }
 
-    @Override
-    public void setEnabled(boolean enabled) {
-        super.setEnabled(enabled);
-        if (enabled) {
-            setForeground(baseTextColor);
-        } else {
-            Color disabledText = UIManager.getColor("Label.disabledForeground");
-            setForeground(disabledText != null ? disabledText : blend(baseTextColor, Color.GRAY, 0.45f));
+    private Color getForegroundForState() {
+        if (!isEnabled()) {
+            return this.defaultForeground.darker();
         }
-        repaint();
-    }
-
-    private static Color uiDisabledBackground() {
-        Color c = UIManager.getColor("Panel.background");
-        if (c != null) {
-            return c;
-        }
-        c = UIManager.getColor("control");
-        return c != null ? c : Color.GRAY;
-    }
-
-    private static Color blend(Color a, Color b, float amountB) {
-        float amount = Math.max(0f, Math.min(1f, amountB));
-        float amountA = 1f - amount;
-        int r = Math.round((a.getRed() * amountA) + (b.getRed() * amount));
-        int g = Math.round((a.getGreen() * amountA) + (b.getGreen() * amount));
-        int bl = Math.round((a.getBlue() * amountA) + (b.getBlue() * amount));
-        return new Color(r, g, bl, 255);
+        return this.defaultForeground;
     }
 }

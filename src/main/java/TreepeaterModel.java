@@ -57,7 +57,7 @@ public class TreepeaterModel implements RequestTreeNodeListener {
     public void insertNode(HttpRequestResponse requestResponse) {
         this.requestCount += 1;
 
-        RequestTreeNode node = new RequestTreeNode(String.valueOf(this.requestCount), requestResponse.request(), requestResponse.response());
+        RequestTreeNode node = new RequestTreeNode(this.requestCount, String.valueOf(this.requestCount), requestResponse.request(), requestResponse.response());
 
         node.addListener(this);
 

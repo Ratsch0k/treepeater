@@ -1,4 +1,5 @@
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -10,38 +11,47 @@ import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 
 public class RequestTreeNode extends DefaultMutableTreeNode {
+    private final int id;
     private Status status;
     private String name;
     private HttpRequest request;
     private HttpResponse response;
     private HashSet<RequestTreeNodeListener> listener;
+    private final RequestHistory history;
 
-    public RequestTreeNode(String name, HttpRequest request, HttpResponse response) {
+    public RequestTreeNode(int id, String name, HttpRequest request, HttpResponse response) {
         super(name);
 
+        this.id = id;
         this.name = name;
         this.status = Status.TODO;
         this.request = request;
         this.response = response;
         this.listener = new HashSet<>();
+        this.history = new RequestHistory();
     }
 
-    public RequestTreeNode(Status status, String name, HttpRequest request, HttpResponse response, HashSet<RequestTreeNodeListener> l) {
+    public RequestTreeNode(int id, Status status, String name, HttpRequest request, HttpResponse response, HashSet<RequestTreeNodeListener> l) {
+        super(name);
+        this.id = id;
         this.status = status;
         this.name = name;
         this.request = request;
         this.response = response;
         this.listener = l;
+        this.history = new RequestHistory();
     }
 
     public RequestTreeNode(RequestTreeNode copy) {
         super(copy.getName());
 
+        this.id = copy.id;
         this.name = copy.getName();
         this.status = copy.getStatus();
         this.request = copy.request;
         this.response = copy.response;
         this.listener = copy.listener;
+        this.history = copy.history;
     }
 
     public Status getStatus() {
@@ -92,4 +102,13 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
     public HttpResponse getResponse() {
         return this.response;
     }
+
+    public int getId() {
+        return this.id;
+    }
+
+    public RequestHistory getHistory() {
+        return this.history;
+    }
+
 }

@@ -1,14 +1,10 @@
 import java.awt.BorderLayout;
-import java.awt.Dimension;
-import java.awt.FlowLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.io.Serializable;
 import java.util.HashMap;
 import java.util.List;
 
 import javax.swing.AbstractAction;
-import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -16,14 +12,9 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
-import javax.swing.JTextArea;
-import javax.swing.JTree;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.event.TreeModelEvent;
 import javax.swing.event.TreeModelListener;
-
-import burp.api.montoya.ui.editor.EditorOptions;
-import burp.api.montoya.ui.editor.HttpRequestEditor;
 
 public class TreepeaterUI extends JSplitPane {
     JTabbedPane requestResponseTabbedPane;
@@ -88,7 +79,7 @@ public class TreepeaterUI extends JSplitPane {
             
         });
 
-        HashMap<RequestTreeNode, Integer> tabMap = new HashMap<>();
+        HashMap<Integer, Integer> tabMap = new HashMap<>();
 
         model.addListener(new TreepeaterModelListener() {
 
@@ -96,9 +87,9 @@ public class TreepeaterUI extends JSplitPane {
             public void onOpen(RequestTreeNode node) {
                 Treepeater.api.logging().logToOutput("Opened request " + System.identityHashCode(node));
 
-                if (tabMap.containsKey(node)) {
+                if (tabMap.containsKey(node.getId())) {
                     Treepeater.api.logging().logToOutput("Changing active tab");
-                    TreepeaterUI.this.requestResponseTabbedPane.setSelectedIndex(tabMap.get(node));
+                    TreepeaterUI.this.requestResponseTabbedPane.setSelectedIndex(tabMap.get(node.getId()));
                     return;
                 }
 
@@ -113,13 +104,13 @@ public class TreepeaterUI extends JSplitPane {
                     @Override
                     public void actionPerformed(ActionEvent e) {
                         TreepeaterUI.this.requestResponseTabbedPane.remove(index);
-                        tabMap.remove(node);
+                        tabMap.remove(node.getId());
                     }
                     
                 });
 
                 TreepeaterUI.this.requestResponseTabbedPane.setTabComponentAt(index, tab);
-                tabMap.put(node, index);
+                tabMap.put(node.getId(), index);
             }
             
         });

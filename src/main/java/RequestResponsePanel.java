@@ -3,43 +3,24 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Font;
-import java.awt.FontMetrics;
-import java.awt.Graphics;
-import java.awt.Graphics2D;
-import java.awt.GridBagConstraints;
-import java.awt.GridBagLayout;
-import java.awt.Insets;
-import java.awt.Rectangle;
-import java.awt.RenderingHints;
 import java.awt.event.ActionEvent;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
+import java.awt.event.KeyEvent;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 
 import javax.swing.AbstractAction;
-import javax.swing.AbstractButton;
+import javax.swing.KeyStroke;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
-import javax.swing.ButtonModel;
 import javax.swing.JButton;
-import javax.swing.JCheckBox;
 import javax.swing.JComponent;
-import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
-import javax.swing.JSpinner;
 import javax.swing.JSplitPane;
-import javax.swing.JTextField;
-import javax.swing.SpinnerNumberModel;
-import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.UIManager;
 import javax.swing.border.Border;
@@ -61,14 +42,11 @@ public class RequestResponsePanel extends JPanel {
     private HttpRequestEditor requestEditor;
     private HttpResponseEditor responseEditor;
 
-    private JButton sendButton;
+    private CustomButton sendButton;
     private JButton cancelButton;
     private JPanel topBar;
 
     private JSplitPane splitPane;
-
-    private final List<HistoryEntry> history;
-    private int currentHistoryIndex;
 
     private JButton historyBackButton;
     private JButton historyBackDropButton;
@@ -86,13 +64,10 @@ public class RequestResponsePanel extends JPanel {
     private boolean sniEnabled;
 
     private SwingWorker<HttpResponse, Void> activeWorker;
-    private volatile boolean suppressHistoryApply;
 
     public RequestResponsePanel(RequestTreeNode node) {
         super(new BorderLayout());
         this.node = node;
-        this.history = new ArrayList<>();
-        this.currentHistoryIndex = -1;
 
         this.topBar = new JPanel();
         this.topBar.setLayout(new BoxLayout(this.topBar, BoxLayout.X_AXIS));
@@ -112,22 +87,34 @@ public class RequestResponsePanel extends JPanel {
         this.historyBackSplitButton = buildHistorySplitButton(this.historyBackButton, this.historyBackDropButton);
         this.historyForwardSplitButton = buildHistorySplitButton(this.historyForwardButton, this.historyForwardDropButton);
 
-        this.historyBackButton.addActionListener(e -> navigateHistory(-1));
-        this.historyForwardButton.addActionListener(e -> navigateHistory(1));
+        this.historyBackButton.addActionListener(e -> navigateBack());
+        this.historyForwardButton.addActionListener(e -> navigateForward());
         this.historyBackDropButton.addActionListener(e -> showHistoryMenu(-1, this.historyBackDropButton));
         this.historyForwardDropButton.addActionListener(e -> showHistoryMenu(1, this.historyForwardDropButton));
 
-        this.sendButton = new CustomButton("Send", Color.WHITE, Color.ORANGE, Color.BLACK);
+        this.sendButton = new CustomButton("Send");
+        this.sendButton.setBackground(UIManager.getColor("Button.primary.background"));
+        this.sendButton.setForeground(UIManager.getColor("Button.primary.foreground"));
+        this.sendButton.setHoverBackground(UIManager.getColor("Button.primary.hoverBackground"));
+
         this.cancelButton = new JButton();
 
         initTargetStateFromRequest(this.node.getRequest());
         refreshTargetLabel();
 
-        // Put first request and response into the history
-        this.history.add(new HistoryEntry(0, LocalDateTime.now(), node.getRequest().httpService().host(), node.getRequest(), node.getResponse()));
+        // TODO: Move this to the requesttreenode initializeer
+        RequestHistory nodeHistory = this.node.getHistory();
+        if (nodeHistory.isEmpty()) {
+            nodeHistory.addEntry(node.getRequest().httpService().host(), node.getRequest(), node.getResponse());
+        } else {
+            int idx = nodeHistory.getCurrentIndex();
+            if (idx < 0 || idx >= nodeHistory.size()) {
+                nodeHistory.setCurrentIndex(nodeHistory.size() - 1);
+            }
+        }
         refreshHistoryNavState();
 
-        this.sendButton.setAction(new AbstractAction() {
+        this.sendButton.setAction(new AbstractAction("Send") {
             @Override
             public void actionPerformed(ActionEvent e) {
                 RequestResponsePanel.this.sendButton.setEnabled(false);
@@ -229,6 +216,18 @@ public class RequestResponsePanel extends JPanel {
         this.splitPane.setResizeWeight(0.5);
 
         this.add(splitPane, BorderLayout.CENTER);
+
+        // Ctrl+Space sends the request (same as Burp Repeater)
+        KeyStroke ctrlSpace = KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, java.awt.event.InputEvent.CTRL_DOWN_MASK);
+        this.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(ctrlSpace, "sendRequest");
+        this.getActionMap().put("sendRequest", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (RequestResponsePanel.this.sendButton.isEnabled()) {
+                    RequestResponsePanel.this.sendButton.doClick();
+                }
+            }
+        });
     }
 
 
@@ -262,10 +261,8 @@ public class RequestResponsePanel extends JPanel {
     }
 
     private void addToHistory(HttpRequest request, HttpResponse response, LocalDateTime time, String targetLabel) {
-        int index = this.history.size() + 1;
-        HistoryEntry entry = new HistoryEntry(index, time, targetLabel, request, response);
-        this.history.add(entry);
-        this.currentHistoryIndex = this.history.size() - 1;
+        RequestHistory h = this.node.getHistory();
+        h.addEntry(targetLabel, request, response);
         refreshHistoryNavState();
     }
 
@@ -335,9 +332,11 @@ public class RequestResponsePanel extends JPanel {
     }
 
     private void refreshHistoryNavState() {
-        boolean hasHistory = !this.history.isEmpty();
-        boolean canBack = hasHistory && this.currentHistoryIndex > 0;
-        boolean canForward = hasHistory && this.currentHistoryIndex >= 0 && this.currentHistoryIndex < (this.history.size() - 1);
+        RequestHistory h = this.node.getHistory();
+        boolean hasHistory = !h.isEmpty();
+        int cur = h.getCurrentIndex();
+        boolean canBack = hasHistory && cur > 0;
+        boolean canForward = hasHistory && cur >= 0 && cur < (h.size() - 1);
 
         this.historyBackButton.setEnabled(canBack);
         this.historyBackDropButton.setEnabled(canBack);
@@ -345,38 +344,50 @@ public class RequestResponsePanel extends JPanel {
         this.historyForwardDropButton.setEnabled(canForward);
     }
 
-    private void navigateHistory(int delta) {
-        if (this.history.isEmpty() || this.currentHistoryIndex < 0) {
+    private void navigateBack() {
+        RequestHistory h = this.node.getHistory();
+        if (h.getCurrentIndex() <= 0) {
             return;
         }
-        int next = this.currentHistoryIndex + delta;
-        if (next < 0 || next >= this.history.size()) {
+
+        h.navigateBack();
+        applyHistoryIndex();
+    }
+
+    private void navigateForward() {
+        RequestHistory h = this.node.getHistory();
+
+        if (h.getCurrentIndex() >= h.size() - 1) {
             return;
         }
-        applyHistoryIndex(next);
+
+        h.navigateForward();
+        applyHistoryIndex();
     }
 
     private void showHistoryMenu(int direction, JButton anchor) {
-        if (this.history.isEmpty() || this.currentHistoryIndex < 0) {
+        RequestHistory h = this.node.getHistory();
+        if (h.isEmpty() || h.getCurrentIndex() < 0) {
             return;
         }
 
         JPopupMenu menu = new JPopupMenu();
+        int current = h.getCurrentIndex();
 
         if (direction < 0) {
-            for (int i = this.currentHistoryIndex - 1; i >= 0; i--) {
-                HistoryEntry entry = this.history.get(i);
+            for (int i = current - 1; i >= 0; i--) {
+                HistoryEntry entry = h.getEntry(i);
                 JMenuItem item = new JMenuItem(entry.toString());
                 final int idx = i;
-                item.addActionListener(e -> applyHistoryIndex(idx));
+                item.addActionListener(e -> setHistoryIndex(idx));
                 menu.add(item);
             }
         } else {
-            for (int i = this.currentHistoryIndex + 1; i < this.history.size(); i++) {
-                HistoryEntry entry = this.history.get(i);
+            for (int i = current + 1; i < h.size(); i++) {
+                HistoryEntry entry = h.getEntry(i);
                 JMenuItem item = new JMenuItem(entry.toString());
                 final int idx = i;
-                item.addActionListener(e -> applyHistoryIndex(idx));
+                item.addActionListener(e -> setHistoryIndex(idx));
                 menu.add(item);
             }
         }
@@ -388,30 +399,26 @@ public class RequestResponsePanel extends JPanel {
         menu.show(anchor, 0, anchor.getHeight());
     }
 
-    private void applyHistoryIndex(int index) {
-        if (index < 0 || index >= this.history.size()) {
-            return;
-        }
+    private void setHistoryIndex(int index) {
+        RequestHistory h = this.node.getHistory();
+        
+        h.setCurrentIndex(index);
+        this.applyHistoryIndex();
+    }
 
-        HistoryEntry selected = this.history.get(index);
-        if (selected == null || selected.request == null) {
-            return;
-        }
+    private void applyHistoryIndex() {
+        RequestHistory h = this.node.getHistory();
+        
+        HistoryEntry selected = h.getCurrentEntry();
 
-        suppressHistoryApply = true;
-        try {
-            this.currentHistoryIndex = index;
-            this.requestEditor.setRequest(selected.request);
-            this.node.setRequest(selected.request);
-            if (selected.response != null) {
-                this.setResponse(selected.response);
-            }
-            initTargetStateFromRequest(selected.request);
-            refreshTargetLabel();
-            refreshHistoryNavState();
-        } finally {
-            suppressHistoryApply = false;
+        this.requestEditor.setRequest(selected.request);
+        this.node.setRequest(selected.request);
+        if (selected.response != null) {
+            this.setResponse(selected.response);
         }
+        initTargetStateFromRequest(selected.request);
+        refreshTargetLabel();
+        refreshHistoryNavState();
     }
 
     private void openEditTargetDialog() {
@@ -455,8 +462,8 @@ public class RequestResponsePanel extends JPanel {
 
         // Make them look like a single split-button control.
         navButton.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10));
-        dropButton.setBorder(BorderFactory.createEmptyBorder(4, 0, 4, 0));
-        dropButton.setFont(dropButton.getFont().deriveFont(dropButton.getFont().getSize2D() - 1f));
+        dropButton.setBorder(BorderFactory.createEmptyBorder(7, 0, 6, 0));
+        dropButton.setFont(dropButton.getFont().deriveFont(dropButton.getFont().getSize2D() - 4f));
 
         installHoverBackground(navButton, hoverColor);
         installHoverBackground(dropButton, hoverColor);

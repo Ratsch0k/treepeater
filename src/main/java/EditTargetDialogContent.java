@@ -38,7 +38,6 @@ public class EditTargetDialogContent extends JPanel {
             }
         });
 
-        JPanel panel = new JPanel(new GridBagLayout());
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(4, 4, 4, 4);
         gbc.anchor = GridBagConstraints.WEST;

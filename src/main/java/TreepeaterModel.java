@@ -1,15 +1,6 @@
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
-import java.io.Serializable;
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedList;
-import java.util.List;
-import java.util.Optional;
 import java.util.Set;
-
-import javax.swing.tree.DefaultTreeModel;
-import javax.swing.tree.TreePath;
 
 import burp.api.montoya.http.message.HttpRequestResponse;
 

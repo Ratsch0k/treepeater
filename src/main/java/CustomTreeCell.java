@@ -45,11 +45,11 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
                     break;
                 }
                 case 1: {
-                    this.node.setStatus(Status.FINDING);
+                    this.node.setStatus(Status.DONE);
                     break;
                 }
                 case 2: {
-                    this.node.setStatus(Status.DONE);
+                    this.node.setStatus(Status.FINDING);
                     break;
                 }
                 case 3: {
@@ -144,7 +144,6 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
         this.label.setBackground(fill);
         this.field.setBackground(fill);
         this.box.setBackground(fill);
-        this.cellContent.repaint();
     }
 
     @Override

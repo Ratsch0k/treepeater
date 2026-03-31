@@ -1,10 +1,11 @@
+
 import java.awt.Color;
 import java.awt.Component;
 
 import javax.swing.BorderFactory;
 import javax.swing.JPanel;
 
-class SplitButtonPanel extends JPanel {
+public class SplitButtonPanel extends JPanel {
     private final Color borderColor;
     private final Color dividerColor;
     private final int arc = 10;

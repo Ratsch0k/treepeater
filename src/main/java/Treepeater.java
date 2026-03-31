@@ -1,5 +1,6 @@
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
+import burp.api.montoya.core.Registration;
 import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.ui.contextmenu.ContextMenuEvent;
 import burp.api.montoya.ui.contextmenu.ContextMenuItemsProvider;
@@ -20,6 +21,8 @@ import java.util.Optional;
 public class Treepeater implements BurpExtension {
     public static MontoyaApi api;
     DefaultMutableTreeNode root;
+
+    private Registration sendHotKeyRegistration;
 
     @Override
     public void initialize(MontoyaApi montoyaApi) {
@@ -45,11 +48,28 @@ public class Treepeater implements BurpExtension {
             }
         });
 
-        HotKey sendHotKey = HotKey.hotKey("Send to Treepeater", "Ctrl+Alt+Shift+T");
-        HotKeyHandler sendHotKeyHandler = event -> sendSelectionToTreepeater(montoyaApi, model,
+        TreepeaterSettings.init(montoyaApi.persistence().preferences());
+        TreepeaterSettings settings = TreepeaterSettings.getInstance();
+
+        montoyaApi.userInterface().registerSettingsPanel(new TreepeaterSettingsPanel());
+
+
+        HotKey sendHotKey = HotKey.hotKey("Send to Treepeater", settings.getSendHotkey());
+        HotKeyHandler sendHotKeyHandler = event -> {
+            sendSelectionToTreepeater(montoyaApi, model,
                 event.messageEditorRequestResponse(),
                 event.selectedRequestResponses());
-        montoyaApi.userInterface().registerHotKeyHandler(sendHotKey, sendHotKeyHandler);
+        };
+        this.sendHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(sendHotKey, sendHotKeyHandler);
+
+        settings.addListener(key -> {
+            Treepeater.api.logging().logToOutput("Settings changed: " + key);
+            if (key.equals(TreepeaterSettings.SEND_HOTKEY_SETTING)) {
+                this.sendHotKeyRegistration.deregister();
+                HotKey newHotkey = HotKey.hotKey("Send to Treepeater", settings.getSendHotkey());
+                this.sendHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(newHotkey, sendHotKeyHandler);
+            }
+        });
     }
 
     private static void sendSelectionToTreepeater(
@@ -63,7 +83,6 @@ public class Treepeater implements BurpExtension {
             model.insertNode(r);
         }
     }
-
 
 
     class CustomTreeSelectionListener implements TreeSelectionListener {
@@ -94,8 +113,4 @@ public class Treepeater implements BurpExtension {
         }
     }
 
-    
 }
-
-
-    

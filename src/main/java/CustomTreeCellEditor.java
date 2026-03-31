@@ -7,7 +7,6 @@ import javax.swing.JTree;
 import javax.swing.SwingUtilities;
 import javax.swing.tree.DefaultTreeCellEditor;
 import javax.swing.tree.DefaultTreeCellRenderer;
-import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreePath;
 
 import burp.api.montoya.logging.Logging;
@@ -23,8 +22,6 @@ public class CustomTreeCellEditor extends DefaultTreeCellEditor {
     public Component getTreeCellEditorComponent(JTree tree, Object value, boolean isSelected, boolean expanded, boolean leaf, int row) {
         RequestTreeNode node = (RequestTreeNode) value;
         this.cell.setNode(node);
-        DefaultTreeModel model = ((DefaultTreeModel)tree.getModel());
-        model.nodeChanged(node);
         return this.cell;
     }
     

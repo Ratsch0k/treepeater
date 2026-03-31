@@ -1,3 +1,4 @@
+
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FontMetrics;
@@ -10,6 +11,7 @@ import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.UIManager;
 import javax.swing.border.Border;
+import javax.swing.plaf.ButtonUI;
 
 
 public class CustomButton extends JButton {
@@ -33,8 +35,8 @@ public class CustomButton extends JButton {
 
         setForeground(defaultForeground);
         setRolloverEnabled(true);
-        setPreferredSize(new Dimension(90, 32));
-        setBorder(BorderFactory.createEmptyBorder(2, 0, 2, 0));
+        setPreferredSize(new Dimension(86, 22));
+        setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
     }
 
     @Override
@@ -71,28 +73,6 @@ public class CustomButton extends JButton {
     public void setText(String text) {
         this.text = text;
         super.setText(text);
-    }
-
-    public void setVerticalPadding(int padding) {
-        this.verticalPadding = padding;
-        updatePreferredSize();
-        revalidate();
-        repaint();
-    }
-
-    @Override
-    public void addNotify() {
-        super.addNotify();
-        updatePreferredSize();
-    }
-
-    private void updatePreferredSize() {
-        FontMetrics fm = getFontMetrics(getFont());
-        if (fm == null) return;
-        Insets insets = getInsets();
-        int height = fm.getHeight() + 2 * verticalPadding + insets.top + insets.bottom;
-        int width = Math.max(90, fm.stringWidth(text != null ? text : "") + insets.left + insets.right);
-        setPreferredSize(new Dimension(width, height));
     }
 
     @Override

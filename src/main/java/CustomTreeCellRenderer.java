@@ -1,22 +1,22 @@
 import java.awt.Component;
+
 import javax.swing.JTree;
 import javax.swing.tree.DefaultTreeCellRenderer;
 
+/**
+ * Reuses one {@link CustomTreeCell} for all rows. JTree calls
+ * {@link #getTreeCellRendererComponent} on every paint; allocating a new panel each time
+ * caused flicker on resize and other repaints.
+ */
 class CustomTreeCellRenderer extends DefaultTreeCellRenderer {
+    private final CustomTreeCell cell = new CustomTreeCell();
+
     @Override
     public Component getTreeCellRendererComponent(JTree tree, Object value, boolean selected, boolean expanded, boolean leaf, int row, boolean hasFocus) {
         if (!(value instanceof RequestTreeNode)) {
-            return new CustomTreeCell();
+            return super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, hasFocus);
         }
-
-        RequestTreeNode node = (RequestTreeNode) value;
-
-        Treepeater.api.logging().logToOutput("Generated cell renderer component: " + node.getStatus().getStatus() + " " + node.getName());
-
-
-        CustomTreeCell cell = new CustomTreeCell();
-        cell.setNode(node);
-
-        return cell;
+        this.cell.setNode((RequestTreeNode) value);
+        return this.cell;
     }
 }

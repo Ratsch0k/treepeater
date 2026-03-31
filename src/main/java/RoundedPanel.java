@@ -1,3 +1,4 @@
+
 import javax.swing.JPanel;
 import javax.swing.border.Border;
 import java.awt.Color;
@@ -69,7 +70,7 @@ public class RoundedPanel extends JPanel {
         Color bg = getBackground();
         if (bg != null) {
             g2.setColor(bg);
-            g2.fillRoundRect(0, 0, width, height, cornerArc, cornerArc);
+            g2.fillRoundRect(0, 0, width - 1, height - 1, cornerArc, cornerArc);
         }
 
         g2.dispose();
@@ -86,18 +87,12 @@ public class RoundedPanel extends JPanel {
             int width = getWidth();
             int height = getHeight();
 
-            // Compute inside insets if present (so border overlays background, not inside content)
-            int inset = 0;
-            if (border != null) {
-                // crude estimation (real border insets may be non-uniform, but most are 1)
-                inset = Math.max(1, border.getBorderInsets(this).top);
-            }
 
             Color drawColor = borderColor != null ? borderColor : getForeground();
             g2.setColor(drawColor);
 
             // Draw rounded border rectangle just inside full bounds
-            g2.drawRoundRect(inset / 2, inset / 2, width - inset, height - inset, cornerArc, cornerArc);
+            g2.drawRoundRect(0, 0, width - 1, height - 1, cornerArc, cornerArc);
 
             g2.dispose();
         } else {

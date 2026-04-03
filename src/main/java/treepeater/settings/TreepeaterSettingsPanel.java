@@ -12,6 +12,9 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 
 import burp.api.montoya.ui.settings.SettingsPanelWithData;
+import treepeater.Treepeater;
+import treepeater.TreepeaterModel;
+import treepeater.persistence.TreepeaterPersistence;
 
 /**
  * Burp settings UI for Treepeater: wraps the Montoya-built settings row and adds shortcut capture.
@@ -38,7 +41,6 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         });
 
         JPanel hotkeySetting = this.buildSettingsInput(hotkeyLabel, hotkeyButton);
-
         this.root.add(hotkeySetting);
     }
 

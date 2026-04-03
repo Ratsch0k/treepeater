@@ -237,6 +237,7 @@ public class RequestResponsePanel extends JPanel {
     public void setRequest(HttpRequest request) {
         this.requestEditor.setRequest(request);
         this.node.setRequest(request);
+        Treepeater.saveState();
         initTargetStateFromRequest(request);
         refreshTargetLabel();
     }
@@ -244,6 +245,7 @@ public class RequestResponsePanel extends JPanel {
     private void setResponse(HttpResponse response) {
         this.responseEditor.setResponse(response);
         this.node.setResponse(response);
+        Treepeater.saveState();
     }
 
     private JPanel makeHeaderPanel(String header, Component component) {

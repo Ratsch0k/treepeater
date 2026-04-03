@@ -4,6 +4,7 @@ import javax.swing.tree.DefaultMutableTreeNode;
 
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
+import treepeater.Treepeater;
 import treepeater.requestResponse.RequestHistory;
 import treepeater.requestResponse.Status;
 
@@ -15,6 +16,17 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
     private HttpResponse response;
     private HashSet<RequestTreeNodeListener> listener;
     private final RequestHistory history;
+
+    public RequestTreeNode(int id, Status status, String name, HttpRequest request, HttpResponse response, RequestHistory history) {
+        super(name);
+        this.id = id;
+        this.status = status;
+        this.name = name;
+        this.request = request;
+        this.response = response;
+        this.listener = new HashSet<>();
+        this.history = history;
+    }
 
     public RequestTreeNode(int id, String name, HttpRequest request, HttpResponse response) {
         super(name);
@@ -66,6 +78,7 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
     public void setName(String name) {
         this.name = name;
         this.listener.forEach(l -> l.onNameChange(name));
+        Treepeater.saveState();
     }
 
     public void addListener(RequestTreeNodeListener l) {
@@ -85,11 +98,13 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
     }
 
     public void setRequest(HttpRequest r) {
-        this.request = r;    
+        this.request = r;
+        Treepeater.saveState();
     }
 
     public void setResponse(HttpResponse r) {
         this.response = r;
+        Treepeater.saveState();
     }
 
     public HttpRequest getRequest() {

@@ -53,7 +53,6 @@ public class RequestResponseTab extends JPanel {
 
             @Override
             public void onNameChange(String newName) {
-                Treepeater.api.logging().logToOutput("The name has changed to " + newName);
                 RequestResponseTab.this.label.setText(newName);
                 RequestResponseTab.this.label.repaint();
             }

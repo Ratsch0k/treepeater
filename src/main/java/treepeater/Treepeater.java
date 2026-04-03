@@ -8,6 +8,7 @@ import burp.api.montoya.ui.contextmenu.ContextMenuItemsProvider;
 import burp.api.montoya.ui.contextmenu.MessageEditorHttpRequestResponse;
 import burp.api.montoya.ui.hotkey.HotKey;
 import burp.api.montoya.ui.hotkey.HotKeyHandler;
+import treepeater.persistence.TreepeaterPersistence;
 import treepeater.settings.TreepeaterSettings;
 import treepeater.settings.TreepeaterSettingsPanel;
 
@@ -23,6 +24,8 @@ import java.util.Optional;
 
 public class Treepeater implements BurpExtension {
     public static MontoyaApi api;
+    private static TreepeaterModel model;
+    private static TreepeaterPersistence persistence;
     DefaultMutableTreeNode root;
 
     private Registration sendHotKeyRegistration;
@@ -32,7 +35,18 @@ public class Treepeater implements BurpExtension {
         Treepeater.api =  montoyaApi;
         montoyaApi.extension().setName("Treepeater");
 
-        TreepeaterModel model = new TreepeaterModel();
+        Treepeater.persistence = new TreepeaterPersistence(montoyaApi.persistence());
+
+        try {
+            Treepeater.model = Treepeater.persistence.load();
+            Treepeater.api.logging().logToOutput("Model loaded from file");
+            Treepeater.api.logging().logToOutput(Treepeater.model.toDebugJsonString());
+        } catch (Exception e) {
+            Treepeater.api.logging().logToOutput("Error loading state from file: " + e.getMessage());
+            Treepeater.model = new TreepeaterModel();
+        }
+
+        montoyaApi.extension().registerUnloadingHandler(() -> Treepeater.persistence.save(Treepeater.model));
 
         TreepeaterUI ui = new TreepeaterUI(model);
 
@@ -72,6 +86,17 @@ public class Treepeater implements BurpExtension {
                 HotKey newHotkey = HotKey.hotKey("Send to Treepeater", settings.getSendHotkey());
                 this.sendHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(newHotkey, sendHotKeyHandler);
             }
+        });
+    }
+
+    /**
+     * Save the current state of the model using a background thread.
+     */
+    public static void saveState() {
+        SwingUtilities.invokeLater(() ->  {
+            Treepeater.api.logging().logToOutput("Saving state");
+            Treepeater.api.logging().logToOutput(Treepeater.model.toDebugJsonString());
+            Treepeater.persistence.save(Treepeater.model);
         });
     }
 

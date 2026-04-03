@@ -44,7 +44,6 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
         box.setRenderer(new StatusComboBoxRenderer());
         box.setEnabled(true);
         box.addActionListener(e -> {
-            Treepeater.api.logging().logToOutput("Status changed: " + box.getSelectedItem());
             switch (box.getSelectedIndex()) {
                 case 0: {
                     this.node.setStatus(Status.TODO);

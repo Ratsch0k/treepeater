@@ -6,10 +6,16 @@ import java.util.List;
 
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
+import treepeater.Treepeater;
 
 public class RequestHistory {
     private final List<HistoryEntry> history;
     private int currentIndex;
+
+    public RequestHistory(int currentIndex, List<HistoryEntry> history) {
+        this.history = history;
+        this.currentIndex = currentIndex;
+    }
 
     public RequestHistory() {
         this.history = new ArrayList<>();
@@ -17,10 +23,11 @@ public class RequestHistory {
     }
 
     public void addEntry(String targetLabel, HttpRequest request, HttpResponse response) {
-        int index = this.history.size() + 1;
+        int index = this.history.size();
         HistoryEntry entry = new HistoryEntry(index, LocalDateTime.now(), targetLabel, request, response);
         this.history.add(entry);
         this.currentIndex = index;
+        Treepeater.saveState();
     }
 
     public HistoryEntry getEntry(int index) {
@@ -50,12 +57,16 @@ public class RequestHistory {
     public void navigateBack() {
         if (this.currentIndex > 0) {
             this.currentIndex--;
+
+            Treepeater.saveState();
         }
     }
 
     public void navigateForward() {
         if (this.currentIndex < this.history.size() - 1) {
             this.currentIndex++;
+
+            Treepeater.saveState();
         }
     }
 

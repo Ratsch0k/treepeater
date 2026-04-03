@@ -27,16 +27,34 @@ public class TreepeaterUI extends JSplitPane {
     private static final Dimension MIN_LEFT_PANEL_SIZE = new Dimension(240, 0);
 
     JTabbedPane requestResponseTabbedPane;
+    TreepeaterModel model;
+    HashMap<RequestTreeNode, RequestResponsePanel> tabMap;
 
     public TreepeaterUI(TreepeaterModel model) {
         super(JSplitPane.HORIZONTAL_SPLIT);
 
+        this.model = model;
         this.requestResponseTabbedPane = new JTabbedPane();
         this.requestResponseTabbedPane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
         this.setRightComponent(this.requestResponseTabbedPane);
+        this.tabMap = new HashMap<>();
 
         this.setDividerLocation(0.3);
         this.resetToPreferredSizes();
+
+        if (model.getRequestCount() > 0) {
+            this.setLeftComponent(this.buildTreePanel());
+        } else {
+            this.setLeftComponent(this.buildDefaultLeftPanel());
+        }
+
+        for (RequestTreeNode node : model.getTabs()) {
+            this.addTab(node);
+        }
+
+        if (model.getActiveNode() != null) {
+            this.openTab(model.getActiveNode());
+        }
 
         model.getTree().getTreeModel().addTreeModelListener(new TreeModelListener() {
 
@@ -47,32 +65,7 @@ public class TreepeaterUI extends JSplitPane {
             @Override
             public void treeNodesInserted(TreeModelEvent e) {
                 if (model.getRequestCount() > 0) {
-                    JPanel leftPanel = new JPanel();
-                    leftPanel.setLayout(new BorderLayout());
-                    leftPanel.setMinimumSize(MIN_LEFT_PANEL_SIZE);
-
-                    JScrollPane scrollPane = new JScrollPane(model.getTree());
-                    scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-                    scrollPane.setMinimumSize(MIN_LEFT_PANEL_SIZE);
-
-                    leftPanel.add(scrollPane, BorderLayout.CENTER);
-
-                    JButton syncButton = new JButton("Sync");
-                    syncButton.addActionListener(new AbstractAction() {
-                        @Override
-                        public void actionPerformed(ActionEvent e) {
-                            List<RequestTreeNodeSimple> allRequests = model.getTree().toSimpleRepeaterList();
-
-                            for (int idx = 0; idx < allRequests.size(); idx++) {
-                                RequestTreeNodeSimple node = allRequests.get(idx);
-                                Treepeater.api.repeater().sendToRepeater(node.request, node.name);
-                            }
-                        }
-                        
-                    });
-
-                    leftPanel.add(syncButton, BorderLayout.PAGE_END);
-                    
+                    JComponent leftPanel = TreepeaterUI.this.buildTreePanel();
                     TreepeaterUI.this.setLeftComponent(leftPanel);
                 }
             }
@@ -90,48 +83,96 @@ public class TreepeaterUI extends JSplitPane {
             
         });
 
-        HashMap<Integer, Integer> tabMap = new HashMap<>();
 
         model.addListener(new TreepeaterModelListener() {
 
             @Override
-            public void onOpen(RequestTreeNode node) {
-                Treepeater.api.logging().logToOutput("Opened request " + System.identityHashCode(node));
-
-                if (tabMap.containsKey(node.getId())) {
-                    Treepeater.api.logging().logToOutput("Changing active tab");
-                    TreepeaterUI.this.requestResponseTabbedPane.setSelectedIndex(tabMap.get(node.getId()));
-                    return;
-                }
-
-                Treepeater.api.logging().logToOutput("Create a new tab");
-
-                RequestResponsePanel panel = new RequestResponsePanel(node);
-                int index = TreepeaterUI.this.requestResponseTabbedPane.getTabCount();
-                TreepeaterUI.this.requestResponseTabbedPane.add(node.getName(), panel);
-
-                RequestResponseTab tab = new RequestResponseTab(node);
-                tab.addActionListener(new ActionListener() {
-                    @Override
-                    public void actionPerformed(ActionEvent e) {
-                        TreepeaterUI.this.requestResponseTabbedPane.remove(index);
-                        tabMap.remove(node.getId());
-                    }
-                    
-                });
-
-                TreepeaterUI.this.requestResponseTabbedPane.setTabComponentAt(index, tab);
-                tabMap.put(node.getId(), index);
+            public void onOpenTab(RequestTreeNode node) {
+                TreepeaterUI.this.openTab(node);
             }
-            
+
+            @Override
+            public void onCloseTab(RequestTreeNode node) {
+                TreepeaterUI.this.removeTab(node);
+            }
+
+            @Override
+            public void onNewTab(RequestTreeNode node) {
+                TreepeaterUI.this.addTab(node);
+            }
         });
         
-        this.setLeftComponent(this.buildDefaultLeftPanel());
+    }
+
+
+    private void openTab(RequestTreeNode node) {
+        Treepeater.api.logging().logToOutput("[TreepeaterUI] openTab: node=" + node);
+        RequestResponsePanel panel = this.tabMap.get(node);
+        if (panel == null) {
+            Treepeater.api.logging().logToError("No tab found for node " + node.getId());
+            return;
+        }
+
+        this.requestResponseTabbedPane.setSelectedComponent(panel);
+    }
+
+    private void addTab(RequestTreeNode node) {
+        Treepeater.api.logging().logToOutput("[TreepeaterUI] addTab: node=" + node);
+        RequestResponsePanel panel = new RequestResponsePanel(node);
+        int index = this.requestResponseTabbedPane.getTabCount();
+        this.requestResponseTabbedPane.add(node.getName(), panel);
+
+        RequestResponseTab tab = new RequestResponseTab(node);
+        tab.addActionListener(e -> this.model.removeTab(index));
+        this.requestResponseTabbedPane.setTabComponentAt(index, tab);
+        this.requestResponseTabbedPane.setSelectedIndex(index);
+        tabMap.put(node, panel);
+    }
+
+    private void removeTab(RequestTreeNode node) {
+        Treepeater.api.logging().logToOutput("[TreepeaterUI] removeTab: node=" + node);
+        RequestResponsePanel requestResponsePanel = this.tabMap.get(node);
+        if (requestResponsePanel == null) {
+            Treepeater.api.logging().logToError("No tab found for node " + node.getId());
+            return;
+        }
+        this.requestResponseTabbedPane.remove(requestResponsePanel);;
+        this.tabMap.remove(node);
     }
 
     private JComponent buildDefaultLeftPanel() {
         JPanel leftPanel = new JPanel();
         leftPanel.add(new JLabel("Send a request to Treepeater"));
+        return leftPanel;
+    }
+
+    private JComponent buildTreePanel() {
+        JPanel leftPanel = new JPanel();
+        leftPanel.setLayout(new BorderLayout());
+        leftPanel.setMinimumSize(MIN_LEFT_PANEL_SIZE);
+
+        JScrollPane scrollPane = new JScrollPane(this.model.getTree());
+        scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        scrollPane.setMinimumSize(MIN_LEFT_PANEL_SIZE);
+
+        leftPanel.add(scrollPane, BorderLayout.CENTER);
+
+        JButton syncButton = new JButton("Sync");
+        syncButton.addActionListener(new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                List<RequestTreeNodeSimple> allRequests = TreepeaterUI.this.model.getTree().toSimpleRepeaterList();
+
+                for (int idx = 0; idx < allRequests.size(); idx++) {
+                    RequestTreeNodeSimple node = allRequests.get(idx);
+                    Treepeater.api.repeater().sendToRepeater(node.request, node.name);
+                }
+            }
+            
+        });
+
+        leftPanel.add(syncButton, BorderLayout.PAGE_END);
+        
         return leftPanel;
     }
 }

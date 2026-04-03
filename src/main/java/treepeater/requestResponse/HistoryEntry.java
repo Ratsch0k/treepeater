@@ -14,7 +14,7 @@ public class HistoryEntry {
     public final HttpRequest request;
     public final HttpResponse response;
 
-    HistoryEntry(int index, LocalDateTime time, String targetLabel, HttpRequest request, HttpResponse response) {
+    public HistoryEntry(int index, LocalDateTime time, String targetLabel, HttpRequest request, HttpResponse response) {
         this.index = index;
         this.time = time;
         this.targetLabel = targetLabel;
@@ -30,5 +30,25 @@ public class HistoryEntry {
             return "#" + index + "  " + t;
         }
         return "#" + index + "  " + t + "  " + target;
+    }
+
+    public int getIndex() {
+        return index;
+    }
+
+    public LocalDateTime getTime() {
+        return time;
+    }
+
+    public String getTargetLabel() {
+        return targetLabel;
+    }
+
+    public HttpRequest getRequest() {
+        return request;
+    }
+
+    public HttpResponse getResponse() {
+        return response;
     }
 }

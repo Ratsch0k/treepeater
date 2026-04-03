@@ -20,6 +20,25 @@ public class Status {
         this.backgroundColor = backgroundColor;
         this.borderColor = borderColor;
         this.icon = icon;
+
+    }
+
+    public static Status fromName(String statusName) {
+        if (statusName == null) {
+            return null;
+        }
+        switch (statusName.toUpperCase()) {
+            case "TODO":
+                return TODO;
+            case "FINDING":
+                return FINDING;
+            case "DONE":
+                return DONE;
+            case "COLLECTION":
+                return COLLECTION;
+            default:
+                return null;
+        }
     }
 
     public String getStatus() {

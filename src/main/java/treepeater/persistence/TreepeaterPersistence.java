@@ -151,8 +151,6 @@ public class TreepeaterPersistence {
             return new TreepeaterModel();
         }
 
-        printPersistedObject(root);
-
         Integer requestCount = root.getInteger(PERSISTENCE_REQUEST_COUNT);
 
         RequestTree tree = this.loadTree(root.getChildObject(PERSISTENCE_TREE));

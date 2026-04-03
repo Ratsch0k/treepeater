@@ -40,7 +40,6 @@ public class Treepeater implements BurpExtension {
         try {
             Treepeater.model = Treepeater.persistence.load();
             Treepeater.api.logging().logToOutput("Model loaded from file");
-            Treepeater.api.logging().logToOutput(Treepeater.model.toDebugJsonString());
         } catch (Exception e) {
             Treepeater.api.logging().logToOutput("Error loading state from file: " + e.getMessage());
             Treepeater.model = new TreepeaterModel();
@@ -95,7 +94,6 @@ public class Treepeater implements BurpExtension {
     public static void saveState() {
         SwingUtilities.invokeLater(() ->  {
             Treepeater.api.logging().logToOutput("Saving state");
-            Treepeater.api.logging().logToOutput(Treepeater.model.toDebugJsonString());
             Treepeater.persistence.save(Treepeater.model);
         });
     }

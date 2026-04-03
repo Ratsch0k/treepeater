@@ -101,6 +101,7 @@ public class RequestResponsePanel extends JPanel {
         this.sendButton.setBackground(UIManager.getColor("Button.primary.background"));
         this.sendButton.setForeground(UIManager.getColor("Button.primary.foreground"));
         this.sendButton.setHoverBackground(UIManager.getColor("Button.primary.hoverBackground"));
+        this.sendButton.setBorder(BorderFactory.createEmptyBorder(3, 0, 3, 0));
 
         this.cancelButton = new JButton();
 

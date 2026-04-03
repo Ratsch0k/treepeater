@@ -60,14 +60,12 @@ public class RoundedPanel extends JPanel {
 
     @Override
     protected void paintComponent(Graphics g) {
-        // Paint background, respect JPanel background
         Graphics2D g2 = (Graphics2D) g.create();
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
         int width = getWidth();
         int height = getHeight();
 
-        // Fill rounded background
         Color bg = getBackground();
         if (bg != null) {
             g2.setColor(bg);
@@ -75,7 +73,12 @@ public class RoundedPanel extends JPanel {
         }
 
         g2.dispose();
-        super.paintComponent(g); // children/components will be painted after background
+
+        // JPanel's UI delegate fills a rectangle when opaque, which would undo rounded corners.
+        boolean opaque = isOpaque();
+        setOpaque(false);
+        super.paintComponent(g);
+        setOpaque(opaque);
     }
 
     @Override

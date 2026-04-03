@@ -1,11 +1,9 @@
 package treepeater.requestResponse;
 import javax.swing.BorderFactory;
-import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 
-import treepeater.Treepeater;
 import treepeater.tree.RequestTreeNode;
 import treepeater.tree.RequestTreeNodeListener;
 
@@ -28,7 +26,7 @@ public class RequestResponseTab extends JPanel {
         this.listeners = new HashSet<>();
 
         JButton closeButton = new JButton();
-        closeButton.setIcon(new ImageIcon(this.getClass().getResource("/icons/cross-small.png")));
+        closeButton.setText("✖");
         closeButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {

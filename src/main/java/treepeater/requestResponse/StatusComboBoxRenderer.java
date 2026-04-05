@@ -7,7 +7,7 @@ import javax.swing.ListCellRenderer;
 
 public class StatusComboBoxRenderer extends JLabel implements ListCellRenderer<Status> {
     public StatusComboBoxRenderer() {
-        setOpaque(true);
+        setOpaque(false);
         setHorizontalAlignment(CENTER);
         setVerticalAlignment(CENTER);
     }

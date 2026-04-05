@@ -2,7 +2,7 @@ package treepeater;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
+import java.beans.Customizer;
 import java.util.HashMap;
 import java.util.List;
 
@@ -18,6 +18,7 @@ import javax.swing.ScrollPaneConstants;
 import javax.swing.event.TreeModelEvent;
 import javax.swing.event.TreeModelListener;
 
+import treepeater.tree.CustomTreeUI;
 import treepeater.tree.RequestTreeNode;
 import treepeater.draggable.RequestTreeNodeSimple;
 import treepeater.requestResponse.RequestResponsePanel;
@@ -72,7 +73,8 @@ public class TreepeaterUI extends JSplitPane {
 
             @Override
             public void treeNodesRemoved(TreeModelEvent e) {
-                if (model.getRequestCount() <= 0) {
+                RequestTreeNode root = (RequestTreeNode) model.getTree().getTreeModel().getRoot();
+                if (root.getChildCount() == 0) {
                     TreepeaterUI.this.setLeftComponent(TreepeaterUI.this.buildDefaultLeftPanel());
                 }
             }
@@ -152,7 +154,7 @@ public class TreepeaterUI extends JSplitPane {
         leftPanel.setMinimumSize(MIN_LEFT_PANEL_SIZE);
 
         JScrollPane scrollPane = new JScrollPane(this.model.getTree());
-        scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        ((CustomTreeUI) this.model.getTree().getUI()).setViewportContext(scrollPane.getViewport());
         scrollPane.setMinimumSize(MIN_LEFT_PANEL_SIZE);
 
         leftPanel.add(scrollPane, BorderLayout.CENTER);

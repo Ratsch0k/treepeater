@@ -67,7 +67,11 @@ public class CustomTreeCellEditor extends DefaultTreeCellEditor {
         }
 
         int relativeX = mouseEvent.getX() - bounds.x;
-        int buttonWidth = this.cell.getButtonWidth();
+        if (relativeX >= bounds.width - this.cell.getCloseReservedWidth()) {
+            log.logToOutput("Close strip click - not editable");
+            return false;
+        }
+        int buttonWidth = this.cell.getComboBoxWidth();
 
         boolean isInButton = relativeX <= buttonWidth;
 

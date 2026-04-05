@@ -1,4 +1,5 @@
 package treepeater;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
@@ -77,6 +78,39 @@ public class TreepeaterModel implements RequestTreeNodeListener {
         }
 
         Treepeater.saveState();
+    }
+
+    public void removeNodeFromTree(RequestTreeNode node) {
+        if (node == null) {
+            return;
+        }
+        Object rootObj = this.tree.getTreeModel().getRoot();
+        if (!(rootObj instanceof RequestTreeNode root)) {
+            return;
+        }
+        if (node == root || node.getParent() == null) {
+            return;
+        }
+        List<RequestTreeNode> subtree = new ArrayList<>();
+        collectSubtreeNodes(node, subtree);
+        Set<RequestTreeNode> removed = new HashSet<>(subtree);
+        for (int i = this.tabs.size() - 1; i >= 0; i--) {
+            if (removed.contains(this.tabs.get(i))) {
+                this.removeTab(i);
+            }
+        }
+        for (RequestTreeNode n : subtree) {
+            n.removeListener(this);
+        }
+        this.tree.getTreeModel().removeNodeFromParent(node);
+        Treepeater.saveState();
+    }
+
+    private static void collectSubtreeNodes(RequestTreeNode n, List<RequestTreeNode> out) {
+        out.add(n);
+        for (int i = 0; i < n.getChildCount(); i++) {
+            collectSubtreeNodes((RequestTreeNode) n.getChildAt(i), out);
+        }
     }
 
     public void removeTab(int idx) {
@@ -342,5 +376,10 @@ public class TreepeaterModel implements RequestTreeNodeListener {
         for (int i = 0; i < depth; i++) {
             sb.append("  ");
         }
+    }
+
+    @Override
+    public void onDelete(RequestTreeNode node) {
+        this.removeNodeFromTree(node);
     }
 }

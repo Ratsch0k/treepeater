@@ -8,6 +8,7 @@ repositories {
 
 dependencies {
     compileOnly("net.portswigger.burp.extensions:montoya-api:2026.2")
+    compileOnly("com.formdev:flatlaf:3.5.4")
 }
 
 tasks.withType<JavaCompile>().configureEach {

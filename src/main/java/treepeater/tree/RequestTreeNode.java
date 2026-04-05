@@ -81,6 +81,10 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
         Treepeater.saveState();
     }
 
+    public void delete() {
+        this.listener.forEach(l -> l.onDelete(this));
+    }
+
     public void addListener(RequestTreeNodeListener l) {
         this.listener.add(l);
     }

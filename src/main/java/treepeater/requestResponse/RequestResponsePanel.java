@@ -174,7 +174,6 @@ public class RequestResponsePanel extends JPanel {
 
             
         });
-        //styleAsBurpSendButton(this.sendButton);
 
         this.cancelButton.setAction(new AbstractAction("Cancel") {
             @Override
@@ -203,9 +202,16 @@ public class RequestResponsePanel extends JPanel {
         this.topBar.add(this.targetValueLabel);
         this.topBar.add(Box.createHorizontalStrut(6));
         this.topBar.add(this.editTargetButton);
-        this.add(this.topBar, BorderLayout.PAGE_START);
+
+        JPanel topBarWrapper = new JPanel();
+        topBarWrapper.setLayout(new BorderLayout());
+        topBarWrapper.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, UIManager.getColor("Separator.foreground")));
+        topBarWrapper.add(this.topBar, BorderLayout.CENTER);
+
+        this.add(topBarWrapper, BorderLayout.PAGE_START);
 
         this.splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
+        Treepeater.api.userInterface().applyThemeToComponent(this.splitPane);
 
         this.requestEditor = Treepeater.api.userInterface().createHttpRequestEditor();
         this.requestEditor.setRequest(this.node.getRequest());
@@ -253,7 +259,7 @@ public class RequestResponsePanel extends JPanel {
         JPanel panel = new JPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
 
-        Border labelPadding = BorderFactory.createEmptyBorder(16, 8, 0, 0);
+        Border labelPadding = BorderFactory.createEmptyBorder(12, 8, 12, 0);
 
         JLabel label = new JLabel(header);
         label.setBorder(labelPadding);
@@ -262,6 +268,8 @@ public class RequestResponsePanel extends JPanel {
 
         panel.add(label);
         panel.add(component);
+        
+        panel.setBackground(UIManager.getColor("Colors.ui.background.1"));
 
         return panel;
     }

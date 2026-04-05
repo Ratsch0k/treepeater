@@ -54,7 +54,11 @@ public class RequestResponseTab extends JPanel {
                 RequestResponseTab.this.label.setText(newName);
                 RequestResponseTab.this.label.repaint();
             }
-            
+
+            @Override
+            public void onDelete(RequestTreeNode node) {
+                
+            }            
         });
     }
 

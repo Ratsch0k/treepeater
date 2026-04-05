@@ -56,8 +56,8 @@ public final class HotkeyCaptureDialog {
 
         RoundedPanel statusPanel = new RoundedPanel();
         statusPanel.setOpaque(true);
-        statusPanel.setBackground(new Color(245, 245, 247));
-        statusPanel.setBorderColor(new Color(198, 198, 206));
+        statusPanel.setBackground(UIManager.getColor("Button.default.background"));
+        statusPanel.setBorderColor(UIManager.getColor("Button.default.borderColor"));
         statusPanel.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
         statusPanel.setLayout(new BorderLayout());
         statusPanel.add(status, BorderLayout.CENTER);

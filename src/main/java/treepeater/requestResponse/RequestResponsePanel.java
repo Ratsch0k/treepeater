@@ -87,11 +87,20 @@ public class RequestResponsePanel extends JPanel {
 
     private final HashMap<String, Runnable> hotkeyActions = new HashMap<>();
 
-    public RequestResponsePanel(TreepeaterModel model, RequestTreeNode node) {
+    private final Runnable selectPreviousRequestResponseTab;
+    private final Runnable selectNextRequestResponseTab;
+
+    public RequestResponsePanel(
+            TreepeaterModel model,
+            RequestTreeNode node,
+            Runnable selectPreviousRequestResponseTab,
+            Runnable selectNextRequestResponseTab) {
         super(new BorderLayout());
         this.model = model;
         this.tree = model.getTree();
         this.node = node;
+        this.selectPreviousRequestResponseTab = selectPreviousRequestResponseTab;
+        this.selectNextRequestResponseTab = selectNextRequestResponseTab;
 
         this.topBar = new JPanel();
         this.topBar.setLayout(new BoxLayout(this.topBar, BoxLayout.X_AXIS));
@@ -258,6 +267,8 @@ public class RequestResponsePanel extends JPanel {
         this.hotkeyActions.put(TreepeaterSettings.RENAME_HOTKEY_SETTING, this::handleRename);
         this.hotkeyActions.put(TreepeaterSettings.CHANGE_STATUS_HOTKEY_SETTING, this::handleChangeStatus);
         this.hotkeyActions.put(TreepeaterSettings.EDIT_TARGET_HOTKEY_SETTING, () -> this.editTargetButton.doClick());
+        this.hotkeyActions.put(TreepeaterSettings.TAB_PREVIOUS_HOTKEY_SETTING, this.selectPreviousRequestResponseTab);
+        this.hotkeyActions.put(TreepeaterSettings.TAB_NEXT_HOTKEY_SETTING, this.selectNextRequestResponseTab);
     }
 
     private void installHotkeys() {

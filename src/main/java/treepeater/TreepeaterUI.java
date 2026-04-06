@@ -1,11 +1,9 @@
 package treepeater;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
-import java.awt.KeyboardFocusManager;
 import java.awt.event.ActionEvent;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 import javax.swing.AbstractAction;
 import javax.swing.JButton;
@@ -15,20 +13,14 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
-import javax.swing.KeyStroke;
-import javax.swing.event.AncestorEvent;
-import javax.swing.event.AncestorListener;
 import javax.swing.event.TreeModelEvent;
 import javax.swing.event.TreeModelListener;
 
 import treepeater.tree.CustomTreeUI;
 import treepeater.tree.RequestTreeNode;
 import treepeater.draggable.RequestTreeNodeSimple;
-import treepeater.requestResponse.HotkeyHandler;
 import treepeater.requestResponse.RequestResponsePanel;
 import treepeater.requestResponse.RequestResponseTab;
-import treepeater.settings.HotkeyCaptureDialog;
-import treepeater.settings.TreepeaterSettings;
 
 public class TreepeaterUI extends JSplitPane {
     private static final Dimension MIN_LEFT_PANEL_SIZE = new Dimension(240, 0);
@@ -36,10 +28,6 @@ public class TreepeaterUI extends JSplitPane {
     JTabbedPane requestResponseTabbedPane;
     TreepeaterModel model;
     HashMap<RequestTreeNode, RequestResponsePanel> tabMap;
-
-    private final HotkeyHandler requestResponseTabHotkeyHandler = new HotkeyHandler();
-    private final HashMap<String, Runnable> requestResponseTabHotkeyActions = new HashMap<>();
-    private boolean requestResponseTabHotkeyHandlerRegistered;
 
     public TreepeaterUI(TreepeaterModel model) {
         super(JSplitPane.HORIZONTAL_SPLIT);
@@ -113,62 +101,7 @@ public class TreepeaterUI extends JSplitPane {
                 TreepeaterUI.this.addTab(node);
             }
         });
-
-        this.requestResponseTabHotkeyActions.put(
-                TreepeaterSettings.TAB_PREVIOUS_HOTKEY_SETTING,
-                this::selectPreviousRequestResponseTab);
-        this.requestResponseTabHotkeyActions.put(
-                TreepeaterSettings.TAB_NEXT_HOTKEY_SETTING,
-                this::selectNextRequestResponseTab);
-        this.installRequestResponseTabHotkeys();
     }
-
-    private void installRequestResponseTabHotkeys() {
-        TreepeaterSettings settings = TreepeaterSettings.getInstance();
-        for (Map.Entry<String, Runnable> entry : this.requestResponseTabHotkeyActions.entrySet()) {
-            KeyStroke ks = HotkeyCaptureDialog.parseBurpHotkeyToKeyStroke(settings.getStringWithDefault(entry.getKey()));
-            if (ks != null) {
-                this.requestResponseTabHotkeyHandler.addBinding(entry.getKey(), ks, entry.getValue());
-            }
-        }
-
-        settings.addListener((key, value) -> {
-            if (!this.requestResponseTabHotkeyActions.containsKey(key) || !(value instanceof String newHotkey)) {
-                return;
-            }
-            KeyStroke newKs = HotkeyCaptureDialog.parseBurpHotkeyToKeyStroke(newHotkey);
-            if (newKs != null) {
-                this.requestResponseTabHotkeyHandler.changeBinding(key, newKs);
-            }
-        });
-
-        this.addAncestorListener(new AncestorListener() {
-            @Override
-            public void ancestorAdded(AncestorEvent event) {
-                if (TreepeaterUI.this.requestResponseTabHotkeyHandlerRegistered) {
-                    return;
-                }
-                KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(
-                        TreepeaterUI.this.requestResponseTabHotkeyHandler);
-                TreepeaterUI.this.requestResponseTabHotkeyHandlerRegistered = true;
-            }
-
-            @Override
-            public void ancestorRemoved(AncestorEvent event) {
-                if (!TreepeaterUI.this.requestResponseTabHotkeyHandlerRegistered) {
-                    return;
-                }
-                KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(
-                        TreepeaterUI.this.requestResponseTabHotkeyHandler);
-                TreepeaterUI.this.requestResponseTabHotkeyHandlerRegistered = false;
-            }
-
-            @Override
-            public void ancestorMoved(AncestorEvent event) {
-            }
-        });
-    }
-
 
     private void openTab(RequestTreeNode node) {
         Treepeater.api.logging().logToOutput("[TreepeaterUI] openTab: node=" + node);
@@ -183,7 +116,11 @@ public class TreepeaterUI extends JSplitPane {
 
     private void addTab(RequestTreeNode node) {
         Treepeater.api.logging().logToOutput("[TreepeaterUI] addTab: node=" + node);
-        RequestResponsePanel panel = new RequestResponsePanel(this.model, node);
+        RequestResponsePanel panel = new RequestResponsePanel(
+                this.model,
+                node,
+                this::selectPreviousRequestResponseTab,
+                this::selectNextRequestResponseTab);
         int index = this.requestResponseTabbedPane.getTabCount();
         this.requestResponseTabbedPane.add(node.getName(), panel);
 

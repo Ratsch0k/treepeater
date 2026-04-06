@@ -8,9 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import javax.swing.DropMode;
-import javax.swing.JScrollPane;
 import javax.swing.JTree;
-import javax.swing.JViewport;
 import javax.swing.SwingUtilities;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeModel;
@@ -20,6 +18,7 @@ import javax.swing.tree.TreeSelectionModel;
 import treepeater.Treepeater;
 import treepeater.draggable.RequestTreeNodeSimple;
 import treepeater.draggable.TreeTransferHandler;
+import treepeater.tree.CustomTreeCellEditor.ProgrammaticEdit;
 
 public class RequestTree extends JTree {
     private DefaultMutableTreeNode root;
@@ -68,7 +67,7 @@ public class RequestTree extends JTree {
                 boolean isInButton = relativeX <= (buttonWidth + 4);
 
                 if (isInButton) {
-                    SwingUtilities.invokeLater(cell::clickButton);
+                    SwingUtilities.invokeLater(cell::openStatusPopup);
                     return;
                 }
 
@@ -119,13 +118,6 @@ public class RequestTree extends JTree {
         this.model.insertNodeInto(child, parent, index);
     }
 
-    /* 
-    @Override
-    public boolean getScrollableTracksViewportWidth() {
-        return this.getParent() instanceof JViewport;
-    }
-        */
-
     public List<RequestTreeNodeSimple> toSimpleRepeaterList() {
         ArrayList<RequestTreeNodeSimple> children = new ArrayList<>();
         
@@ -156,5 +148,22 @@ public class RequestTree extends JTree {
         }
 
         return children;
+    }
+
+    public boolean startProgrammaticEditForNode(RequestTreeNode node, ProgrammaticEdit editType) {
+        if (node == null || node.getParent() == null) {
+            return false;
+        }
+        TreePath path = new TreePath(node.getPath());
+        this.setSelectionPath(path);
+        this.scrollPathToVisible(path);
+        CustomTreeCellEditor editor = (CustomTreeCellEditor) this.getCellEditor();
+        editor.setProgrammaticEdit(editType);
+        this.startEditingAtPath(path);
+        if (!this.isEditing()) {
+            editor.setProgrammaticEdit(ProgrammaticEdit.NONE);
+            return false;
+        }
+        return true;
     }
 }

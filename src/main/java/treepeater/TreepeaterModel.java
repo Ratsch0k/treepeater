@@ -6,8 +6,11 @@ import java.util.List;
 import java.util.Set;
 
 import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.TreeNode;
 
 import burp.api.montoya.http.message.HttpRequestResponse;
+import burp.api.montoya.http.message.requests.HttpRequest;
+import burp.api.montoya.http.message.responses.HttpResponse;
 import treepeater.requestResponse.HistoryEntry;
 import treepeater.requestResponse.RequestHistory;
 import treepeater.tree.RequestTree;
@@ -148,6 +151,34 @@ public class TreepeaterModel implements RequestTreeNodeListener {
         Treepeater.api.logging().logToOutput("[TreepeaterModel]: insertNodeInto(" + child + ", " + parent + ", " + index + ")");
         this.tree.insertNodeInto(child, parent, index);
         Treepeater.saveState();
+    }
+
+    /**
+     * Inserts a new node immediately after {@code source} under the same parent, using the given
+     * request/response (typically the editor snapshot). Returns the new node, or {@code null} if
+     * {@code source} has no parent (e.g. implicit root).
+     */
+    public RequestTreeNode copyAsSiblingUnderSameParent(RequestTreeNode source, HttpRequest request, HttpResponse response) {
+        TreeNode parentRaw = source.getParent();
+        if (!(parentRaw instanceof RequestTreeNode parent)) {
+            return null;
+        }
+
+        this.requestCount += 1;
+
+        String baseName = source.getName();
+        String copyName = baseName.endsWith(" (copy)") ? baseName : baseName + " (copy)";
+
+        RequestHistory history = new RequestHistory();
+        history.addEntry(request.httpService().host(), request, response);
+
+        RequestTreeNode copy = new RequestTreeNode(this.requestCount, source.getStatus(), copyName, request, response, history);
+        copy.addListener(this);
+
+        int insertIndex = parent.getIndex(source) + 1;
+        this.tree.insertNodeInto(copy, parent, insertIndex);
+        Treepeater.saveState();
+        return copy;
     }
 
     public RequestTree getTree() {

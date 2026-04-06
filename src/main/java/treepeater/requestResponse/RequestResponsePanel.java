@@ -4,29 +4,34 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Font;
+import java.awt.KeyboardFocusManager;
 import java.awt.event.ActionEvent;
-import java.awt.event.KeyEvent;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 
 import javax.swing.AbstractAction;
-import javax.swing.KeyStroke;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
-import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JSplitPane;
+import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.UIManager;
 import javax.swing.border.Border;
+import javax.swing.event.AncestorEvent;
+import javax.swing.event.AncestorListener;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
+import javax.swing.tree.TreePath;
 
 import burp.api.montoya.http.HttpService;
 import burp.api.montoya.http.RequestOptions;
@@ -37,11 +42,18 @@ import burp.api.montoya.ui.editor.EditorOptions;
 import burp.api.montoya.ui.editor.HttpRequestEditor;
 import burp.api.montoya.ui.editor.HttpResponseEditor;
 import treepeater.Treepeater;
+import treepeater.TreepeaterModel;
 import treepeater.components.CustomButton;
 import treepeater.components.SplitButtonPanel;
+import treepeater.settings.HotkeyCaptureDialog;
+import treepeater.settings.TreepeaterSettings;
+import treepeater.tree.RequestTree;
 import treepeater.tree.RequestTreeNode;
+import treepeater.tree.CustomTreeCellEditor.ProgrammaticEdit;
 
 public class RequestResponsePanel extends JPanel {
+    private final TreepeaterModel model;
+    private final RequestTree tree;
     private RequestTreeNode node;
 
     private HttpRequestEditor requestEditor;
@@ -70,8 +82,15 @@ public class RequestResponsePanel extends JPanel {
 
     private SwingWorker<HttpResponse, Void> activeWorker;
 
-    public RequestResponsePanel(RequestTreeNode node) {
+    private final HotkeyHandler hotkeyHandler;
+    private boolean hotkeyHandlerRegistered;
+
+    private final HashMap<String, Runnable> hotkeyActions = new HashMap<>();
+
+    public RequestResponsePanel(TreepeaterModel model, RequestTreeNode node) {
         super(new BorderLayout());
+        this.model = model;
+        this.tree = model.getTree();
         this.node = node;
 
         this.topBar = new JPanel();
@@ -171,8 +190,6 @@ public class RequestResponsePanel extends JPanel {
                 RequestResponsePanel.this.activeWorker = worker;
                 worker.execute();
             }
-
-            
         });
 
         this.cancelButton.setAction(new AbstractAction("Cancel") {
@@ -227,17 +244,96 @@ public class RequestResponsePanel extends JPanel {
 
         this.add(splitPane, BorderLayout.CENTER);
 
-        // Ctrl+Space sends the request (same as Burp Repeater)
-        KeyStroke ctrlSpace = KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, java.awt.event.InputEvent.CTRL_DOWN_MASK);
-        this.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(ctrlSpace, "sendRequest");
-        this.getActionMap().put("sendRequest", new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                if (RequestResponsePanel.this.sendButton.isEnabled()) {
-                    RequestResponsePanel.this.sendButton.doClick();
-                }
+        this.hotkeyHandlerRegistered = false;
+        this.hotkeyHandler = new HotkeyHandler();
+        this.populateHotkeyActions();
+        this.installHotkeys();
+    }
+
+    private void populateHotkeyActions() {
+        this.hotkeyActions.put(TreepeaterSettings.SEND_REQUEST_HOTKEY_SETTING, this::handleSendRequest);
+        this.hotkeyActions.put(TreepeaterSettings.HISTORY_BACK_HOTKEY_SETTING, this::navigateBack);
+        this.hotkeyActions.put(TreepeaterSettings.HISTORY_FORWARD_HOTKEY_SETTING, this::navigateForward);
+        this.hotkeyActions.put(TreepeaterSettings.COPY_SAME_PARENT_REQUEST_HOTKEY_SETTING, this::handleCopySameParentRequest);
+        this.hotkeyActions.put(TreepeaterSettings.RENAME_HOTKEY_SETTING, this::handleRename);
+        this.hotkeyActions.put(TreepeaterSettings.CHANGE_STATUS_HOTKEY_SETTING, this::handleChangeStatus);
+        this.hotkeyActions.put(TreepeaterSettings.EDIT_TARGET_HOTKEY_SETTING, () -> this.editTargetButton.doClick());
+    }
+
+    private void installHotkeys() {
+        TreepeaterSettings settings = TreepeaterSettings.getInstance();
+        for (Map.Entry<String, Runnable> entry : this.hotkeyActions.entrySet()) {
+            KeyStroke ks = HotkeyCaptureDialog.parseBurpHotkeyToKeyStroke(settings.getStringWithDefault(entry.getKey()));
+            if (ks != null) {
+                this.hotkeyHandler.addBinding(entry.getKey(), ks, entry.getValue());
+            }
+        }
+
+        settings.addListener((key, value) -> {
+            if (!this.hotkeyActions.containsKey(key) || !(value instanceof String newHotkey)) {
+                return;
+            }
+            KeyStroke newKs = HotkeyCaptureDialog.parseBurpHotkeyToKeyStroke(newHotkey);
+            if (newKs != null) {
+                this.hotkeyHandler.changeBinding(key, newKs);
             }
         });
+
+        addAncestorListener(new AncestorListener() {
+            @Override
+            public void ancestorAdded(AncestorEvent event) {
+                if (RequestResponsePanel.this.hotkeyHandlerRegistered) {
+                    return;
+                }
+                KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(
+                        RequestResponsePanel.this.hotkeyHandler);
+                RequestResponsePanel.this.hotkeyHandlerRegistered = true;
+            }
+
+            @Override
+            public void ancestorRemoved(AncestorEvent event) {
+                if (!RequestResponsePanel.this.hotkeyHandlerRegistered) {
+                    return;
+                }
+                KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(
+                        RequestResponsePanel.this.hotkeyHandler);
+                RequestResponsePanel.this.hotkeyHandlerRegistered = false;
+            }
+
+            @Override
+            public void ancestorMoved(AncestorEvent event) {
+            }
+        });
+    }
+
+    private void handleSendRequest() {
+        if (!this.sendButton.isEnabled()) {
+            return;
+        }
+        this.sendButton.doClick();
+    }
+
+    private void handleCopySameParentRequest() {
+        HttpRequest request = this.requestEditor.getRequest();
+        HttpResponse response = this.responseEditor.getResponse();
+        RequestTreeNode copy = this.model.copyAsSiblingUnderSameParent(this.node, request, response);
+        if (copy == null) {
+            return;
+        }
+        SwingUtilities.invokeLater(() -> {
+            TreePath path = new TreePath(copy.getPath());
+            this.tree.setSelectionPath(path);
+            this.tree.scrollPathToVisible(path);
+            copy.select();
+        });
+    }
+
+    private void handleRename() {
+        SwingUtilities.invokeLater(() -> this.tree.startProgrammaticEditForNode(this.node, ProgrammaticEdit.RENAME));
+    }
+
+    private void handleChangeStatus() {
+        SwingUtilities.invokeLater(() -> this.tree.startProgrammaticEditForNode(this.node, ProgrammaticEdit.STATUS));
     }
 
 

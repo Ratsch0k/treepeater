@@ -5,7 +5,6 @@ import java.util.LinkedList;
 import java.util.List;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Set;
 
 import javax.swing.tree.DefaultTreeModel;
 
@@ -275,60 +274,5 @@ public class TreepeaterPersistence {
                 traverseAndMap((RequestTreeNode) childObj, nodeMap);
             }
         }
-    }
-
-    private void printPersistedObject(PersistedObject obj) {
-        Treepeater.api.logging().logToOutput("{");
-        this.printPersistedObject(obj, 2);
-        Treepeater.api.logging().logToOutput("}");
-    }
-
-    private void printPersistedObject(PersistedObject obj, int depth) {
-        Set<String> childObjectKeys = obj.childObjectKeys();
-        for (String key : childObjectKeys) {
-            PersistedObject childObject = obj.getChildObject(key);
-
-            if (childObject == null) {
-                Treepeater.api.logging().logToOutput(" ".repeat(depth) + "\"" + key + "\": null");
-                continue;
-            }
-
-            Treepeater.api.logging().logToOutput(" ".repeat(depth) + "\"" + key + "\": {");
-
-            this.printPersistedObject(obj.getChildObject(key), depth + 2);
-
-            Treepeater.api.logging().logToOutput(" ".repeat(depth) + "}");
-        }
-
-        Set<String> stringKeys = obj.stringKeys();
-        for (String key : stringKeys) {
-            Treepeater.api.logging().logToOutput(" ".repeat(depth) + "\"" + key + "\": \"" + obj.getString(key) + "\"");
-        
-        }
-
-        Set<String> integerKeys = obj.integerKeys();
-        for (String key : integerKeys) {
-            Treepeater.api.logging().logToOutput(" ".repeat(depth) + "\"" + key + "\": " + obj.getInteger(key));
-        }
-
-        Set<String> booleanKeys = obj.booleanKeys();
-        for (String key : booleanKeys) {
-            Treepeater.api.logging().logToOutput(" ".repeat(depth) + "\"" + key + "\": " + obj.getBoolean(key));
-        }
-
-        Set<String> requestKeys = obj.httpRequestKeys();
-        for (String key : requestKeys) {
-            Treepeater.api.logging().logToOutput(" ".repeat(depth) + "\"" + key + "\": " + this.printHttpRequestResponse(obj.getHttpRequest(key), depth));
-        }
-
-        Set<String> responseKeys = obj.httpResponseKeys();
-        for (String key : responseKeys) {
-            Treepeater.api.logging().logToOutput(" ".repeat(depth) + "\"" + key + "\": " + this.printHttpRequestResponse(obj.getHttpResponse(key), depth));
-        }
-    }
-
-    private String printHttpRequestResponse(Object content, int depth) {
-        if (content == null) return "null";
-        return "\"\n" + " ".repeat(depth + 2) + content.toString().replace("\n", "\n" + " ".repeat(depth + 2)) + "\n" + " ".repeat(depth) + "\"";
     }
 }

@@ -19,7 +19,6 @@ import javax.swing.event.DocumentListener;
 
 import treepeater.requestResponse.Status;
 import treepeater.requestResponse.StatusComboBoxRenderer;
-import treepeater.Treepeater;
 
 
 public class CustomTreeCell extends JPanel implements DocumentListener {
@@ -203,10 +202,22 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
         this.node.select();
     }
 
-    public void clickButton() {
-        Treepeater.api.logging().logToOutput("Open combobox");
+    /**
+     * Requests focus on the status dropdown (combo box) and opens its popup.
+     * Used to programmatically trigger status selection UI.
+     */
+    public void openStatusPopup() {
         this.box.requestFocusInWindow();
         this.box.showPopup();
+    }
+
+    /**
+     * Requests focus on the name JTextField and selects all text for editing.
+     * Used to programmatically put the name field into edit mode.
+     */
+    public void focusNameFieldForEditing() {
+        this.field.requestFocusInWindow();
+        this.field.selectAll();
     }
 }
 

@@ -1,6 +1,5 @@
 package treepeater.settings;
 import java.awt.BorderLayout;
-import java.awt.Color;
 import java.awt.Component;
 import java.awt.Dialog;
 import java.awt.Dimension;
@@ -9,9 +8,11 @@ import java.awt.Font;
 import java.awt.KeyEventDispatcher;
 import java.awt.KeyboardFocusManager;
 import java.awt.Window;
+import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 
 import javax.swing.BorderFactory;
+import javax.swing.KeyStroke;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
@@ -172,5 +173,64 @@ public final class HotkeyCaptureDialog {
         String keyPart = KeyEvent.getKeyText(keyCode).replace(" ", "");
         sb.append(keyPart);
         return sb.toString();
+    }
+
+    /**
+     * Parses a {@link #formatBurpHotkey formatted} shortcut string (e.g. {@code Ctrl+Shift+Space})
+     * into a {@link KeyStroke} for use with {@link treepeater.requestResponse.HotkeyHandler}.
+     *
+     * @return the stroke, or {@code null} if the string cannot be parsed
+     */
+    public static KeyStroke parseBurpHotkeyToKeyStroke(String burpHotkey) {
+        if (burpHotkey == null || burpHotkey.isBlank()) {
+            return null;
+        }
+        String[] parts = burpHotkey.split("\\+");
+        if (parts.length < 2) {
+            return null;
+        }
+        int modifiers = 0;
+        for (int i = 0; i < parts.length - 1; i++) {
+            switch (parts[i].trim()) {
+                case "Ctrl" -> modifiers |= InputEvent.CTRL_DOWN_MASK;
+                case "Alt" -> modifiers |= InputEvent.ALT_DOWN_MASK;
+                case "Shift" -> modifiers |= InputEvent.SHIFT_DOWN_MASK;
+                case "Cmd" -> modifiers |= InputEvent.META_DOWN_MASK;
+                default -> {
+                }
+            }
+        }
+        String keyPart = parts[parts.length - 1].trim();
+        int keyCode = keyPartToKeyCode(keyPart);
+        if (keyCode == KeyEvent.VK_UNDEFINED) {
+            return null;
+        }
+        return KeyStroke.getKeyStroke(keyCode, modifiers, false);
+    }
+
+    private static int keyPartToKeyCode(String keyPart) {
+        if (keyPart == null || keyPart.isEmpty()) {
+            return KeyEvent.VK_UNDEFINED;
+        }
+        if (keyPart.length() == 1) {
+            char c = Character.toUpperCase(keyPart.charAt(0));
+            if (c >= 'A' && c <= 'Z') {
+                return KeyEvent.VK_A + (c - 'A');
+            }
+            if (c >= '0' && c <= '9') {
+                return KeyEvent.VK_0 + (c - '0');
+            }
+        }
+        String compact = keyPart.replace(" ", "");
+        for (int vk = 0; vk <= 0xFFFF; vk++) {
+            if (vk == KeyEvent.VK_UNDEFINED) {
+                continue;
+            }
+            String text = KeyEvent.getKeyText(vk).replace(" ", "");
+            if (!text.isEmpty() && compact.equalsIgnoreCase(text)) {
+                return vk;
+            }
+        }
+        return KeyEvent.VK_UNDEFINED;
     }
 }

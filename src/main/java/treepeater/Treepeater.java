@@ -35,6 +35,9 @@ public class Treepeater implements BurpExtension {
         Treepeater.api =  montoyaApi;
         montoyaApi.extension().setName("Treepeater");
 
+        TreepeaterSettings.init(montoyaApi.persistence().preferences());
+        TreepeaterSettings settings = TreepeaterSettings.getInstance();
+
         Treepeater.persistence = new TreepeaterPersistence(montoyaApi.persistence());
 
         try {
@@ -64,11 +67,7 @@ public class Treepeater implements BurpExtension {
             }
         });
 
-        TreepeaterSettings.init(montoyaApi.persistence().preferences());
-        TreepeaterSettings settings = TreepeaterSettings.getInstance();
-
         montoyaApi.userInterface().registerSettingsPanel(new TreepeaterSettingsPanel());
-
 
         HotKey sendHotKey = HotKey.hotKey("Send to Treepeater", settings.getSendHotkey());
         HotKeyHandler sendHotKeyHandler = event -> {
@@ -78,11 +77,11 @@ public class Treepeater implements BurpExtension {
         };
         this.sendHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(sendHotKey, sendHotKeyHandler);
 
-        settings.addListener(key -> {
+        settings.addListener((key, value) -> {
             Treepeater.api.logging().logToOutput("Settings changed: " + key);
             if (key.equals(TreepeaterSettings.SEND_HOTKEY_SETTING)) {
                 this.sendHotKeyRegistration.deregister();
-                HotKey newHotkey = HotKey.hotKey("Send to Treepeater", settings.getSendHotkey());
+                HotKey newHotkey = HotKey.hotKey("Send to Treepeater", (String) value);
                 this.sendHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(newHotkey, sendHotKeyHandler);
             }
         });

@@ -1,6 +1,5 @@
 package treepeater.tree;
 
-import java.awt.Color;
 import java.awt.Graphics;
 
 import javax.swing.JComboBox;
@@ -26,7 +25,6 @@ public final class TreeRowComboBoxUi {
             box.setUI(replacement);
         }
         box.setOpaque(false);
-        box.setBackground(new Color(0, 0, 0, 0));
     }
 
     /**
@@ -34,6 +32,17 @@ public final class TreeRowComboBoxUi {
      * {@link BasicComboBoxUI#paint} draws the value without the rounded fill.
      */
     private static final class FlatImpl extends FlatComboBoxUI {
+
+        /**
+         * Reduce the minimum width of the combobox.
+         */
+        @Override
+        protected void installDefaults() {
+            super.installDefaults();
+            this.minimumWidth = 42;
+        }
+
+
         @Override
         public void update(Graphics g, JComponent c) {
             if (comboBox.isEditable()) {

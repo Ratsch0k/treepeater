@@ -4,6 +4,7 @@ import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 
+import treepeater.icons.CloseIcon;
 import treepeater.tree.RequestTreeNode;
 import treepeater.tree.RequestTreeNodeListener;
 
@@ -26,7 +27,7 @@ public class RequestResponseTab extends JPanel {
         this.listeners = new HashSet<>();
 
         JButton closeButton = new JButton();
-        closeButton.setText("✖");
+        closeButton.setIcon(new CloseIcon().withColor(closeButton.getForeground()));
         closeButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {

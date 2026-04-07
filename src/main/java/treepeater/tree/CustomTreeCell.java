@@ -17,6 +17,7 @@ import javax.swing.SwingUtilities;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
+import treepeater.icons.CloseIcon;
 import treepeater.requestResponse.Status;
 import treepeater.requestResponse.StatusComboBoxRenderer;
 
@@ -109,7 +110,8 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
         gc.gridx = 3;
         gc.weightx = 0;
         gc.fill = GridBagConstraints.NONE;
-        this.closeButton = new JButton("x");
+        this.closeButton = new JButton();
+        this.closeButton.setIcon(new CloseIcon().withColor(this.closeButton.getForeground()));
         this.closeButton.setMargin(new Insets(0, 0, 0, 0));
         this.closeButton.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 8));
         this.closeButton.setOpaque(false);

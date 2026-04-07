@@ -15,6 +15,26 @@ public class Utilities {
             color.getAlpha()
         );
     }
+    /**
+     * Adjusts the brightness of a given {@link Color} by a specified factor.
+     * <p>
+     * Each color component (red, green, blue) is multiplied by {@code factor}
+     * and then clamped between 0 and 255. The alpha remains unchanged.
+     *
+     * @param color the original color to adjust
+     * @param factor the factor by which to adjust each color component
+     *               (values &lt; 1.0 darken, values &gt; 1.0 brighten)
+     * @return a new {@link Color} with adjusted brightness, or the original color if {@code color} is null
+     */
+
+    public static Color interpolateColor(Color a, Color b, float t) {
+        return new Color(
+            clamp(a.getRed()   + (b.getRed()   - a.getRed())   * t),
+            clamp(a.getGreen() + (b.getGreen() - a.getGreen()) * t),
+            clamp(a.getBlue()  + (b.getBlue()  - a.getBlue())  * t),
+            clamp(a.getAlpha() + (b.getAlpha() - a.getAlpha()) * t)
+        );
+    }
 
     public static int clamp(float v) {
         return Math.max(0, Math.min(255, Math.round(v)));

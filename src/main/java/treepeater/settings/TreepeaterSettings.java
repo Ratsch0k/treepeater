@@ -6,7 +6,6 @@ import java.util.HashMap;
 import java.util.List;
 
 import burp.api.montoya.persistence.Preferences;
-import treepeater.Treepeater;
 import treepeater.Utilities;
 import treepeater.requestResponse.Status;
 

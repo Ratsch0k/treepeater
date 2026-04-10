@@ -188,8 +188,9 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         JButton deleteButton = new JButton("Delete");
         JButton upButton = new JButton("\u25B2");
         JButton downButton = new JButton("\u25BC");
-        JButton loadDefaultButton = new JButton("Load Default");
         JButton saveButton = new JButton("Save as Default");
+        JButton loadDefaultButton = new JButton("Load Default");
+        JButton resetToDefaultButton = new JButton("Reset to Default");
 
         editButton.setEnabled(false);
         deleteButton.setEnabled(false);
@@ -263,6 +264,11 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
             this.settings.setDefaultStatuses(statuses.subList(1, statuses.size()));
         });
 
+        resetToDefaultButton.addActionListener(e -> {
+            registry.clear();
+            StatusRegistry.getStandardStatuses().forEach(registry::add);
+        });
+
         // Button toolbar
         JPanel toolbar = new JPanel(new GridBagLayout());
         toolbar.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -304,12 +310,13 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         gbc.gridy = 5;
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.weighty = 0;
-        toolbar.add(loadDefaultButton, gbc);
-        
-        gbc.gridy = 6;
         toolbar.add(saveButton, gbc);
 
- 
+        gbc.gridy = 6;
+        toolbar.add(loadDefaultButton, gbc);
+
+        gbc.gridy = 7;
+        toolbar.add(resetToDefaultButton, gbc);
 
         list.setPreferredSize(new Dimension(240, 200));
         list.setMaximumSize(list.getPreferredSize());

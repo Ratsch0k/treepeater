@@ -44,12 +44,12 @@ public class Status {
         return this.statusName;
     }
 
-    public Color getBackgroundColor() {
-        return this.colors.map(StatusColors::backgroundColor).orElse(UIManager.getColor(this.keyedColors.map(StatusKeyedColors::backgroundColorKey).orElse("")));
-    }
-
     public SvgIcon getIcon() {
         return this.icon;
+    }
+
+    public Color getBackgroundColor() {
+        return this.colors.map(StatusColors::backgroundColor).orElse(UIManager.getColor(this.keyedColors.map(StatusKeyedColors::backgroundColorKey).orElse("")));
     }
 
     public Color getBorderColor() {

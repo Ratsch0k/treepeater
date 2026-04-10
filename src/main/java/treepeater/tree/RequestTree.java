@@ -9,6 +9,7 @@ import java.util.List;
 
 import javax.swing.DropMode;
 import javax.swing.JTree;
+import javax.swing.JViewport;
 import javax.swing.SwingUtilities;
 import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeModel;
@@ -101,6 +102,21 @@ public class RequestTree extends JTree {
                 RequestTree.this.ui.invalidateNodeLayoutCache();
             }
         });
+    }
+
+    /**
+     * Burp theme switches replace the tree UI via {@link #updateUI()}; we always restore
+     * {@link CustomTreeUI} so row painting and layout stay consistent.
+     */
+    @Override
+    public void updateUI() {
+        super.updateUI();
+        setUI(this.ui);
+    }
+
+    /** Used by the scroll pane so {@link CustomTreeUI} can size rows to the viewport width. */
+    public void setViewportContext(JViewport viewport) {
+        this.ui.setViewportContext(viewport);
     }
 
     public DefaultTreeModel getTreeModel() {

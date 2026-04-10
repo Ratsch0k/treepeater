@@ -52,6 +52,18 @@ public class TreepeaterPersistence {
     private static final String PERSISTENCE_STATUS_BORDER_COLOR = "borderColor";
     private static final String PERSISTENCE_STATUS_SVG_CONTENT = "svgContent";
 
+    private static final String PERSISTENCE_STATUS_COLOR_MODE = "colorMode";
+    private static final String COLOR_MODE_VALUE = "VALUE";
+    private static final String COLOR_MODE_NAMED = "NAMED";
+    private static final String PERSISTENCE_STATUS_COLOR_BG_LIGHT = "colorBgLight";
+    private static final String PERSISTENCE_STATUS_COLOR_BORDER_LIGHT = "colorBorderLight";
+    private static final String PERSISTENCE_STATUS_COLOR_BG_DARK = "colorBgDark";
+    private static final String PERSISTENCE_STATUS_COLOR_BORDER_DARK = "colorBorderDark";
+    private static final String PERSISTENCE_STATUS_KEY_BG_LIGHT = "keyBgLight";
+    private static final String PERSISTENCE_STATUS_KEY_BORDER_LIGHT = "keyBorderLight";
+    private static final String PERSISTENCE_STATUS_KEY_BG_DARK = "keyBgDark";
+    private static final String PERSISTENCE_STATUS_KEY_BORDER_DARK = "keyBorderDark";
+
     public TreepeaterPersistence(Persistence persistence) {
         this.persistence = persistence;
     }
@@ -100,9 +112,26 @@ public class TreepeaterPersistence {
         PersistedObject statusObject = PersistedObject.persistedObject();
         statusObject.setString(PERSISTENCE_STATUS, status.getStatus());
         statusObject.setString(PERSISTENCE_STATUS_ID, status.getId());
-        statusObject.setString(PERSISTENCE_STATUS_BACKGROUND_COLOR, Utilities.colorToHex(status.getBackgroundColor()));
-        statusObject.setString(PERSISTENCE_STATUS_BORDER_COLOR, Utilities.colorToHex(status.getBorderColor()));
         statusObject.setString(PERSISTENCE_STATUS_SVG_CONTENT, status.getSvgContent());
+
+        if (status.getColors().isPresent()) {
+            Status.StatusColors c = status.getColors().get();
+            statusObject.setString(PERSISTENCE_STATUS_COLOR_MODE, COLOR_MODE_VALUE);
+            statusObject.setString(PERSISTENCE_STATUS_COLOR_BG_LIGHT, Utilities.colorToHex(c.backgroundColor()));
+            statusObject.setString(PERSISTENCE_STATUS_COLOR_BORDER_LIGHT, Utilities.colorToHex(c.borderColor()));
+            statusObject.setString(PERSISTENCE_STATUS_COLOR_BG_DARK, Utilities.colorToHex(c.backgroundDarkModeColor()));
+            statusObject.setString(PERSISTENCE_STATUS_COLOR_BORDER_DARK, Utilities.colorToHex(c.borderColorDarkModeColor()));
+        } else if (status.getNamedColors().isPresent()) {
+            Status.StatusNamedColors k = status.getNamedColors().get();
+            statusObject.setString(PERSISTENCE_STATUS_COLOR_MODE, COLOR_MODE_NAMED);
+            statusObject.setString(PERSISTENCE_STATUS_KEY_BG_LIGHT, k.backgroundColorKey());
+            statusObject.setString(PERSISTENCE_STATUS_KEY_BORDER_LIGHT, k.borderColorKey());
+            statusObject.setString(PERSISTENCE_STATUS_KEY_BG_DARK, k.backgroundDarkModeColorKey());
+            statusObject.setString(PERSISTENCE_STATUS_KEY_BORDER_DARK, k.borderColorDarkModeColorKey());
+        } else {
+            throw new IllegalStateException("Status has neither value colors nor named colors: " + status.getId());
+        }
+
         return statusObject;
     }
 
@@ -237,11 +266,41 @@ public class TreepeaterPersistence {
     private Status loadStatus(PersistedObject statusObject) {
         String status = statusObject.getString(PERSISTENCE_STATUS);
         String id = statusObject.getString(PERSISTENCE_STATUS_ID);
+        String svgContent = statusObject.getString(PERSISTENCE_STATUS_SVG_CONTENT);
+
+        String mode = statusObject.getString(PERSISTENCE_STATUS_COLOR_MODE);
+
+        if (COLOR_MODE_NAMED.equals(mode)) {
+            Status.StatusNamedColors named = new Status.StatusNamedColors(
+                    statusObject.getString(PERSISTENCE_STATUS_KEY_BG_LIGHT),
+                    statusObject.getString(PERSISTENCE_STATUS_KEY_BORDER_LIGHT),
+                    statusObject.getString(PERSISTENCE_STATUS_KEY_BG_DARK),
+                    statusObject.getString(PERSISTENCE_STATUS_KEY_BORDER_DARK));
+            return new Status(id, status, named, svgContent);
+        }
+
+        if (COLOR_MODE_VALUE.equals(mode)) {
+            Status.StatusColors colors = new Status.StatusColors(
+                    Utilities.hexToColor(statusObject.getString(PERSISTENCE_STATUS_COLOR_BG_LIGHT)),
+                    Utilities.hexToColor(statusObject.getString(PERSISTENCE_STATUS_COLOR_BORDER_LIGHT)),
+                    Utilities.hexToColor(statusObject.getString(PERSISTENCE_STATUS_COLOR_BG_DARK)),
+                    Utilities.hexToColor(statusObject.getString(PERSISTENCE_STATUS_COLOR_BORDER_DARK)));
+            return new Status(id, status, colors, svgContent);
+        }
+
+        // Legacy: only backgroundColor + borderColor (same for light and dark).
         String backgroundColor = statusObject.getString(PERSISTENCE_STATUS_BACKGROUND_COLOR);
         String borderColor = statusObject.getString(PERSISTENCE_STATUS_BORDER_COLOR);
-        String svgContent = statusObject.getString(PERSISTENCE_STATUS_SVG_CONTENT);
-        Status.StatusColors colors = new Status.StatusColors(Utilities.hexToColor(backgroundColor), Utilities.hexToColor(borderColor), Utilities.hexToColor(backgroundColor), Utilities.hexToColor(borderColor));
-        return new Status(id, status, colors, svgContent);
+        if (backgroundColor != null && borderColor != null) {
+            Status.StatusColors colors = new Status.StatusColors(
+                    Utilities.hexToColor(backgroundColor),
+                    Utilities.hexToColor(borderColor),
+                    Utilities.hexToColor(backgroundColor),
+                    Utilities.hexToColor(borderColor));
+            return new Status(id, status, colors, svgContent);
+        }
+
+        throw new IllegalStateException("Invalid persisted status (missing color data): " + id);
     }
 
     private RequestTree loadTree(PersistedObject treeObject) {

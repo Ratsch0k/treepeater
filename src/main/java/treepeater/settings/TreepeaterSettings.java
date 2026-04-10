@@ -41,11 +41,11 @@ public class TreepeaterSettings {
     private static final String DEFAULT_STATUS_FIELD_ID = "ID";
     private static final String DEFAULT_STATUS_FIELD_NAME = "NAME";
     private static final String DEFAULT_STATUS_FIELD_SVG = "SVG";
-    /** {@code VALUE} = {@link Status.StatusColors}; {@code KEYED} = {@link Status.StatusKeyedColors}. */
+
     private static final String DEFAULT_STATUS_FIELD_COLOR_MODE = "COLOR_MODE";
 
     private static final String COLOR_MODE_VALUE = "VALUE";
-    private static final String COLOR_MODE_KEYED = "KEYED";
+    private static final String COLOR_MODE_NAMED = "NAMED";
 
     private static final String DEFAULT_STATUS_FIELD_COLOR_BG_LIGHT = "COLOR_BG_LIGHT";
     private static final String DEFAULT_STATUS_FIELD_COLOR_BORDER_LIGHT = "COLOR_BORDER_LIGHT";
@@ -233,10 +233,10 @@ public class TreepeaterSettings {
                 this.preferences.setString(
                         defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_COLOR_BORDER_DARK),
                         Utilities.colorToHex(c.borderColorDarkModeColor()));
-            } else if (s.getKeyedColors().isPresent()) {
-                Status.StatusKeyedColors k = s.getKeyedColors().get();
+            } else if (s.getNamedColors().isPresent()) {
+                Status.StatusNamedColors k = s.getNamedColors().get();
                 this.preferences.setString(
-                        defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_COLOR_MODE), COLOR_MODE_KEYED);
+                        defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_COLOR_MODE), COLOR_MODE_NAMED);
                 this.preferences.setString(
                         defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_KEY_BG_LIGHT),
                         k.backgroundColorKey());
@@ -288,7 +288,7 @@ public class TreepeaterSettings {
                 return Collections.emptyList();
             }
             try {
-                if (COLOR_MODE_KEYED.equals(mode)) {
+                if (COLOR_MODE_NAMED.equals(mode)) {
                     String bgL = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_KEY_BG_LIGHT));
                     String brL = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_KEY_BORDER_LIGHT));
                     String bgD = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_KEY_BG_DARK));
@@ -296,7 +296,7 @@ public class TreepeaterSettings {
                     if (bgL == null || brL == null || bgD == null || brD == null) {
                         return Collections.emptyList();
                     }
-                    Status.StatusKeyedColors keyed = new Status.StatusKeyedColors(bgL, brL, bgD, brD);
+                    Status.StatusNamedColors keyed = new Status.StatusNamedColors(bgL, brL, bgD, brD);
                     result.add(new Status(id, name, keyed, svg));
                 } else if (COLOR_MODE_VALUE.equals(mode)) {
                     String bgL = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_COLOR_BG_LIGHT));

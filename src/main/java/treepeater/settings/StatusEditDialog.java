@@ -87,7 +87,7 @@ public final class StatusEditDialog {
 
         public String id;
         public Status.StatusColors colors;
-        public Status.StatusKeyedColors keyedColors;
+        public Status.StatusNamedColors keyedColors;
         public String svgContent;
         public boolean confirmed;
         public JTextField nameField;
@@ -122,7 +122,7 @@ public final class StatusEditDialog {
             this.nameField = nameField;
             addSimpleDocumentListener(nameField.getDocument(), this::updatePreview);
 
-            useColorsNamedKeysCheckBox = new JCheckBox("", initial != null && initial.getKeyedColors().isPresent());
+            useColorsNamedKeysCheckBox = new JCheckBox("", initial != null && initial.getNamedColors().isPresent());
 
             colorPanel = createColorPanel();
             updateColorModeCard();
@@ -174,7 +174,7 @@ public final class StatusEditDialog {
         private void initModelFromInitial(Status initial) {
             id = initial != null ? initial.getId() : Treepeater.getStatusRegistry().generateId();
             colors = initial != null ? initial.getColors().orElse(StatusDialog.getDefaultColors()) : StatusDialog.getDefaultColors();
-            keyedColors = initial != null ? initial.getKeyedColors().orElse(StatusDialog.getDefaultNamedColors()) : StatusDialog.getDefaultNamedColors();
+            keyedColors = initial != null ? initial.getNamedColors().orElse(StatusDialog.getDefaultNamedColors()) : StatusDialog.getDefaultNamedColors();
             svgContent = initial != null ? initial.getSvgContent() : StatusRegistry.readSvgResource("/icons/folder.svg");
         }
 
@@ -182,8 +182,8 @@ public final class StatusEditDialog {
             return new Status.StatusColors(new Color(243, 226, 201), new Color(231, 193, 125), new Color(151, 106, 20), new Color(219, 160, 47));
         }
 
-        private static Status.StatusKeyedColors getDefaultNamedColors() {
-            return new Status.StatusKeyedColors("Colors.ui.groups.2.background", "Colors.ui.groups.2.accent", "Colors.ui.groups.2.background", "Colors.ui.groups.2.accent");
+        private static Status.StatusNamedColors getDefaultNamedColors() {
+            return new Status.StatusNamedColors("Colors.ui.groups.2.background", "Colors.ui.groups.2.accent", "Colors.ui.groups.2.background", "Colors.ui.groups.2.accent");
         }
 
         /**
@@ -713,13 +713,13 @@ public final class StatusEditDialog {
         }
 
         /**
-         * @return {@link Status.StatusKeyedColors} from the text fields when named keys are enabled, otherwise {@code null}
+         * @return {@link Status.StatusNamedColors} from the text fields when named keys are enabled, otherwise {@code null}
          */
-        public Status.StatusKeyedColors getKeyedColors() {
+        public Status.StatusNamedColors getKeyedColors() {
             // If the color mode is keyed, return from the UI controls handling named color keys.
             if (useColorsNamedKeysCheckBox != null && useColorsNamedKeysCheckBox.isSelected()) {
                 // Construct StatusKeyedColors with the color values from the keyed color text fields
-                Status.StatusKeyedColors kc = new Status.StatusKeyedColors(
+                Status.StatusNamedColors kc = new Status.StatusNamedColors(
                     backgroundTextField != null ? backgroundTextField.getText().trim() : null,
                     borderTextField != null ? borderTextField.getText().trim() : null,
                     backgroundDarkModeTextField != null ? backgroundDarkModeTextField.getText().trim() : null,

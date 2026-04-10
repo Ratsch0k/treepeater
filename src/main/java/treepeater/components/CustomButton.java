@@ -13,14 +13,23 @@ import javax.swing.JButton;
 import javax.swing.UIManager;
 import javax.swing.border.Border;
 
-
+/**
+ * Rounded button that paints itself. {@link BasicButtonUI#installDefaults} calls
+ * {@link #setBackground} / {@link #setForeground} with theme colors; those calls must not
+ * overwrite colors set by application code. While the look-and-feel is installing
+ * ({@link #updateUI}), we skip updating the palette used for {@link #paintComponent}.
+ */
 public class CustomButton extends JButton {
+
     private Color defaultForeground;
     private Color defaultBackgroundColor;
     private Color defaultHoverBackgroundColor;
 
     private int arc = 6;
     private String text;
+
+    /** True only during {@code super.updateUI()} so LAF {@code setBackground} does not clobber app colors. */
+    private boolean lafInstalling;
 
     public CustomButton(String text) {
         super(text);
@@ -32,25 +41,45 @@ public class CustomButton extends JButton {
         this.defaultBackgroundColor = UIManager.getColor("Button.background");
         this.defaultHoverBackgroundColor = UIManager.getColor("Button.hoverBackground");
 
-        setForeground(defaultForeground);
+        setForeground(this.defaultForeground);
         setRolloverEnabled(true);
         setPreferredSize(new Dimension(86, 22));
         setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
+        setOpaque(false);
+        setContentAreaFilled(false);
+        setBorderPainted(false);
+    }
+
+    @Override
+    public void updateUI() {
+        this.lafInstalling = true;
+        try {
+            super.updateUI();
+        } finally {
+            this.lafInstalling = false;
+        }
     }
 
     @Override
     public void setForeground(Color color) {
         super.setForeground(color);
-        if (color != null) {
-            defaultForeground = color;
+        if (!this.lafInstalling && color != null) {
+            this.defaultForeground = color;
         }
     }
 
     @Override
     public void setBackground(Color color) {
         super.setBackground(color);
-        if (color != null) {
-            defaultBackgroundColor = color;
+        if (!this.lafInstalling && color != null) {
+            this.defaultBackgroundColor = color;
+        }
+    }
+
+    @Override
+    public void setBorder(Border border) {
+        if (!this.lafInstalling && border != null) {
+            super.setBorder(border);
         }
     }
 
@@ -64,7 +93,7 @@ public class CustomButton extends JButton {
 
     public void setHoverBackground(Color color) {
         if (color != null) {
-            defaultHoverBackgroundColor = color;
+            this.defaultHoverBackgroundColor = color;
         }
     }
 
@@ -81,9 +110,9 @@ public class CustomButton extends JButton {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
             FontMetrics fm = g2.getFontMetrics();
-            Insets insets = getInsets();
-            int w = getWidth();
-            int h = getHeight();
+            Insets insets = this.getInsets();
+            int w = this.getWidth();
+            int h = this.getHeight();
 
             int innerX = insets.left;
             int innerY = insets.top;
@@ -93,7 +122,7 @@ public class CustomButton extends JButton {
             Color fill = this.getColorForState();
             if (fill != null) {
                 g2.setColor(fill);
-                g2.fillRoundRect(0, 0, w, h, this.getArc(), this.getArc());
+                g2.fillRoundRect(0, 0, w, h, this.arc, this.arc);
             }
 
             if (this.text != null && !this.text.isEmpty()) {
@@ -116,15 +145,15 @@ public class CustomButton extends JButton {
 
     private Color getColorForState() {
         if (!isEnabled()) {
-            return defaultBackgroundColor.darker();
+            return this.defaultBackgroundColor.darker();
         }
         if (getModel().isPressed() || getModel().isArmed()) {
-            return defaultHoverBackgroundColor.darker();
+            return this.defaultHoverBackgroundColor.darker();
         }
         if (getModel().isRollover()) {
-            return defaultHoverBackgroundColor;
+            return this.defaultHoverBackgroundColor;
         }
-        return defaultBackgroundColor;
+        return this.defaultBackgroundColor;
     }
 
     private Color getForegroundForState() {

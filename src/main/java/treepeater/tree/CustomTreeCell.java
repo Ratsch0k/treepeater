@@ -12,11 +12,14 @@ import javax.swing.Box;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
 import javax.swing.JTree;
+import javax.swing.ListCellRenderer;
 import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
@@ -41,7 +44,7 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
     public CustomTreeCell() {
         super(new BorderLayout());
 
-        JComboBox<Status> box = new JComboBox<>();
+        StatusComboBox box = new StatusComboBox();
         box.setRenderer(new StatusComboBoxRenderer());
         TreeRowComboBoxUi.install(box);
         box.setEnabled(true);
@@ -100,7 +103,7 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
         gc.weightx = 0;
         gc.fill = GridBagConstraints.NONE;
         this.closeButton = new JButton();
-        this.closeButton.setIcon(new CloseIcon().withColor(this.closeButton.getForeground()));
+        this.closeButton.setIcon(new CloseIcon().withColor(UIManager.getColor("Label.foreground")));
         this.closeButton.setMargin(new Insets(0, 0, 0, 0));
         this.closeButton.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 8));
         this.closeButton.setOpaque(false);
@@ -126,6 +129,18 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
 
         this.setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
         this.setOpaque(false);
+    }
+
+    @Override
+    public void updateUI() {
+        super.updateUI();
+        this.applyThemeLocalStyles();
+    }
+
+    private void applyThemeLocalStyles() {
+        if (this.closeButton != null) {
+            this.closeButton.setIcon(new CloseIcon().withColor(UIManager.getColor("Label.foreground")));
+        }
     }
 
     public int getComboBoxWidth() {
@@ -215,6 +230,23 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
     public void focusNameFieldForEditing() {
         this.field.requestFocusInWindow();
         this.field.selectAll();
+    }
+
+    /**
+     * Re-applies {@link TreeRowComboBoxUi} after {@code super.updateUI()} whenever Burp's theme
+     * changes; otherwise the LAF replaces our UI and the value area paints incorrectly (often fully
+     * transparent).
+     */
+    private static final class StatusComboBox extends JComboBox<Status> {
+        @Override
+        public void updateUI() {
+            super.updateUI();
+            TreeRowComboBoxUi.install(this);
+            ListCellRenderer<? super Status> r = getRenderer();
+            if (r instanceof JComponent) {
+                SwingUtilities.updateComponentTreeUI((JComponent) r);
+            }
+        }
     }
 }
 

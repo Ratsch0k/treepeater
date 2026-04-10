@@ -8,8 +8,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
-import javax.swing.UIManager;
-
 import treepeater.Treepeater;
 import treepeater.requestResponse.Status;
 
@@ -134,9 +132,9 @@ public class StatusRegistry {
 
     public static List<Status> getStandardStatuses() {
         List<Status> defaults = new ArrayList<>();
-        defaults.add(new Status("TODO",       "TODO",       new Status.StatusColors(UIManager.getColor("Colors.ui.groups.2.background"), UIManager.getColor("Colors.ui.groups.2.accent"), UIManager.getColor("Colors.ui.groups.2.background"), UIManager.getColor("Colors.ui.groups.2.accent")), readSvgResource("/icons/hourglass.svg")));
-        defaults.add(new Status("FINDING",    "Finding",    new Status.StatusColors(UIManager.getColor("Colors.ui.groups.1.background"), UIManager.getColor("Colors.ui.groups.1.accent"), UIManager.getColor("Colors.ui.groups.1.background"), UIManager.getColor("Colors.ui.groups.1.accent")), readSvgResource("/icons/warning.svg")));
-        defaults.add(new Status("DONE",       "Done",       new Status.StatusColors(UIManager.getColor("Colors.ui.groups.3.background"), UIManager.getColor("Colors.ui.groups.3.accent"), UIManager.getColor("Colors.ui.groups.3.background"), UIManager.getColor("Colors.ui.groups.3.accent")), readSvgResource("/icons/check.svg")));
+        defaults.add(new Status("TODO",       "TODO",       new Status.StatusNamedColors("Colors.ui.groups.2.background", "Colors.ui.groups.2.accent", "Colors.ui.groups.2.background", "Colors.ui.groups.2.accent"), readSvgResource("/icons/hourglass.svg")));
+        defaults.add(new Status("FINDING",    "Finding",    new Status.StatusNamedColors("Colors.ui.groups.1.background", "Colors.ui.groups.1.accent", "Colors.ui.groups.1.background", "Colors.ui.groups.1.accent"), readSvgResource("/icons/warning.svg")));
+        defaults.add(new Status("DONE",       "Done",       new Status.StatusNamedColors("Colors.ui.groups.3.background", "Colors.ui.groups.3.accent", "Colors.ui.groups.3.background", "Colors.ui.groups.3.accent"), readSvgResource("/icons/check.svg")));
         return defaults;
     }
 
@@ -144,7 +142,7 @@ public class StatusRegistry {
         return new Status(
             "DEFAULT",
              "Default",
-             new Status.StatusColors(UIManager.getColor("Colors.ui.background.3"), UIManager.getColor("Colors.ui.background.4"), UIManager.getColor("Colors.ui.background.3"), UIManager.getColor("Colors.ui.background.4")),
+             new Status.StatusNamedColors("Colors.ui.background.3", "Colors.ui.background.4", "Colors.ui.background.3", "Colors.ui.background.4"),
              StatusRegistry.readSvgResource("/icons/folder.svg"));
     }
 

@@ -3,6 +3,7 @@ import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.UIManager;
 
 import treepeater.icons.CloseIcon;
 import treepeater.tree.RequestTreeNode;
@@ -16,6 +17,7 @@ import java.util.HashSet;
 
 public class RequestResponseTab extends JPanel {
     JLabel label;
+    JButton closeButton;
 
     public HashSet<ActionListener> listeners;
     
@@ -26,8 +28,8 @@ public class RequestResponseTab extends JPanel {
         this.add(this.label);
         this.listeners = new HashSet<>();
 
-        JButton closeButton = new JButton();
-        closeButton.setIcon(new CloseIcon().withColor(closeButton.getForeground()));
+        closeButton = new JButton();
+        closeButton.setIcon(new CloseIcon().withColor(UIManager.getColor("Label.foreground")));
         closeButton.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -61,6 +63,18 @@ public class RequestResponseTab extends JPanel {
                 
             }            
         });
+    }
+
+    @Override
+    public void updateUI() {
+        super.updateUI();
+        this.applyThemeLocalStyles();
+    }
+
+    private void applyThemeLocalStyles() {
+        if (closeButton != null) {
+            closeButton.setIcon(new CloseIcon().withColor(UIManager.getColor("Label.foreground")));
+        }
     }
 
     public void addActionListener(ActionListener listener) {

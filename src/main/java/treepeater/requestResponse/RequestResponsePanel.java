@@ -29,8 +29,6 @@ import javax.swing.UIManager;
 import javax.swing.border.Border;
 import javax.swing.event.AncestorEvent;
 import javax.swing.event.AncestorListener;
-import javax.swing.event.ChangeEvent;
-import javax.swing.event.ChangeListener;
 import javax.swing.tree.TreePath;
 
 import burp.api.montoya.http.HttpService;
@@ -62,6 +60,7 @@ public class RequestResponsePanel extends JPanel {
     private CustomButton sendButton;
     private JButton cancelButton;
     private JPanel topBar;
+    private JPanel topBarWrapper;
 
     private JSplitPane splitPane;
 
@@ -126,9 +125,6 @@ public class RequestResponsePanel extends JPanel {
         this.historyForwardDropButton.addActionListener(e -> showHistoryMenu(1, this.historyForwardDropButton));
 
         this.sendButton = new CustomButton("Send");
-        this.sendButton.setBackground(UIManager.getColor("Button.primary.background"));
-        this.sendButton.setForeground(UIManager.getColor("Button.primary.foreground"));
-        this.sendButton.setHoverBackground(UIManager.getColor("Button.primary.hoverBackground"));
         this.sendButton.setBorder(BorderFactory.createEmptyBorder(3, 0, 3, 0));
 
         this.cancelButton = new JButton();
@@ -229,12 +225,13 @@ public class RequestResponsePanel extends JPanel {
         this.topBar.add(Box.createHorizontalStrut(6));
         this.topBar.add(this.editTargetButton);
 
-        JPanel topBarWrapper = new JPanel();
-        topBarWrapper.setLayout(new BorderLayout());
-        topBarWrapper.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, UIManager.getColor("Separator.foreground")));
-        topBarWrapper.add(this.topBar, BorderLayout.CENTER);
+        this.topBarWrapper = new JPanel();
+        this.topBarWrapper.setLayout(new BorderLayout());
+        this.topBarWrapper.add(this.topBar, BorderLayout.CENTER);
 
-        this.add(topBarWrapper, BorderLayout.PAGE_START);
+        this.add(this.topBarWrapper, BorderLayout.PAGE_START);
+
+        this.applyThemeLocalStyles();
 
         this.splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
         Treepeater.api.userInterface().applyThemeToComponent(this.splitPane);
@@ -257,6 +254,50 @@ public class RequestResponsePanel extends JPanel {
         this.hotkeyHandler = new HotkeyHandler();
         this.populateHotkeyActions();
         this.installHotkeys();
+    }
+
+    @Override
+    public void updateUI() {
+        super.updateUI();
+        this.applyThemeLocalStyles();
+    }
+
+    /**
+     * Re-reads {@link UIManager} colors for controls that are configured once in the constructor
+     * but must track Burp theme changes.
+     */
+    private void applyThemeLocalStyles() {
+        // Top bar was never passed to applyThemeToComponent (only the split pane was), so Burp
+        // never pushed fonts/colors onto Send / nav controls. Re-apply whenever theme/LAF sync runs.
+        if (this.topBarWrapper != null && Treepeater.api != null) {
+            Treepeater.api.userInterface().applyThemeToComponent(this.topBarWrapper);
+        }
+        if (this.topBarWrapper != null) {
+            this.topBarWrapper.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, uiBorderColor()));
+        }
+        if (this.sendButton != null) {
+            Color bg = UIManager.getColor("Button.primary.background");
+            Color fg = UIManager.getColor("Button.primary.foreground");
+            Color hov = UIManager.getColor("Button.primary.hoverBackground");
+
+            this.sendButton.setBackground(bg);
+            this.sendButton.setForeground(fg);
+            this.sendButton.setHoverBackground(hov);
+            this.sendButton.setBorder(BorderFactory.createEmptyBorder(3, 0, 3, 0));
+            this.sendButton.repaint();
+        }
+        if (this.historyBackButton != null) {
+            this.restyleFlatToolbarButton(this.historyBackButton);
+            this.restyleFlatToolbarButton(this.historyBackDropButton);
+            this.restyleFlatToolbarButton(this.historyForwardButton);
+            this.restyleFlatToolbarButton(this.historyForwardDropButton);
+        }
+        if (this.historyBackSplitButton != null) {
+            this.historyBackSplitButton.repaint();
+        }
+        if (this.historyForwardSplitButton != null) {
+            this.historyForwardSplitButton.repaint();
+        }
     }
 
     private void populateHotkeyActions() {
@@ -574,10 +615,6 @@ public class RequestResponsePanel extends JPanel {
     }
 
     private static JPanel buildHistorySplitButton(JButton navButton, JButton dropButton) {
-        Color borderColor = uiBorderColor();
-        Color dividerColor = borderColor;
-        Color hoverColor = uiHoverColor();
-
         styleAsFlatButton(navButton);
         styleAsFlatButton(dropButton);
 
@@ -586,10 +623,10 @@ public class RequestResponsePanel extends JPanel {
         dropButton.setBorder(BorderFactory.createEmptyBorder(7, 0, 6, 0));
         dropButton.setFont(dropButton.getFont().deriveFont(dropButton.getFont().getSize2D() - 4f));
 
-        installHoverBackground(navButton, hoverColor);
-        installHoverBackground(dropButton, hoverColor);
+        installHoverBackground(navButton);
+        installHoverBackground(dropButton);
 
-        SplitButtonPanel panel = new SplitButtonPanel(borderColor, dividerColor);
+        SplitButtonPanel panel = new SplitButtonPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.X_AXIS));
 
         panel.add(navButton);
@@ -635,28 +672,43 @@ public class RequestResponsePanel extends JPanel {
         return new Color(0, 0, 0, 18);
     }
 
-    private static void installHoverBackground(JButton button, Color hoverBg) {
-        final Color normalBg = button.getBackground();
-        button.getModel().addChangeListener(new ChangeListener() {
-            @Override
-            public void stateChanged(ChangeEvent e) {
-                Color next;
-                if (!button.isEnabled()) {
-                    next = normalBg;
-                } else {
-                    next = button.getModel().isRollover() ? hoverBg : normalBg;
-                }
-                if (!Objects.equals(button.getBackground(), next)) {
-                    button.setBackground(next);
-                }
+    private static void installHoverBackground(JButton button) {
+        button.getModel().addChangeListener(e -> applyFlatButtonHoverVisual(button));
+    }
 
-                // Ensure the split-button outline/divider gets repainted too.
-                button.repaint();
-                Component parent = button.getParent();
-                if (parent != null) {
-                    parent.repaint();
-                }
-            }
-        });
+    private static void applyFlatButtonHoverVisual(JButton button) {
+        Color normalBg = flatPanelBackground();
+        Color hoverBg = uiHoverColor();
+        Color next;
+        if (!button.isEnabled()) {
+            next = normalBg;
+        } else {
+            next = button.getModel().isRollover() ? hoverBg : normalBg;
+        }
+        if (!Objects.equals(button.getBackground(), next)) {
+            button.setBackground(next);
+        }
+        button.repaint();
+        Component parent = button.getParent();
+        if (parent != null) {
+            parent.repaint();
+        }
+    }
+
+    private static Color flatPanelBackground() {
+        Color bg = UIManager.getColor("Panel.background");
+        if (bg != null) {
+            return bg;
+        }
+        Color c = UIManager.getColor("control");
+        return c != null ? c : Color.LIGHT_GRAY;
+    }
+
+    /**
+     * After a theme change, reset baseline background and re-apply hover if the pointer is still over the control.
+     */
+    private void restyleFlatToolbarButton(JButton button) {
+        styleAsFlatButton(button);
+        applyFlatButtonHoverVisual(button);
     }
 }

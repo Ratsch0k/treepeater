@@ -16,7 +16,6 @@ import javax.swing.JTabbedPane;
 import javax.swing.event.TreeModelEvent;
 import javax.swing.event.TreeModelListener;
 
-import treepeater.tree.CustomTreeUI;
 import treepeater.tree.RequestTreeNode;
 import treepeater.draggable.RequestTreeNodeSimple;
 import treepeater.requestResponse.RequestResponsePanel;
@@ -187,7 +186,7 @@ public class TreepeaterUI extends JSplitPane {
         leftPanel.setMinimumSize(MIN_LEFT_PANEL_SIZE);
 
         JScrollPane scrollPane = new JScrollPane(this.model.getTree());
-        ((CustomTreeUI) this.model.getTree().getUI()).setViewportContext(scrollPane.getViewport());
+        this.model.getTree().setViewportContext(scrollPane.getViewport());
         scrollPane.setMinimumSize(MIN_LEFT_PANEL_SIZE);
 
         leftPanel.add(scrollPane, BorderLayout.CENTER);

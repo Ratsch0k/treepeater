@@ -4,8 +4,6 @@ import java.awt.Graphics;
 
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
-import javax.swing.plaf.ComboBoxUI;
-import javax.swing.plaf.basic.BasicComboBoxUI;
 
 import com.formdev.flatlaf.ui.FlatComboBoxUI;
 
@@ -18,18 +16,18 @@ public final class TreeRowComboBoxUi {
     private TreeRowComboBoxUi() {
     }
 
+    /**
+     * Applies the tree-row combo UI. Call after {@link JComboBox#updateUI()} when the LAF/theme
+     * changes so Burp does not leave the default combo box UI installed.
+     */
     public static void install(JComboBox<?> box) {
-        box.updateUI();
-        ComboBoxUI replacement = new FlatImpl();
-        if (replacement != null) {
-            box.setUI(replacement);
-        }
+        box.setUI(new FlatImpl());
         box.setOpaque(false);
     }
 
     /**
      * FlatLaf paints the combo background in {@link #update}; delegate to {@link #paint} only so
-     * {@link BasicComboBoxUI#paint} draws the value without the rounded fill.
+     * the value is drawn without the rounded fill.
      */
     private static final class FlatImpl extends FlatComboBoxUI {
 

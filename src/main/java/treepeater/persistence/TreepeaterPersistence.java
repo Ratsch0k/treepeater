@@ -57,10 +57,9 @@ public class TreepeaterPersistence {
     }
 
     public void saveModel(TreepeaterModel model) {
-        Treepeater.api.logging().logToOutput("Saving state");
         PersistedObject extensionData = this.persistence.extensionData();
 
-        PersistedObject root = PersistedObject.persistedObject();
+        PersistedObject root = extensionData.childObjectKeys().contains(PERSISTENCE_ROOT) ? extensionData.getChildObject(PERSISTENCE_ROOT) : PersistedObject.persistedObject();
         root.setInteger(PERSISTENCE_REQUEST_COUNT, model.getRequestCount());
 
         PersistedObject tree = this.saveTree(model.getTree());
@@ -74,15 +73,17 @@ public class TreepeaterPersistence {
         root.setChildObject(PERSISTENCE_TABS, saveTabs(model.getTabs()));
 
         extensionData.setChildObject(PERSISTENCE_ROOT, root);
+
     }
 
     public void saveStatusRegistry(StatusRegistry statusRegistry) {
         PersistedObject extensionData = this.persistence.extensionData();
-        PersistedObject root = extensionData.getChildObject(PERSISTENCE_ROOT);
+        PersistedObject root = extensionData.childObjectKeys().contains(PERSISTENCE_ROOT) ? extensionData.getChildObject(PERSISTENCE_ROOT) : PersistedObject.persistedObject();
 
         PersistedObject statusesObject = PersistedObject.persistedObject();
         List<Status> statuses = statusRegistry.getAll();
         statusesObject.setInteger(PERSISTENCE_SIZE, statuses.size()-1);
+
         
         // Important: Skip the default status
         for (int idx = 1; idx < statuses.size(); idx++) {
@@ -203,6 +204,11 @@ public class TreepeaterPersistence {
         return model;
     }
 
+    public boolean hasStatusRegistry() {
+        PersistedObject extensionData = this.persistence.extensionData();
+        return extensionData.childObjectKeys().contains(PERSISTENCE_ROOT) && extensionData.getChildObject(PERSISTENCE_ROOT).childObjectKeys().contains(PERSISTENCE_STATUS_REGISTRY);
+    }
+
     public StatusRegistry loadStatusRegistry() {
         PersistedObject extensionData = this.persistence.extensionData();
         PersistedObject root = extensionData.getChildObject(PERSISTENCE_ROOT);
@@ -216,7 +222,7 @@ public class TreepeaterPersistence {
         int statusCount = statusesObject.getInteger(PERSISTENCE_SIZE).intValue();
 
         if (statusCount == 0) {
-            return new StatusRegistry();
+            return new StatusRegistry(List.of());
         }
         List<Status> statuses = new ArrayList<>();
 

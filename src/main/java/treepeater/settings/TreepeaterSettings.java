@@ -203,7 +203,6 @@ public class TreepeaterSettings {
      * @param statuses statuses to store; {@code null} is treated as an empty list
      */
     public void setDefaultStatuses(List<Status> statuses) {
-        Treepeater.api.logging().logToOutput("Setting default statuses: " + statuses);
 
         List<Status> list = statuses != null ? statuses : List.of();
         Integer previousCountBox = this.preferences.getInteger(DEFAULT_STATUSES_COUNT_SETTING);
@@ -258,11 +257,8 @@ public class TreepeaterSettings {
         for (int i = n; i < previousCount; i++) {
             deleteDefaultStatusIndex(i);
         }
-        if (n == 0) {
-            this.preferences.deleteInteger(DEFAULT_STATUSES_COUNT_SETTING);
-        } else {
-            this.preferences.setInteger(DEFAULT_STATUSES_COUNT_SETTING, n);
-        }
+
+        this.preferences.setInteger(DEFAULT_STATUSES_COUNT_SETTING, n);
         this.notifyListeners(DEFAULT_STATUSES_SETTING, list);
     }
 
@@ -270,7 +266,6 @@ public class TreepeaterSettings {
      * Loads the user's default status list from preferences, or {@code null} if unset, or an empty list if invalid.
      */
     public List<Status> getDefaultStatuses() {
-        Treepeater.api.logging().logToOutput("Getting default statuses");
         Integer countBox = this.preferences.getInteger(DEFAULT_STATUSES_COUNT_SETTING);
         
         // In this case the user has never saved a default status list, so we return null.

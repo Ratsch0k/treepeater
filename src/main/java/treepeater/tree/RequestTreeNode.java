@@ -31,7 +31,6 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
 
     public RequestTreeNode(int id, String name, HttpRequest request, HttpResponse response) {
         super(name);
-        Treepeater.api.logging().logToOutput("RequestTreeNode without status: " + name);
 
         this.id = id;
         this.name = name;

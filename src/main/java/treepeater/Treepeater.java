@@ -9,6 +9,7 @@ import burp.api.montoya.ui.contextmenu.MessageEditorHttpRequestResponse;
 import burp.api.montoya.ui.hotkey.HotKey;
 import burp.api.montoya.ui.hotkey.HotKeyHandler;
 import treepeater.persistence.TreepeaterPersistence;
+import treepeater.requestResponse.Status;
 import treepeater.settings.StatusRegistry;
 import treepeater.settings.TreepeaterSettings;
 import treepeater.settings.TreepeaterSettingsPanel;
@@ -44,8 +45,21 @@ public class Treepeater implements BurpExtension {
 
         try {
             api.logging().logToOutput("Loading status registry");
-            Treepeater.statusRegistry = Treepeater.persistence.loadStatusRegistry();
-            Treepeater.api.logging().logToOutput("Status registry loaded");
+            if (Treepeater.persistence.hasStatusRegistry()) {
+                Treepeater.statusRegistry = Treepeater.persistence.loadStatusRegistry();
+                Treepeater.api.logging().logToOutput("Status registry loaded from project file");
+            } else {
+                Treepeater.api.logging().logToOutput("No status registry saved in project");
+                List<Status> defaultStatuses = settings.getDefaultStatuses();
+                if (defaultStatuses != null) {
+                    Treepeater.api.logging().logToOutput("Default statues found in user preferences, creating new status registry with them");
+                    Treepeater.statusRegistry = new StatusRegistry(defaultStatuses);
+                } else {
+                    Treepeater.api.logging().logToOutput("No default statues found in user preferences, creating new status registry with standard statues");
+                    Treepeater.statusRegistry = new StatusRegistry();
+                }
+            }
+
         } catch (Exception e) {
             Treepeater.api.logging().logToOutput("Error loading status registry from file: " + e.getMessage());
             Treepeater.statusRegistry = new StatusRegistry();

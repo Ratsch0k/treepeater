@@ -378,7 +378,7 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         public Component getListCellRendererComponent(
                 JList<? extends Status> list, Status status, int index,
                 boolean isSelected, boolean cellHasFocus) {
-            iconLabel.setIcon(status.getIcon());
+            iconLabel.setIcon(status.getIcon().withColor(status.getBorderColor()));
             nameLabel.setText(status.getStatus());
             colorSwatch.setBackground(status.getBackgroundColor());
 

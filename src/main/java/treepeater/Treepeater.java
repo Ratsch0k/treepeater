@@ -9,6 +9,7 @@ import burp.api.montoya.ui.contextmenu.MessageEditorHttpRequestResponse;
 import burp.api.montoya.ui.hotkey.HotKey;
 import burp.api.montoya.ui.hotkey.HotKeyHandler;
 import treepeater.persistence.TreepeaterPersistence;
+import treepeater.settings.StatusRegistry;
 import treepeater.settings.TreepeaterSettings;
 import treepeater.settings.TreepeaterSettingsPanel;
 
@@ -24,6 +25,7 @@ import java.util.Optional;
 
 public class Treepeater implements BurpExtension {
     public static MontoyaApi api;
+    private static StatusRegistry statusRegistry;
     private static TreepeaterModel model;
     private static TreepeaterPersistence persistence;
     DefaultMutableTreeNode root;
@@ -41,14 +43,24 @@ public class Treepeater implements BurpExtension {
         Treepeater.persistence = new TreepeaterPersistence(montoyaApi.persistence());
 
         try {
-            Treepeater.model = Treepeater.persistence.load();
-            Treepeater.api.logging().logToOutput("Model loaded from file");
+            api.logging().logToOutput("Loading status registry");
+            Treepeater.statusRegistry = Treepeater.persistence.loadStatusRegistry();
+            Treepeater.api.logging().logToOutput("Status registry loaded");
+        } catch (Exception e) {
+            Treepeater.api.logging().logToOutput("Error loading status registry from file: " + e.getMessage());
+            Treepeater.statusRegistry = new StatusRegistry();
+        }
+
+        try {
+            Treepeater.api.logging().logToOutput("Loading model");
+            Treepeater.model = Treepeater.persistence.loadModel();
+            Treepeater.api.logging().logToOutput("Model loaded");
         } catch (Exception e) {
             Treepeater.api.logging().logToOutput("Error loading state from file: " + e.getMessage());
             Treepeater.model = new TreepeaterModel();
         }
 
-        montoyaApi.extension().registerUnloadingHandler(() -> Treepeater.persistence.save(Treepeater.model));
+        montoyaApi.extension().registerUnloadingHandler(() -> Treepeater.persistence.saveModel(Treepeater.model));
 
         TreepeaterUI ui = new TreepeaterUI(model);
 
@@ -87,13 +99,18 @@ public class Treepeater implements BurpExtension {
         });
     }
 
+    public static StatusRegistry getStatusRegistry() {
+        return Treepeater.statusRegistry;
+    }
+
     /**
      * Save the current state of the model using a background thread.
      */
     public static void saveState() {
         SwingUtilities.invokeLater(() ->  {
             Treepeater.api.logging().logToOutput("Saving state");
-            Treepeater.persistence.save(Treepeater.model);
+            Treepeater.persistence.saveStatusRegistry(Treepeater.statusRegistry);
+            Treepeater.persistence.saveModel(Treepeater.model);
         });
     }
 

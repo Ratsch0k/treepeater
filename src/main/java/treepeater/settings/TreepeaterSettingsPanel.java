@@ -1,6 +1,11 @@
 package treepeater.settings;
+import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.Graphics;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
@@ -11,15 +16,21 @@ import java.util.function.Supplier;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.DefaultListModel;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JSeparator;
 import javax.swing.JTextArea;
+import javax.swing.ListCellRenderer;
+import javax.swing.ListSelectionModel;
 import javax.swing.UIManager;
 
 import burp.api.montoya.ui.settings.SettingsPanelWithData;
+import treepeater.Treepeater;
+import treepeater.requestResponse.Status;
 
 /**
  * Burp settings UI for Treepeater: wraps the Montoya-built settings row and adds shortcut capture.
@@ -50,7 +61,14 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
 
         this.root.add(new JSeparator(JSeparator.HORIZONTAL));
 
-        this.root.add(this.createTitledSection("Status", "Configure available statuses for Treepeater tabs", new JPanel()));
+        this.root.add(this.createTitledSection(
+            "Status",
+            "Configure the statuses available for Treepeater nodes. " +
+            "You can add your own, edit existing ones, reorder them, or delete ones you don\u2019t need. " +
+            "Each status has a name, background and border/icon color, and an SVG icon.",
+            this.createStatusPanel()
+        ));
+
     }
 
     private JPanel createTitledSection(String title, String description, JComponent content) {
@@ -141,6 +159,201 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         parent.add(hotkeyLabel, labelGbc);
         parent.add(hotkeyButton, buttonGbc);
         return row + 1;
+    }
+
+    private JComponent createStatusPanel() {
+        StatusRegistry registry = Treepeater.getStatusRegistry();
+
+        DefaultListModel<Status> model = new DefaultListModel<>();
+        registry.getAll().forEach(model::addElement);
+
+        JList<Status> list = new JList<>(model);
+        list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        list.setCellRenderer(new StatusListCellRenderer());
+        list.setFixedCellHeight(32);
+
+        // Sync list model when registry changes (e.g. from another panel reload)
+        registry.addChangeListener(() -> {
+            int selected = list.getSelectedIndex();
+            model.clear();
+            registry.getAll().forEach(model::addElement);
+            if (selected >= 0 && selected < model.size()) {
+                list.setSelectedIndex(selected);
+            }
+        });
+
+        JButton addButton = new JButton("Add");
+        JButton editButton = new JButton("Edit");
+        JButton deleteButton = new JButton("Delete");
+        JButton upButton = new JButton("\u25B2");
+        JButton downButton = new JButton("\u25BC");
+
+        editButton.setEnabled(false);
+        deleteButton.setEnabled(false);
+        upButton.setEnabled(false);
+        downButton.setEnabled(false);
+
+        list.addListSelectionListener(e -> {
+            if (e.getValueIsAdjusting()) return;
+            int idx = list.getSelectedIndex();
+            // Don't allow the default status to be changed
+            boolean sel = idx > 0;
+            editButton.setEnabled(sel);
+            deleteButton.setEnabled(sel);
+            upButton.setEnabled(sel && idx > 0);
+            downButton.setEnabled(sel && idx < model.size() - 1);
+        });
+
+        addButton.addActionListener(e -> {
+            Status created = StatusEditDialog.showDialog(this.root, null);
+            if (created != null) {
+                registry.add(created);
+            }
+        });
+
+        editButton.addActionListener(e -> {
+            int idx = list.getSelectedIndex();
+            if (idx < 0) return;
+            Status edited = StatusEditDialog.showDialog(this.root, model.get(idx));
+            if (edited != null) {
+                registry.update(idx, edited);
+                list.setSelectedIndex(idx);
+            }
+        });
+
+        deleteButton.addActionListener(e -> {
+            int idx = list.getSelectedIndex();
+            if (idx < 0 || model.size() <= 1) return;
+            registry.remove(idx);
+            int newSel = Math.min(idx, model.size() - 1);
+            if (newSel >= 0) list.setSelectedIndex(newSel);
+        });
+
+        upButton.addActionListener(e -> {
+            int idx = list.getSelectedIndex();
+            if (idx <= 0) return;
+            registry.moveUp(idx);
+            list.setSelectedIndex(idx - 1);
+        });
+
+        downButton.addActionListener(e -> {
+            int idx = list.getSelectedIndex();
+            if (idx < 0 || idx >= model.size() - 1) return;
+            registry.moveDown(idx);
+            list.setSelectedIndex(idx + 1);
+        });
+
+        // Button toolbar
+        JPanel toolbar = new JPanel(new GridBagLayout());
+        toolbar.setAlignmentX(Component.LEFT_ALIGNMENT);
+        toolbar.setOpaque(false);
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.anchor = GridBagConstraints.WEST;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.gridwidth = 2;
+        gbc.weightx = 0;
+        gbc.insets = new Insets(2, 2, 2, 2);
+        toolbar.add(addButton, gbc);
+
+        gbc.gridy = 1;
+        toolbar.add(editButton, gbc);
+
+        gbc.gridy = 2;
+        toolbar.add(deleteButton, gbc);
+
+        gbc.gridy = 3;
+        gbc.gridwidth = 1;
+        gbc.weightx = 1;
+        toolbar.add(upButton, gbc);
+
+        gbc.gridy = 3;
+        gbc.gridx = 1;
+        toolbar.add(downButton, gbc);
+
+        // Filler row: absorbs all remaining vertical space, pinning buttons to top.
+        gbc.gridx = 0;
+        gbc.gridy = 4;
+        gbc.gridwidth = 2;
+        gbc.weighty = 1;
+        gbc.fill = GridBagConstraints.VERTICAL;
+        toolbar.add(Box.createVerticalGlue(), gbc);
+
+        list.setPreferredSize(new Dimension(240, 200));
+        list.setMaximumSize(list.getPreferredSize());
+        list.setBorder(BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor"), 1));
+
+        // Override getMaximumSize() so BoxLayout never stretches this panel
+        // beyond the space its children actually need.
+        JPanel panel = new JPanel() {
+            @Override
+            public Dimension getMaximumSize() {
+                return getPreferredSize();
+            }
+        };
+        panel.setLayout(new BoxLayout(panel, BoxLayout.LINE_AXIS));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        panel.setAlignmentY(Component.TOP_ALIGNMENT);
+        panel.setOpaque(false);
+        toolbar.setAlignmentY(Component.TOP_ALIGNMENT);
+        list.setAlignmentY(Component.TOP_ALIGNMENT);
+        panel.add(toolbar);
+        panel.add(Box.createHorizontalStrut(8));
+        panel.add(list);
+
+        return panel;
+    }
+
+
+    private static final class StatusListCellRenderer extends JPanel implements ListCellRenderer<Status> {
+        private final JLabel iconLabel = new JLabel();
+        private final JLabel nameLabel = new JLabel();
+        private final JPanel colorSwatch = new JPanel() {
+            @Override
+            protected void paintComponent(Graphics g) {
+                super.paintComponent(g);
+                g.setColor(UIManager.getColor("Component.borderColor") != null
+                        ? UIManager.getColor("Component.borderColor") : Color.GRAY);
+                g.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 4, 4);
+            }
+        };
+
+        StatusListCellRenderer() {
+            setLayout(new BorderLayout(8, 0));
+            setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+            iconLabel.setPreferredSize(new Dimension(24, 24));
+            iconLabel.setHorizontalAlignment(JLabel.CENTER);
+            colorSwatch.setPreferredSize(new Dimension(16, 16));
+            colorSwatch.setOpaque(true);
+
+            JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+            left.setOpaque(false);
+            left.add(iconLabel);
+            left.add(nameLabel);
+
+            add(left, BorderLayout.WEST);
+            add(colorSwatch, BorderLayout.EAST);
+        }
+
+        @Override
+        public Component getListCellRendererComponent(
+                JList<? extends Status> list, Status status, int index,
+                boolean isSelected, boolean cellHasFocus) {
+            iconLabel.setIcon(status.getIcon());
+            nameLabel.setText(status.getStatus());
+            colorSwatch.setBackground(status.getBackgroundColor());
+
+            if (isSelected) {
+                setBackground(list.getSelectionBackground());
+                nameLabel.setForeground(list.getSelectionForeground());
+            } else {
+                setBackground(list.getBackground());
+                nameLabel.setForeground(list.getForeground());
+            }
+            setOpaque(true);
+            return this;
+        }
     }
 
     @Override

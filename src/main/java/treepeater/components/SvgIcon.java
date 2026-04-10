@@ -6,20 +6,27 @@ import javax.swing.Icon;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Graphics;
+import java.io.IOException;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
- * A configurable SVG icon.
- * 
- * 
+ * A configurable SVG icon. Supports both classpath resources and inline SVG content.
  */
 public class SvgIcon implements Icon {
 
     private static final int DEFAULT_SIZE = 16;
 
     private final String resourcePath;
+    private final String svgContent;
     private int width  = DEFAULT_SIZE;
     private int height = DEFAULT_SIZE;
     private Color color = null;
+
+    // Cached URL for content-based icons (points to a temp file).
+    private URL contentUrl = null;
 
     // base holds a sized icon without any color filter applied
     private FlatSVGIcon base;
@@ -33,6 +40,24 @@ public class SvgIcon implements Icon {
     public SvgIcon(String resourcePath) {
         // ClassLoader.getResourceAsStream does not accept a leading slash
         this.resourcePath = resourcePath.startsWith("/") ? resourcePath.substring(1) : resourcePath;
+        this.svgContent = null;
+    }
+
+    private SvgIcon(String svgContent, boolean isContent) {
+        this.resourcePath = null;
+        this.svgContent = svgContent;
+    }
+
+    /**
+     * Creates an {@code SvgIcon} from raw SVG XML content.
+     * The source file may be deleted after calling this method; the content is stored in memory
+     * and written to a temporary file on first render.
+     *
+     * @param svgContent the raw SVG XML string
+     * @return a new {@code SvgIcon} backed by the given content
+     */
+    public static SvgIcon fromContent(String svgContent) {
+        return new SvgIcon(svgContent, true);
     }
 
     /**
@@ -80,9 +105,27 @@ public class SvgIcon implements Icon {
 
     private FlatSVGIcon getBase() {
         if (base == null) {
-            base = new FlatSVGIcon(resourcePath, width, height, SvgIcon.class.getClassLoader());
+            if (svgContent != null) {
+                base = new FlatSVGIcon(getContentUrl()).derive(width, height);
+            } else {
+                base = new FlatSVGIcon(resourcePath, width, height, SvgIcon.class.getClassLoader());
+            }
         }
         return base;
+    }
+
+    private URL getContentUrl() {
+        if (contentUrl == null) {
+            try {
+                Path tmp = Files.createTempFile("treepeater-svg-", ".svg");
+                tmp.toFile().deleteOnExit();
+                Files.writeString(tmp, svgContent, StandardCharsets.UTF_8);
+                contentUrl = tmp.toUri().toURL();
+            } catch (IOException e) {
+                contentUrl = SvgIcon.class.getClassLoader().getResource("icons/hourglass.svg");
+            }
+        }
+        return contentUrl;
     }
 
     private FlatSVGIcon getResolved() {

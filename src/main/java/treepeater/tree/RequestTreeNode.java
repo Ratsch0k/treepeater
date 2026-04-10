@@ -7,6 +7,7 @@ import burp.api.montoya.http.message.responses.HttpResponse;
 import treepeater.Treepeater;
 import treepeater.requestResponse.RequestHistory;
 import treepeater.requestResponse.Status;
+import treepeater.settings.StatusRegistry;
 
 public class RequestTreeNode extends DefaultMutableTreeNode {
     private final int id;
@@ -30,10 +31,11 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
 
     public RequestTreeNode(int id, String name, HttpRequest request, HttpResponse response) {
         super(name);
+        Treepeater.api.logging().logToOutput("RequestTreeNode without status: " + name);
 
         this.id = id;
         this.name = name;
-        this.status = Status.TODO;
+        this.status = StatusRegistry.getDefault();
         this.request = request;
         this.response = response;
         this.listener = new HashSet<>();
@@ -43,8 +45,8 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
     public RequestTreeNode(int id, Status status, String name, HttpRequest request, HttpResponse response, HashSet<RequestTreeNodeListener> l) {
         super(name);
         this.id = id;
-        this.status = status;
-        this.name = name;
+        this.status = status != null ? status : StatusRegistry.getDefault();
+        this.name = name != null ? name : "#" + id;
         this.request = request;
         this.response = response;
         this.listener = l;

@@ -5,8 +5,11 @@ import java.awt.Dimension;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.util.List;
+
 import javax.swing.BorderFactory;
 import javax.swing.Box;
+import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
@@ -17,6 +20,7 @@ import javax.swing.SwingUtilities;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
+import treepeater.Treepeater;
 import treepeater.icons.CloseIcon;
 import treepeater.requestResponse.Status;
 import treepeater.requestResponse.StatusComboBoxRenderer;
@@ -37,29 +41,14 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
     public CustomTreeCell() {
         super(new BorderLayout());
 
-        Status[] statuStrings = {Status.TODO, Status.DONE, Status.FINDING, Status.COLLECTION};
-        JComboBox<Status> box = new JComboBox<>(statuStrings);
+        JComboBox<Status> box = new JComboBox<>();
         box.setRenderer(new StatusComboBoxRenderer());
         TreeRowComboBoxUi.install(box);
         box.setEnabled(true);
         box.addActionListener(e -> {
-            switch (box.getSelectedIndex()) {
-                case 0: {
-                    this.node.setStatus(Status.TODO);
-                    break;
-                }
-                case 1: {
-                    this.node.setStatus(Status.DONE);
-                    break;
-                }
-                case 2: {
-                    this.node.setStatus(Status.FINDING);
-                    break;
-                }
-                case 3: {
-                    this.node.setStatus(Status.COLLECTION);
-                    break;
-                }
+            Status selected = (Status) box.getSelectedItem();
+            if (selected != null && this.node != null) {
+                this.node.setStatus(selected);
             }
             CustomTreeCell.this.updateComponents();
         });
@@ -170,6 +159,12 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
 
     public void updateComponents() {
         this.noPropagation = true;
+        // Rebuild combo model from the current registry so any user changes are reflected.
+        List<Status> statuses = Treepeater.getStatusRegistry().getAll();
+        DefaultComboBoxModel<Status> model = new DefaultComboBoxModel<>(
+                statuses.toArray(new Status[0]));
+        this.box.setModel(model);
+
         this.label.setText(this.node.getName());
         this.field.setText(this.node.getName());
         this.box.setSelectedItem(this.node.getStatus());

@@ -1,5 +1,6 @@
 package treepeater.persistence;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -14,16 +15,18 @@ import burp.api.montoya.persistence.PersistedObject;
 import burp.api.montoya.persistence.Persistence;
 import treepeater.Treepeater;
 import treepeater.TreepeaterModel;
+import treepeater.Utilities;
 import treepeater.requestResponse.HistoryEntry;
 import treepeater.requestResponse.RequestHistory;
 import treepeater.requestResponse.Status;
+import treepeater.settings.StatusRegistry;
 import treepeater.tree.RequestTree;
 import treepeater.tree.RequestTreeNode;
 
 public class TreepeaterPersistence {
     private final Persistence persistence;
 
-    private static final String PERSISTENCE_ROOT = "treepeater";
+    private static final String PERSISTENCE_ROOT = "treepeater_v1";
     private static final String PERSISTENCE_TREE = "tree";
     private static final String PERSISTENCE_TABS = "tabs";
     private static final String PERSISTENCE_CHILDREN = "children";
@@ -43,12 +46,17 @@ public class TreepeaterPersistence {
     private static final String PERSISTENCE_HISTORY_ENTRY_REQUEST = "request";
     private static final String PERSISTENCE_HISTORY_ENTRY_RESPONSE = "response";
     private static final String PERSISTENCE_SIZE = "size";
+    private static final String PERSISTENCE_STATUS_REGISTRY = "statusRegistry";
+    private static final String PERSISTENCE_STATUS_ID = "id";
+    private static final String PERSISTENCE_STATUS_BACKGROUND_COLOR = "backgroundColor";
+    private static final String PERSISTENCE_STATUS_BORDER_COLOR = "borderColor";
+    private static final String PERSISTENCE_STATUS_SVG_CONTENT = "svgContent";
 
     public TreepeaterPersistence(Persistence persistence) {
         this.persistence = persistence;
     }
 
-    public void save(TreepeaterModel model) {
+    public void saveModel(TreepeaterModel model) {
         Treepeater.api.logging().logToOutput("Saving state");
         PersistedObject extensionData = this.persistence.extensionData();
 
@@ -68,7 +76,34 @@ public class TreepeaterPersistence {
         extensionData.setChildObject(PERSISTENCE_ROOT, root);
     }
 
-    
+    public void saveStatusRegistry(StatusRegistry statusRegistry) {
+        PersistedObject extensionData = this.persistence.extensionData();
+        PersistedObject root = extensionData.getChildObject(PERSISTENCE_ROOT);
+
+        PersistedObject statusesObject = PersistedObject.persistedObject();
+        List<Status> statuses = statusRegistry.getAll();
+        statusesObject.setInteger(PERSISTENCE_SIZE, statuses.size()-1);
+        
+        // Important: Skip the default status
+        for (int idx = 1; idx < statuses.size(); idx++) {
+            Status status = statuses.get(idx);
+            statusesObject.setChildObject(PERSISTENCE_STATUS + "_" + (idx - 1), saveStatus(status));
+        }
+
+        root.setChildObject(PERSISTENCE_STATUS_REGISTRY, statusesObject);
+
+        extensionData.setChildObject(PERSISTENCE_ROOT, root);
+    }
+
+    private PersistedObject saveStatus(Status status) {
+        PersistedObject statusObject = PersistedObject.persistedObject();
+        statusObject.setString(PERSISTENCE_STATUS, status.getStatus());
+        statusObject.setString(PERSISTENCE_STATUS_ID, status.getId());
+        statusObject.setString(PERSISTENCE_STATUS_BACKGROUND_COLOR, Utilities.colorToHex(status.getBackgroundColor()));
+        statusObject.setString(PERSISTENCE_STATUS_BORDER_COLOR, Utilities.colorToHex(status.getBorderColor()));
+        statusObject.setString(PERSISTENCE_STATUS_SVG_CONTENT, status.getSvgContent());
+        return statusObject;
+    }
 
     private PersistedObject saveTabs(List<RequestTreeNode> tabs) {
         PersistedObject tabsObject = PersistedObject.persistedObject();
@@ -139,9 +174,7 @@ public class TreepeaterPersistence {
         return historyObject;
     }
 
-    public TreepeaterModel load() {
-        
-        Treepeater.api.logging().logToOutput("Loading state from file");
+    public TreepeaterModel loadModel() {
         PersistedObject extensionData = this.persistence.extensionData();
 
         PersistedObject root = extensionData.getChildObject(PERSISTENCE_ROOT);
@@ -170,6 +203,41 @@ public class TreepeaterPersistence {
         return model;
     }
 
+    public StatusRegistry loadStatusRegistry() {
+        PersistedObject extensionData = this.persistence.extensionData();
+        PersistedObject root = extensionData.getChildObject(PERSISTENCE_ROOT);
+
+        PersistedObject statusesObject = root.getChildObject(PERSISTENCE_STATUS_REGISTRY);
+
+        if (statusesObject == null) {
+            return new StatusRegistry();
+        }
+
+        int statusCount = statusesObject.getInteger(PERSISTENCE_SIZE).intValue();
+
+        if (statusCount == 0) {
+            return new StatusRegistry();
+        }
+        List<Status> statuses = new ArrayList<>();
+
+        for (int idx = 0; idx < statusCount; idx++) {
+            PersistedObject statusObject = statusesObject.getChildObject(PERSISTENCE_STATUS + "_" + idx);
+            Status status = this.loadStatus(statusObject);
+            statuses.add(status);
+        }
+        return new StatusRegistry(statuses);
+    }
+
+    private Status loadStatus(PersistedObject statusObject) {
+        String status = statusObject.getString(PERSISTENCE_STATUS);
+        String id = statusObject.getString(PERSISTENCE_STATUS_ID);
+        String backgroundColor = statusObject.getString(PERSISTENCE_STATUS_BACKGROUND_COLOR);
+        String borderColor = statusObject.getString(PERSISTENCE_STATUS_BORDER_COLOR);
+        String svgContent = statusObject.getString(PERSISTENCE_STATUS_SVG_CONTENT);
+        Status.StatusColors colors = new Status.StatusColors(Utilities.hexToColor(backgroundColor), Utilities.hexToColor(borderColor), Utilities.hexToColor(backgroundColor), Utilities.hexToColor(borderColor));
+        return new Status(id, status, colors, svgContent);
+    }
+
     private RequestTree loadTree(PersistedObject treeObject) {
         RequestTree tree = new RequestTree();
 
@@ -191,11 +259,17 @@ public class TreepeaterPersistence {
     private RequestTreeNode loadTreeNode(PersistedObject nodeObject) {
         int id = nodeObject.getInteger(PERSISTENCE_ID).intValue();
         String name = nodeObject.getString(PERSISTENCE_NAME);
-        String status = nodeObject.getString(PERSISTENCE_STATUS);
+        String statusId = nodeObject.getString(PERSISTENCE_STATUS);
         HttpRequest request = nodeObject.getHttpRequest(PERSISTENCE_REQUEST);
         HttpResponse response = nodeObject.getHttpResponse(PERSISTENCE_RESPONSE);
         RequestHistory history = this.loadHistory(nodeObject.getChildObject(PERSISTENCE_HISTORY));
-        RequestTreeNode node = new RequestTreeNode(id, Status.fromName(status), name, request, response, history);
+
+        Status status = Treepeater.getStatusRegistry().getById(statusId);
+        if (status == null) {
+            status = StatusRegistry.getDefault();
+        }
+
+        RequestTreeNode node = new RequestTreeNode(id, status, name, request, response, history);
 
         int childCount = nodeObject.getInteger(PERSISTENCE_SIZE).intValue();
         for (int idx = 0; idx < childCount; idx++) {

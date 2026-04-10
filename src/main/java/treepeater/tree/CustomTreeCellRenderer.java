@@ -10,12 +10,16 @@ import javax.swing.tree.DefaultTreeCellRenderer;
  * caused flicker on resize and other repaints.
  */
 public class CustomTreeCellRenderer extends DefaultTreeCellRenderer {
-    private final CustomTreeCell cell = new CustomTreeCell();
+    
+    private CustomTreeCell cell = null;
 
     @Override
     public Component getTreeCellRendererComponent(JTree tree, Object value, boolean selected, boolean expanded, boolean leaf, int row, boolean hasFocus) {
         if (!(value instanceof RequestTreeNode)) {
             return super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, hasFocus);
+        }
+        if (this.cell == null) {
+            this.cell = new CustomTreeCell();
         }
         this.cell.setNode((RequestTreeNode) value);
         return this.cell;

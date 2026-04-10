@@ -107,6 +107,7 @@ public final class StatusEditDialog {
         public JPanel previewStatus;
         public JPanel previewBackground;
         public JPanel colorPanel;
+        public JLabel namedColorWarning;
 
         /**
          * Builds the dialog UI from {@code initial} state and positions it relative to {@code parent}.
@@ -179,7 +180,7 @@ public final class StatusEditDialog {
 
         private static Status.StatusColors getDefaultColors() {
             // TODO: Use the correct colors from the UI manager
-            return new Status.StatusColors(new Color(151, 106, 20), new Color(219, 160, 47), new Color(151, 106, 20), new Color(219, 160, 47));
+            return new Status.StatusColors(new Color(243, 226, 201), new Color(231, 193, 125), new Color(151, 106, 20), new Color(219, 160, 47));
         }
 
         private static Status.StatusKeyedColors getDefaultNamedColors() {
@@ -524,28 +525,41 @@ public final class StatusEditDialog {
             svgRow.add(svgFileLabel);
             row = addFormRow(formPanel, row, "SVG icon:", svgRow);
 
+            JPanel previewRow = buildPreviewRow();
+
+            updatePreview();
+            addFormRow(formPanel, row, "Preview:", previewRow);
+            return formPanel;
+        }
+
+        private JPanel buildPreviewRow() {
             JPanel previewRow = new JPanel(new GridBagLayout());
             previewRow.setOpaque(false);
             GridBagConstraints prGbc = new GridBagConstraints();
             prGbc.gridx = 0;
             prGbc.gridy = 0;
             prGbc.anchor = GridBagConstraints.WEST;
-            prGbc.insets = new Insets(0, 0, 8, 0);
+            prGbc.insets = new Insets(0, 0, 2, 0);
             previewRow.add(previewDarkModeCheckBox, prGbc);
+
+            namedColorWarning = new JLabel("To preview named colors in a different mode switch it in the Burp Settings.");
+
+            namedColorWarning.setFont(namedColorWarning.getFont().deriveFont(Font.ITALIC).deriveFont(10.0f));
+            prGbc.gridy = 1;
+
+            previewRow.add(namedColorWarning, prGbc);
 
             previewBackground = new JPanel(new BorderLayout());
             previewBackground.add(previewStatus, BorderLayout.CENTER);
             previewBackground.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
 
-            prGbc.gridy = 1;
+            prGbc.gridy = 2;
             prGbc.weightx = 1;
             prGbc.fill = GridBagConstraints.HORIZONTAL;
             prGbc.insets = new Insets(0, 0, 0, 0);
             previewRow.add(previewBackground, prGbc);
-
-            updatePreview();
-            addFormRow(formPanel, row, "Preview:", previewRow);
-            return formPanel;
+            
+            return previewRow;
         }
 
         /**
@@ -616,6 +630,14 @@ public final class StatusEditDialog {
             previewStrip.setBackground(fill);
             previewStrip.setBorderColor(borderCol);
             previewStrip.repaint();
+
+            float[] namedColorWarningColors = namedColorWarning.getForeground().getRGBComponents(null);
+            Treepeater.api.logging().logToOutput("Named color warning colors: " + namedColorWarningColors[1] + ", " + namedColorWarningColors[2] + ", " + namedColorWarningColors[3]);
+            if (!useColorsNamedKeysCheckBox.isSelected()) {
+                namedColorWarning.setForeground(new Color(namedColorWarningColors[0], namedColorWarningColors[1], namedColorWarningColors[2], 0));
+            } else {
+                namedColorWarning.setForeground(new Color(namedColorWarningColors[0], namedColorWarningColors[1], namedColorWarningColors[2], 1));
+            }
 
             String labelText = nameField.getText().trim();
             if (labelText.isEmpty()) {

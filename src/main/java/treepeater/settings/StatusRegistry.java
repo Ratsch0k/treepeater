@@ -30,7 +30,7 @@ public class StatusRegistry {
      */
     public StatusRegistry() {
         this.statuses.add(StatusRegistry.DEFAULT_STATUS);
-        this.statuses.addAll(StatusRegistry.buildStandardStatuses());
+        this.statuses.addAll(StatusRegistry.getStandardStatuses());
     }
 
     /**
@@ -88,6 +88,14 @@ public class StatusRegistry {
         notifyListeners();
     }
 
+    /**
+     * Remove all statuses except the default status.
+     */
+    public void clear() {
+        statuses.subList(1, statuses.size()).clear();
+        notifyListeners();
+    }
+
     public void moveUp(int index) {
         // Don't allow the default status to be moved
         if (index <= 1 || index >= statuses.size()) return;
@@ -124,7 +132,7 @@ public class StatusRegistry {
         return id;
     }
 
-    private static List<Status> buildStandardStatuses() {
+    public static List<Status> getStandardStatuses() {
         List<Status> defaults = new ArrayList<>();
         defaults.add(new Status("TODO",       "TODO",       new Status.StatusColors(UIManager.getColor("Colors.ui.groups.2.background"), UIManager.getColor("Colors.ui.groups.2.accent"), UIManager.getColor("Colors.ui.groups.2.background"), UIManager.getColor("Colors.ui.groups.2.accent")), readSvgResource("/icons/hourglass.svg")));
         defaults.add(new Status("FINDING",    "Finding",    new Status.StatusColors(UIManager.getColor("Colors.ui.groups.1.background"), UIManager.getColor("Colors.ui.groups.1.accent"), UIManager.getColor("Colors.ui.groups.1.background"), UIManager.getColor("Colors.ui.groups.1.accent")), readSvgResource("/icons/warning.svg")));

@@ -179,7 +179,6 @@ public final class StatusEditDialog {
         }
 
         private static Status.StatusColors getDefaultColors() {
-            // TODO: Use the correct colors from the UI manager
             return new Status.StatusColors(new Color(243, 226, 201), new Color(231, 193, 125), new Color(151, 106, 20), new Color(219, 160, 47));
         }
 
@@ -544,7 +543,7 @@ public final class StatusEditDialog {
 
             namedColorWarning = new JLabel("To preview named colors in a different mode switch it in the Burp Settings.");
 
-            namedColorWarning.setFont(namedColorWarning.getFont().deriveFont(Font.ITALIC).deriveFont(10.0f));
+            namedColorWarning.setFont(namedColorWarning.getFont().deriveFont(Font.ITALIC).deriveFont(11.0f));
             prGbc.gridy = 1;
 
             previewRow.add(namedColorWarning, prGbc);

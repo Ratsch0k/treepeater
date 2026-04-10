@@ -9,6 +9,7 @@ import java.awt.Graphics;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -187,6 +188,8 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         JButton deleteButton = new JButton("Delete");
         JButton upButton = new JButton("\u25B2");
         JButton downButton = new JButton("\u25BC");
+        JButton loadDefaultButton = new JButton("Load Default");
+        JButton saveButton = new JButton("Save as Default");
 
         editButton.setEnabled(false);
         deleteButton.setEnabled(false);
@@ -243,6 +246,23 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
             list.setSelectedIndex(idx + 1);
         });
 
+        loadDefaultButton.addActionListener(e -> {
+            registry.clear();
+
+            List<Status> defaultStatuses = this.settings.getDefaultStatuses();
+
+            if (defaultStatuses != null) {
+                defaultStatuses.forEach(registry::add);
+            } else {
+                StatusRegistry.getStandardStatuses().forEach(registry::add);
+            }
+        });
+
+        saveButton.addActionListener(e -> {
+            List<Status> statuses = registry.getAll();
+            this.settings.setDefaultStatuses(statuses.subList(1, statuses.size()));
+        });
+
         // Button toolbar
         JPanel toolbar = new JPanel(new GridBagLayout());
         toolbar.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -272,13 +292,24 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         gbc.gridx = 1;
         toolbar.add(downButton, gbc);
 
-        // Filler row: absorbs all remaining vertical space, pinning buttons to top.
+        // Seperate the default buttons from the rest of the toolbar
         gbc.gridx = 0;
         gbc.gridy = 4;
         gbc.gridwidth = 2;
         gbc.weighty = 1;
         gbc.fill = GridBagConstraints.VERTICAL;
         toolbar.add(Box.createVerticalGlue(), gbc);
+
+        gbc.gridx = 0;
+        gbc.gridy = 5;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weighty = 0;
+        toolbar.add(loadDefaultButton, gbc);
+        
+        gbc.gridy = 6;
+        toolbar.add(saveButton, gbc);
+
+ 
 
         list.setPreferredSize(new Dimension(240, 200));
         list.setMaximumSize(list.getPreferredSize());

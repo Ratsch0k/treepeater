@@ -1,9 +1,13 @@
 package treepeater.settings;
+
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 
 import burp.api.montoya.persistence.Preferences;
+import treepeater.Utilities;
+import treepeater.requestResponse.Status;
 
 public class TreepeaterSettings {
     private static TreepeaterSettings instance = null;
@@ -23,6 +27,39 @@ public class TreepeaterSettings {
     public static final String EDIT_TARGET_HOTKEY_SETTING = "EDIT_TARGET_HOTKEY";
     public static final String TAB_PREVIOUS_HOTKEY_SETTING = "TAB_PREVIOUS_HOTKEY";
     public static final String TAB_NEXT_HOTKEY_SETTING = "TAB_NEXT_HOTKEY";
+
+    /**
+     * Base name for user preference keys of the global default status list.
+     * Entries use {@link #DEFAULT_STATUSES_COUNT_SETTING} and indexed keys such as
+     * {@code TREEPEATER_DEFAULT_STATUSES_0_ID}.
+     */
+    public static final String DEFAULT_STATUSES_SETTING = "TREEPEATER_DEFAULT_STATUSES";
+
+    /** Integer preference: number of stored default statuses (0 means none). */
+    public static final String DEFAULT_STATUSES_COUNT_SETTING = DEFAULT_STATUSES_SETTING + "_COUNT";
+
+    private static final String DEFAULT_STATUS_FIELD_ID = "ID";
+    private static final String DEFAULT_STATUS_FIELD_NAME = "NAME";
+    private static final String DEFAULT_STATUS_FIELD_SVG = "SVG";
+
+    private static final String DEFAULT_STATUS_FIELD_COLOR_MODE = "COLOR_MODE";
+
+    private static final String COLOR_MODE_VALUE = "VALUE";
+    private static final String COLOR_MODE_NAMED = "NAMED";
+
+    private static final String DEFAULT_STATUS_FIELD_COLOR_BG_LIGHT = "COLOR_BG_LIGHT";
+    private static final String DEFAULT_STATUS_FIELD_COLOR_BORDER_LIGHT = "COLOR_BORDER_LIGHT";
+    private static final String DEFAULT_STATUS_FIELD_COLOR_BG_DARK = "COLOR_BG_DARK";
+    private static final String DEFAULT_STATUS_FIELD_COLOR_BORDER_DARK = "COLOR_BORDER_DARK";
+
+    private static final String DEFAULT_STATUS_FIELD_KEY_BG_LIGHT = "KEY_BG_LIGHT";
+    private static final String DEFAULT_STATUS_FIELD_KEY_BORDER_LIGHT = "KEY_BORDER_LIGHT";
+    private static final String DEFAULT_STATUS_FIELD_KEY_BG_DARK = "KEY_BG_DARK";
+    private static final String DEFAULT_STATUS_FIELD_KEY_BORDER_DARK = "KEY_BORDER_DARK";
+
+    /** Legacy keys (resolved colors only); removed on write, still read for migration. */
+    private static final String DEFAULT_STATUS_FIELD_LEGACY_BACKGROUND = "BACKGROUND";
+    private static final String DEFAULT_STATUS_FIELD_LEGACY_BORDER = "BORDER";
 
     private static final HashMap<String, String> STRING_PREFERENCE_DEFAULTS = new HashMap<>();
 
@@ -157,6 +194,165 @@ public class TreepeaterSettings {
     public void setTabNextHotkey(String hotkey) {
         this.preferences.setString(TAB_NEXT_HOTKEY_SETTING, hotkey);
         this.notifyListeners(TAB_NEXT_HOTKEY_SETTING, hotkey);
+    }
+
+    /**
+     * Persists the user's default status list (order and full definition) in Burp preferences.
+     *
+     * @param statuses statuses to store; {@code null} is treated as an empty list
+     */
+    public void setDefaultStatuses(List<Status> statuses) {
+
+        List<Status> list = statuses != null ? statuses : List.of();
+        Integer previousCountBox = this.preferences.getInteger(DEFAULT_STATUSES_COUNT_SETTING);
+        int previousCount = previousCountBox != null ? previousCountBox.intValue() : 0;
+
+        int n = list.size();
+        for (int i = 0; i < n; i++) {
+            Status s = list.get(i);
+            this.deleteDefaultStatusIndex(i);
+            this.preferences.setString(
+                    defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_ID), s.getId());
+            this.preferences.setString(
+                    defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_NAME), s.getStatus());
+            this.preferences.setString(
+                    defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_SVG), s.getSvgContent());
+            if (s.getColors().isPresent()) {
+                Status.StatusColors c = s.getColors().get();
+                this.preferences.setString(
+                        defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_COLOR_MODE), COLOR_MODE_VALUE);
+                this.preferences.setString(
+                        defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_COLOR_BG_LIGHT),
+                        Utilities.colorToHex(c.backgroundColor()));
+                this.preferences.setString(
+                        defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_COLOR_BORDER_LIGHT),
+                        Utilities.colorToHex(c.borderColor()));
+                this.preferences.setString(
+                        defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_COLOR_BG_DARK),
+                        Utilities.colorToHex(c.backgroundDarkModeColor()));
+                this.preferences.setString(
+                        defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_COLOR_BORDER_DARK),
+                        Utilities.colorToHex(c.borderColorDarkModeColor()));
+            } else if (s.getNamedColors().isPresent()) {
+                Status.StatusNamedColors k = s.getNamedColors().get();
+                this.preferences.setString(
+                        defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_COLOR_MODE), COLOR_MODE_NAMED);
+                this.preferences.setString(
+                        defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_KEY_BG_LIGHT),
+                        k.backgroundColorKey());
+                this.preferences.setString(
+                        defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_KEY_BORDER_LIGHT),
+                        k.borderColorKey());
+                this.preferences.setString(
+                        defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_KEY_BG_DARK),
+                        k.backgroundDarkModeColorKey());
+                this.preferences.setString(
+                        defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_KEY_BORDER_DARK),
+                        k.borderColorDarkModeColorKey());
+            } else {
+                throw new IllegalStateException("Status has neither colors nor keyed colors");
+            }
+        }
+        for (int i = n; i < previousCount; i++) {
+            deleteDefaultStatusIndex(i);
+        }
+
+        this.preferences.setInteger(DEFAULT_STATUSES_COUNT_SETTING, n);
+        this.notifyListeners(DEFAULT_STATUSES_SETTING, list);
+    }
+
+    /**
+     * Loads the user's default status list from preferences, or {@code null} if unset, or an empty list if invalid.
+     */
+    public List<Status> getDefaultStatuses() {
+        Integer countBox = this.preferences.getInteger(DEFAULT_STATUSES_COUNT_SETTING);
+        
+        // In this case the user has never saved a default status list, so we return null.
+        if (countBox == null) {
+            return null;
+        }
+
+        // In this case the user has saved a default status list, but it is empty, so we return an empty list.
+        if (countBox.intValue() <= 0) {
+            return Collections.emptyList();
+        }
+
+        int n = countBox.intValue();
+        List<Status> result = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            String id = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_ID));
+            String name = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_NAME));
+            String svg = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_SVG));
+            String mode = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_COLOR_MODE));
+            if (id == null || name == null || svg == null) {
+                return Collections.emptyList();
+            }
+            try {
+                if (COLOR_MODE_NAMED.equals(mode)) {
+                    String bgL = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_KEY_BG_LIGHT));
+                    String brL = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_KEY_BORDER_LIGHT));
+                    String bgD = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_KEY_BG_DARK));
+                    String brD = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_KEY_BORDER_DARK));
+                    if (bgL == null || brL == null || bgD == null || brD == null) {
+                        return Collections.emptyList();
+                    }
+                    Status.StatusNamedColors keyed = new Status.StatusNamedColors(bgL, brL, bgD, brD);
+                    result.add(new Status(id, name, keyed, svg));
+                } else if (COLOR_MODE_VALUE.equals(mode)) {
+                    String bgL = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_COLOR_BG_LIGHT));
+                    String brL = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_COLOR_BORDER_LIGHT));
+                    String bgD = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_COLOR_BG_DARK));
+                    String brD = this.preferences.getString(defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_COLOR_BORDER_DARK));
+                    if (bgL == null || brL == null || bgD == null || brD == null) {
+                        return Collections.emptyList();
+                    }
+                    Status.StatusColors colors = new Status.StatusColors(
+                            Utilities.hexToColor(bgL),
+                            Utilities.hexToColor(brL),
+                            Utilities.hexToColor(bgD),
+                            Utilities.hexToColor(brD));
+                    result.add(new Status(id, name, colors, svg));
+                } else {
+                    String legacyBg = this.preferences.getString(
+                            defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_LEGACY_BACKGROUND));
+                    String legacyBr = this.preferences.getString(
+                            defaultStatusFieldKey(i, DEFAULT_STATUS_FIELD_LEGACY_BORDER));
+                    if (legacyBg == null || legacyBr == null) {
+                        return Collections.emptyList();
+                    }
+                    Status.StatusColors colors = new Status.StatusColors(
+                            Utilities.hexToColor(legacyBg),
+                            Utilities.hexToColor(legacyBr),
+                            Utilities.hexToColor(legacyBg),
+                            Utilities.hexToColor(legacyBr));
+                    result.add(new Status(id, name, colors, svg));
+                }
+            } catch (IllegalArgumentException e) {
+                return Collections.emptyList();
+            }
+        }
+        return result;
+    }
+
+    private static String defaultStatusFieldKey(int index, String field) {
+        return DEFAULT_STATUSES_SETTING + "_" + index + "_" + field;
+    }
+
+    private void deleteDefaultStatusIndex(int index) {
+        this.preferences.deleteString(defaultStatusFieldKey(index, DEFAULT_STATUS_FIELD_ID));
+        this.preferences.deleteString(defaultStatusFieldKey(index, DEFAULT_STATUS_FIELD_NAME));
+        this.preferences.deleteString(defaultStatusFieldKey(index, DEFAULT_STATUS_FIELD_SVG));
+        this.preferences.deleteString(defaultStatusFieldKey(index, DEFAULT_STATUS_FIELD_COLOR_MODE));
+        this.preferences.deleteString(defaultStatusFieldKey(index, DEFAULT_STATUS_FIELD_COLOR_BG_LIGHT));
+        this.preferences.deleteString(defaultStatusFieldKey(index, DEFAULT_STATUS_FIELD_COLOR_BORDER_LIGHT));
+        this.preferences.deleteString(defaultStatusFieldKey(index, DEFAULT_STATUS_FIELD_COLOR_BG_DARK));
+        this.preferences.deleteString(defaultStatusFieldKey(index, DEFAULT_STATUS_FIELD_COLOR_BORDER_DARK));
+        this.preferences.deleteString(defaultStatusFieldKey(index, DEFAULT_STATUS_FIELD_KEY_BG_LIGHT));
+        this.preferences.deleteString(defaultStatusFieldKey(index, DEFAULT_STATUS_FIELD_KEY_BORDER_LIGHT));
+        this.preferences.deleteString(defaultStatusFieldKey(index, DEFAULT_STATUS_FIELD_KEY_BG_DARK));
+        this.preferences.deleteString(defaultStatusFieldKey(index, DEFAULT_STATUS_FIELD_KEY_BORDER_DARK));
+        this.preferences.deleteString(defaultStatusFieldKey(index, DEFAULT_STATUS_FIELD_LEGACY_BACKGROUND));
+        this.preferences.deleteString(defaultStatusFieldKey(index, DEFAULT_STATUS_FIELD_LEGACY_BORDER));
     }
 
     public void addListener(TreepeaterSerttingsChangeListener listener) {

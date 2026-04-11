@@ -1,5 +1,6 @@
 package treepeater.persistence;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -14,16 +15,18 @@ import burp.api.montoya.persistence.PersistedObject;
 import burp.api.montoya.persistence.Persistence;
 import treepeater.Treepeater;
 import treepeater.TreepeaterModel;
+import treepeater.Utilities;
 import treepeater.requestResponse.HistoryEntry;
 import treepeater.requestResponse.RequestHistory;
 import treepeater.requestResponse.Status;
+import treepeater.settings.StatusRegistry;
 import treepeater.tree.RequestTree;
 import treepeater.tree.RequestTreeNode;
 
 public class TreepeaterPersistence {
     private final Persistence persistence;
 
-    private static final String PERSISTENCE_ROOT = "treepeater";
+    private static final String PERSISTENCE_ROOT = "treepeater_v1";
     private static final String PERSISTENCE_TREE = "tree";
     private static final String PERSISTENCE_TABS = "tabs";
     private static final String PERSISTENCE_CHILDREN = "children";
@@ -43,16 +46,32 @@ public class TreepeaterPersistence {
     private static final String PERSISTENCE_HISTORY_ENTRY_REQUEST = "request";
     private static final String PERSISTENCE_HISTORY_ENTRY_RESPONSE = "response";
     private static final String PERSISTENCE_SIZE = "size";
+    private static final String PERSISTENCE_STATUS_REGISTRY = "statusRegistry";
+    private static final String PERSISTENCE_STATUS_ID = "id";
+    private static final String PERSISTENCE_STATUS_BACKGROUND_COLOR = "backgroundColor";
+    private static final String PERSISTENCE_STATUS_BORDER_COLOR = "borderColor";
+    private static final String PERSISTENCE_STATUS_SVG_CONTENT = "svgContent";
+
+    private static final String PERSISTENCE_STATUS_COLOR_MODE = "colorMode";
+    private static final String COLOR_MODE_VALUE = "VALUE";
+    private static final String COLOR_MODE_NAMED = "NAMED";
+    private static final String PERSISTENCE_STATUS_COLOR_BG_LIGHT = "colorBgLight";
+    private static final String PERSISTENCE_STATUS_COLOR_BORDER_LIGHT = "colorBorderLight";
+    private static final String PERSISTENCE_STATUS_COLOR_BG_DARK = "colorBgDark";
+    private static final String PERSISTENCE_STATUS_COLOR_BORDER_DARK = "colorBorderDark";
+    private static final String PERSISTENCE_STATUS_KEY_BG_LIGHT = "keyBgLight";
+    private static final String PERSISTENCE_STATUS_KEY_BORDER_LIGHT = "keyBorderLight";
+    private static final String PERSISTENCE_STATUS_KEY_BG_DARK = "keyBgDark";
+    private static final String PERSISTENCE_STATUS_KEY_BORDER_DARK = "keyBorderDark";
 
     public TreepeaterPersistence(Persistence persistence) {
         this.persistence = persistence;
     }
 
-    public void save(TreepeaterModel model) {
-        Treepeater.api.logging().logToOutput("Saving state");
+    public void saveModel(TreepeaterModel model) {
         PersistedObject extensionData = this.persistence.extensionData();
 
-        PersistedObject root = PersistedObject.persistedObject();
+        PersistedObject root = extensionData.childObjectKeys().contains(PERSISTENCE_ROOT) ? extensionData.getChildObject(PERSISTENCE_ROOT) : PersistedObject.persistedObject();
         root.setInteger(PERSISTENCE_REQUEST_COUNT, model.getRequestCount());
 
         PersistedObject tree = this.saveTree(model.getTree());
@@ -66,9 +85,55 @@ public class TreepeaterPersistence {
         root.setChildObject(PERSISTENCE_TABS, saveTabs(model.getTabs()));
 
         extensionData.setChildObject(PERSISTENCE_ROOT, root);
+
     }
 
-    
+    public void saveStatusRegistry(StatusRegistry statusRegistry) {
+        PersistedObject extensionData = this.persistence.extensionData();
+        PersistedObject root = extensionData.childObjectKeys().contains(PERSISTENCE_ROOT) ? extensionData.getChildObject(PERSISTENCE_ROOT) : PersistedObject.persistedObject();
+
+        PersistedObject statusesObject = PersistedObject.persistedObject();
+        List<Status> statuses = statusRegistry.getAll();
+        statusesObject.setInteger(PERSISTENCE_SIZE, statuses.size()-1);
+
+        
+        // Important: Skip the default status
+        for (int idx = 1; idx < statuses.size(); idx++) {
+            Status status = statuses.get(idx);
+            statusesObject.setChildObject(PERSISTENCE_STATUS + "_" + (idx - 1), saveStatus(status));
+        }
+
+        root.setChildObject(PERSISTENCE_STATUS_REGISTRY, statusesObject);
+
+        extensionData.setChildObject(PERSISTENCE_ROOT, root);
+    }
+
+    private PersistedObject saveStatus(Status status) {
+        PersistedObject statusObject = PersistedObject.persistedObject();
+        statusObject.setString(PERSISTENCE_STATUS, status.getStatus());
+        statusObject.setString(PERSISTENCE_STATUS_ID, status.getId());
+        statusObject.setString(PERSISTENCE_STATUS_SVG_CONTENT, status.getSvgContent());
+
+        if (status.getColors().isPresent()) {
+            Status.StatusColors c = status.getColors().get();
+            statusObject.setString(PERSISTENCE_STATUS_COLOR_MODE, COLOR_MODE_VALUE);
+            statusObject.setString(PERSISTENCE_STATUS_COLOR_BG_LIGHT, Utilities.colorToHex(c.backgroundColor()));
+            statusObject.setString(PERSISTENCE_STATUS_COLOR_BORDER_LIGHT, Utilities.colorToHex(c.borderColor()));
+            statusObject.setString(PERSISTENCE_STATUS_COLOR_BG_DARK, Utilities.colorToHex(c.backgroundDarkModeColor()));
+            statusObject.setString(PERSISTENCE_STATUS_COLOR_BORDER_DARK, Utilities.colorToHex(c.borderColorDarkModeColor()));
+        } else if (status.getNamedColors().isPresent()) {
+            Status.StatusNamedColors k = status.getNamedColors().get();
+            statusObject.setString(PERSISTENCE_STATUS_COLOR_MODE, COLOR_MODE_NAMED);
+            statusObject.setString(PERSISTENCE_STATUS_KEY_BG_LIGHT, k.backgroundColorKey());
+            statusObject.setString(PERSISTENCE_STATUS_KEY_BORDER_LIGHT, k.borderColorKey());
+            statusObject.setString(PERSISTENCE_STATUS_KEY_BG_DARK, k.backgroundDarkModeColorKey());
+            statusObject.setString(PERSISTENCE_STATUS_KEY_BORDER_DARK, k.borderColorDarkModeColorKey());
+        } else {
+            throw new IllegalStateException("Status has neither value colors nor named colors: " + status.getId());
+        }
+
+        return statusObject;
+    }
 
     private PersistedObject saveTabs(List<RequestTreeNode> tabs) {
         PersistedObject tabsObject = PersistedObject.persistedObject();
@@ -139,9 +204,7 @@ public class TreepeaterPersistence {
         return historyObject;
     }
 
-    public TreepeaterModel load() {
-        
-        Treepeater.api.logging().logToOutput("Loading state from file");
+    public TreepeaterModel loadModel() {
         PersistedObject extensionData = this.persistence.extensionData();
 
         PersistedObject root = extensionData.getChildObject(PERSISTENCE_ROOT);
@@ -170,6 +233,76 @@ public class TreepeaterPersistence {
         return model;
     }
 
+    public boolean hasStatusRegistry() {
+        PersistedObject extensionData = this.persistence.extensionData();
+        return extensionData.childObjectKeys().contains(PERSISTENCE_ROOT) && extensionData.getChildObject(PERSISTENCE_ROOT).childObjectKeys().contains(PERSISTENCE_STATUS_REGISTRY);
+    }
+
+    public StatusRegistry loadStatusRegistry() {
+        PersistedObject extensionData = this.persistence.extensionData();
+        PersistedObject root = extensionData.getChildObject(PERSISTENCE_ROOT);
+
+        PersistedObject statusesObject = root.getChildObject(PERSISTENCE_STATUS_REGISTRY);
+
+        if (statusesObject == null) {
+            return new StatusRegistry();
+        }
+
+        int statusCount = statusesObject.getInteger(PERSISTENCE_SIZE).intValue();
+
+        if (statusCount == 0) {
+            return new StatusRegistry(List.of());
+        }
+        List<Status> statuses = new ArrayList<>();
+
+        for (int idx = 0; idx < statusCount; idx++) {
+            PersistedObject statusObject = statusesObject.getChildObject(PERSISTENCE_STATUS + "_" + idx);
+            Status status = this.loadStatus(statusObject);
+            statuses.add(status);
+        }
+        return new StatusRegistry(statuses);
+    }
+
+    private Status loadStatus(PersistedObject statusObject) {
+        String status = statusObject.getString(PERSISTENCE_STATUS);
+        String id = statusObject.getString(PERSISTENCE_STATUS_ID);
+        String svgContent = statusObject.getString(PERSISTENCE_STATUS_SVG_CONTENT);
+
+        String mode = statusObject.getString(PERSISTENCE_STATUS_COLOR_MODE);
+
+        if (COLOR_MODE_NAMED.equals(mode)) {
+            Status.StatusNamedColors named = new Status.StatusNamedColors(
+                    statusObject.getString(PERSISTENCE_STATUS_KEY_BG_LIGHT),
+                    statusObject.getString(PERSISTENCE_STATUS_KEY_BORDER_LIGHT),
+                    statusObject.getString(PERSISTENCE_STATUS_KEY_BG_DARK),
+                    statusObject.getString(PERSISTENCE_STATUS_KEY_BORDER_DARK));
+            return new Status(id, status, named, svgContent);
+        }
+
+        if (COLOR_MODE_VALUE.equals(mode)) {
+            Status.StatusColors colors = new Status.StatusColors(
+                    Utilities.hexToColor(statusObject.getString(PERSISTENCE_STATUS_COLOR_BG_LIGHT)),
+                    Utilities.hexToColor(statusObject.getString(PERSISTENCE_STATUS_COLOR_BORDER_LIGHT)),
+                    Utilities.hexToColor(statusObject.getString(PERSISTENCE_STATUS_COLOR_BG_DARK)),
+                    Utilities.hexToColor(statusObject.getString(PERSISTENCE_STATUS_COLOR_BORDER_DARK)));
+            return new Status(id, status, colors, svgContent);
+        }
+
+        // Legacy: only backgroundColor + borderColor (same for light and dark).
+        String backgroundColor = statusObject.getString(PERSISTENCE_STATUS_BACKGROUND_COLOR);
+        String borderColor = statusObject.getString(PERSISTENCE_STATUS_BORDER_COLOR);
+        if (backgroundColor != null && borderColor != null) {
+            Status.StatusColors colors = new Status.StatusColors(
+                    Utilities.hexToColor(backgroundColor),
+                    Utilities.hexToColor(borderColor),
+                    Utilities.hexToColor(backgroundColor),
+                    Utilities.hexToColor(borderColor));
+            return new Status(id, status, colors, svgContent);
+        }
+
+        throw new IllegalStateException("Invalid persisted status (missing color data): " + id);
+    }
+
     private RequestTree loadTree(PersistedObject treeObject) {
         RequestTree tree = new RequestTree();
 
@@ -191,11 +324,17 @@ public class TreepeaterPersistence {
     private RequestTreeNode loadTreeNode(PersistedObject nodeObject) {
         int id = nodeObject.getInteger(PERSISTENCE_ID).intValue();
         String name = nodeObject.getString(PERSISTENCE_NAME);
-        String status = nodeObject.getString(PERSISTENCE_STATUS);
+        String statusId = nodeObject.getString(PERSISTENCE_STATUS);
         HttpRequest request = nodeObject.getHttpRequest(PERSISTENCE_REQUEST);
         HttpResponse response = nodeObject.getHttpResponse(PERSISTENCE_RESPONSE);
         RequestHistory history = this.loadHistory(nodeObject.getChildObject(PERSISTENCE_HISTORY));
-        RequestTreeNode node = new RequestTreeNode(id, Status.fromName(status), name, request, response, history);
+
+        Status status = Treepeater.getStatusRegistry().getById(statusId);
+        if (status == null) {
+            status = StatusRegistry.getDefault();
+        }
+
+        RequestTreeNode node = new RequestTreeNode(id, status, name, request, response, history);
 
         int childCount = nodeObject.getInteger(PERSISTENCE_SIZE).intValue();
         for (int idx = 0; idx < childCount; idx++) {

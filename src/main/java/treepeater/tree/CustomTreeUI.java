@@ -234,18 +234,17 @@ public class CustomTreeUI extends BasicTreeUI {
         Object component = path.getLastPathComponent();
         Color fill;
         Color border;
-        Color hoverFill;
         if (component instanceof RequestTreeNode) {
             Status status = ((RequestTreeNode) component).getStatus();
 
             fill = status.getBackgroundColor();
             border = status.getBorderColor();
-            hoverFill = border;
         } else {
             fill = UIManager.getColor("Button.default.background");
             border = UIManager.getColor("Button.default.border");
-            hoverFill = border;
         }
+
+        Color hoverFill = Utilities.interpolateColor(fill, border, 0.2f);
 
         fill = (row == hoverRow) ? hoverFill : fill;
 

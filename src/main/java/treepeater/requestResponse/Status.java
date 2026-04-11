@@ -1,59 +1,83 @@
 package treepeater.requestResponse;
+
 import java.awt.Color;
+import java.util.Optional;
 
 import javax.swing.UIManager;
-import javax.swing.ImageIcon;
+
+import burp.api.montoya.ui.Theme;
+import treepeater.Treepeater;
+import treepeater.components.SvgIcon;
 
 public class Status {
-    public static final Status TODO = new Status("TODO", UIManager.getColor("Colors.ui.groups.2.background"), UIManager.getColor("Colors.ui.groups.2.accent"), new ImageIcon(Status.class.getResource("/icons/pending.png")));
-    public static final Status FINDING = new Status("Finding", UIManager.getColor("Colors.ui.groups.1.background"), UIManager.getColor("Colors.ui.groups.1.accent"), new ImageIcon(Status.class.getResource("/icons/tools.png")));
-    public static final Status DONE = new Status("Done", UIManager.getColor("Colors.ui.groups.3.background"), UIManager.getColor("Colors.ui.groups.3.accent"), new ImageIcon(Status.class.getResource("/icons/check.png")));
-    public static final Status COLLECTION = new Status("Collection", UIManager.getColor("Colors.ui.groups.8.background"), UIManager.getColor("Colors.ui.groups.8.accent"), new ImageIcon(Status.class.getResource("/icons/list.png")));
-
+    private final String id;
     private final String statusName;
-    private final Color backgroundColor;
-    private final Color borderColor;
-    private final ImageIcon icon;
+    private final Optional<StatusColors> colors;
+    private final Optional<StatusNamedColors> namedColors;
+    private final String svgContent;
+    private final SvgIcon icon;
 
-    public Status(String statusName, Color backgroundColor, Color borderColor, ImageIcon icon) {
+    public record StatusColors(Color backgroundColor, Color borderColor, Color backgroundDarkModeColor, Color borderColorDarkModeColor) {}
+    public record StatusNamedColors(String backgroundColorKey, String borderColorKey, String backgroundDarkModeColorKey, String borderColorDarkModeColorKey) {}
+
+    public Status(String id, String statusName, StatusColors colors, String svgContent) {
+        Treepeater.api.logging().logToOutput("Creating status with color values: " + colors);
+        this.id = id;
         this.statusName = statusName;
-        this.backgroundColor = backgroundColor;
-        this.borderColor = borderColor;
-        this.icon = icon;
-
+        this.colors = Optional.of(colors);
+        this.namedColors = Optional.empty();
+        this.svgContent = svgContent;
+        this.icon = SvgIcon.fromContent(svgContent).withSize(18, 18).withColor(colors.borderColor());
     }
 
-    public static Status fromName(String statusName) {
-        if (statusName == null) {
-            return null;
-        }
-        switch (statusName.toUpperCase()) {
-            case "TODO":
-                return TODO;
-            case "FINDING":
-                return FINDING;
-            case "DONE":
-                return DONE;
-            case "COLLECTION":
-                return COLLECTION;
-            default:
-                return null;
-        }
+    public Status(String id, String statusName, StatusNamedColors colors, String svgContent) {
+        Treepeater.api.logging().logToOutput("Creating status with named color values: " + colors);
+        this.id = id;
+        this.statusName = statusName;
+        this.namedColors = Optional.of(colors);
+        this.colors = Optional.empty();
+        this.svgContent = svgContent;
+        this.icon = SvgIcon.fromContent(svgContent).withSize(18, 18);
+    }
+
+    public String getId() {
+        return this.id;
     }
 
     public String getStatus() {
         return this.statusName;
     }
 
-    public Color getBackgroundColor() {
-        return this.backgroundColor;
-    }
-
-    public ImageIcon getIcon() {
+    public SvgIcon getIcon() {
         return this.icon;
     }
 
-    public Color getBorderColor() {
-        return this.borderColor;
+    public Color getBackgroundColor() {
+        if (Treepeater.api.userInterface().currentTheme() == Theme.DARK) {
+            return this.colors.map(StatusColors::backgroundDarkModeColor).orElse(UIManager.getColor(this.namedColors.map(StatusNamedColors::backgroundDarkModeColorKey).orElse("")));
+        }
+
+        return this.colors.map(StatusColors::backgroundColor).orElse(UIManager.getColor(this.namedColors.map(StatusNamedColors::backgroundColorKey).orElse("")));
     }
+
+    public Color getBorderColor() {
+        if (Treepeater.api.userInterface().currentTheme() == Theme.DARK) {
+            return this.colors.map(StatusColors::borderColorDarkModeColor).orElse(UIManager.getColor(this.namedColors.map(StatusNamedColors::borderColorDarkModeColorKey).orElse("")));
+        }
+
+        return this.colors.map(StatusColors::borderColor).orElse(UIManager.getColor(this.namedColors.map(StatusNamedColors::borderColorKey).orElse("")));
+    }
+
+    public String getSvgContent() {
+        return this.svgContent;
+    }
+
+    public Optional<StatusNamedColors> getNamedColors() {
+        return this.namedColors;
+    }
+
+    public Optional<StatusColors> getColors() {
+        return this.colors;
+    }
+
 }

@@ -10,9 +10,6 @@ import javax.swing.tree.DefaultTreeCellEditor;
 import javax.swing.tree.DefaultTreeCellRenderer;
 import javax.swing.tree.TreePath;
 
-import burp.api.montoya.logging.Logging;
-import treepeater.Treepeater;
-
 public class CustomTreeCellEditor extends DefaultTreeCellEditor {
     /**
      * Editing types triggered by the extension itself.
@@ -40,7 +37,6 @@ public class CustomTreeCellEditor extends DefaultTreeCellEditor {
      * @param editType The type of edit to perform.
      */
     public void setProgrammaticEdit(ProgrammaticEdit editType) {
-        Treepeater.api.logging().logToOutput("Setting programmatic edit: " + editType);
         this.programmaticEdit = editType;
     }
 
@@ -51,7 +47,6 @@ public class CustomTreeCellEditor extends DefaultTreeCellEditor {
 
         // Handle the programmatic edit.
         ProgrammaticEdit intent = this.programmaticEdit;
-        Treepeater.api.logging().logToOutput("Programmatic edit: " + intent);
         this.programmaticEdit = ProgrammaticEdit.NONE;
         if (intent == ProgrammaticEdit.RENAME) {
             this.cell.showField();
@@ -65,42 +60,34 @@ public class CustomTreeCellEditor extends DefaultTreeCellEditor {
     
     @Override
     public boolean isCellEditable(EventObject event) {
-        Logging log = Treepeater.api.logging();
-        log.logToOutput("isCellEditable? " + event);
-
         if (event == null && this.programmaticEdit != ProgrammaticEdit.NONE) {
             return true;
         }
 
         if (!(event instanceof MouseEvent)) {
-            log.logToOutput("Event not a mouse event");
             return false;
         }
 
         MouseEvent mouseEvent = (MouseEvent) event;
 
         if (mouseEvent.getButton() != MouseEvent.BUTTON1) {
-            log.logToOutput("Not left mouse button clicked");
             return false;
         }
 
         TreePath path = this.tree.getPathForLocation(mouseEvent.getX(), mouseEvent.getY());
 
         if (path == null) {
-            log.logToOutput("Path not found");
             return false;
         }
 
         Rectangle bounds = tree.getPathBounds(path);
 
         if (bounds == null) {
-            log.logToOutput("Could not identify node bounds");
             return false;
         }
 
         int relativeX = mouseEvent.getX() - bounds.x;
         if (relativeX >= bounds.width - this.cell.getCloseReservedWidth()) {
-            log.logToOutput("Close strip click - not editable");
             return false;
         }
         int buttonWidth = this.cell.getComboBoxWidth();
@@ -114,7 +101,6 @@ public class CustomTreeCellEditor extends DefaultTreeCellEditor {
         }
 
         if (isInButton || mouseEvent.getClickCount() == 2) {
-            log.logToOutput("Editable");
             return true;
         }
 
@@ -122,7 +108,6 @@ public class CustomTreeCellEditor extends DefaultTreeCellEditor {
             SwingUtilities.invokeLater(this.cell::openStatusPopup);
         }
 
-        log.logToOutput("Not editable");
         return false;
     }
 }

@@ -631,7 +631,6 @@ public final class StatusEditDialog {
             previewStrip.repaint();
 
             float[] namedColorWarningColors = namedColorWarning.getForeground().getRGBComponents(null);
-            Treepeater.api.logging().logToOutput("Named color warning colors: " + namedColorWarningColors[1] + ", " + namedColorWarningColors[2] + ", " + namedColorWarningColors[3]);
             if (!useColorsNamedKeysCheckBox.isSelected()) {
                 namedColorWarning.setForeground(new Color(namedColorWarningColors[0], namedColorWarningColors[1], namedColorWarningColors[2], 0));
             } else {

@@ -1,6 +1,22 @@
-# Extension Template Project
+# Treepeater
+Treepeater is a Burp Suite extension that lets you organize your requests in a tree structure, making it easy to mirror the layout of a real website or API.
+You can group related endpoints together and nest them as deeply as needed, which is especially useful for large APIs with long, hierarchical paths.
+Nodes can be freely reordered by dragging and dropping them anywhere in the tree.
 
-This project was created by PortSwigger to help you quickly start developing extensions in Java.
+Use statuses to annotate your requests and quickly identify what matters.
+For example, the built-in default statuses let you flag requests that still need testing, mark them as completed, or highlight requests where you found a vulnerability.
+Statuses support custom names, colors, and icons, and are color-coded in the tree so you can differentiate them at a glance.
+You can also set a default status list that is applied automatically to new requests.
+
+Each request panel keeps a full history of everything you have sent, and you can navigate back and forward through previous requests and their responses without losing any of your work.
+
+Treepeater closely mirrors the Repeater UI to minimize the learning curve.
+If you are already familiar with Repeater, you should be productive in Treepeater almost immediately.
+
+Almost every action has a configurable keyboard shortcut — sending requests, navigating history, switching tabs, renaming nodes, changing statuses, and more.
+Treepeater aims to eventually support a fully keyboard-driven workflow, though there is still work to do in that area.
+
+Several more features are planned, including an agent-based tester, an encoder/decoder, search-and-replace, diff view, split views, and a payload snippet library.
 
 ## Contents
 * [Before you start](#before-you-start)
@@ -13,44 +29,6 @@ This project was created by PortSwigger to help you quickly start developing ext
 ## Before you start
 
 Before you begin development, make sure that your project's JDK is set to version "21".
-
-
-## Writing your extension
-
-To begin development, open the [Extension.java](src/main/java/Extension.java) file. It includes an example of setting your extension's name, which you can customize with your own logic.
-
-The template contains the following components for building your extension:
-
-* The `initialize` method. This is the entry point for your extension. It is called when the extension is loaded and receives a [montoyaApi](https://portswigger.github.io/burp-extensions-montoya-api/javadoc/burp/api/montoya/MontoyaApi.html) argument, which provides access to all Montoya API features.
-* The `Extension` class. This implements the BurpExtension interface, so your extension is recognized and loaded by Burp.
-
-#### Related resources
-
-* For more information on Montoya API features, see the [JavaDoc](https://portswigger.github.io/burp-extensions-montoya-api/javadoc/burp/api/montoya/MontoyaApi.html).
-* To explore example extensions, visit our [GitHub repository](https://github.com/PortSwigger/burp-extensions-montoya-api-examples).
-* For more information on creating extensions, see our [documentation](https://portswigger.net/burp/documentation/desktop/extend-burp/extensions/creating).
-* For a beginner tutorial, see [Writing your first extension](https://portswigger.net/burp/documentation/desktop/extend-burp/extensions/creating/first-extension).
-* If you have any questions or need help from the community, join our [Discord channel](https://discord.com/channels/1159124119074381945/1164175825474686996).
-
-### Vibe Coding Your Extension with AI
-
-You can use an LLM to help you write your extension. To support this, we've included a [`CLAUDE.md`](./CLAUDE.md) file and supporting [documentation](./docs) that provide essential context for the model.
-
-#### Vibe Coding with Claude Code
-
-To use this file with Claude Code:
-
-1. Open a terminal and navigate to the `ExtensionTemplateProject` folder.
-2. Run Claude Code using the following command: `claude`.
-3. Prompt Claude to create some code for your extension.
-
-Claude should automatically read the contents of the `ExtensionTemplateProject` folder, including the `CLAUDE.md` file, then create draft code for you to review. If you think it hasn't read the `CLAUDE.md` file, directly prompt it to do so before continuing.
-
-#### Vibe Coding with Other LLMs
-
-If you're using an LLM other than Claude Code, prompt the LLM to read the `CLAUDE.md` file and supporting documentation from the `docs` folder, or provide their contents as part of your context window.
-
----
 
 ## Building your extension
 
@@ -91,14 +69,3 @@ To quickly reload your extension in Burp:
 
 1. In Burp, go to **Extensions > Installed**.
 2. Hold `Ctrl` or `⌘`, and select the **Loaded** checkbox next to your extension.
-
----
-
-## Sharing your extension
-
-Once you've built your extension, we'd love to see what you've created!
-
-Share your extension on our [PortSwigger Discord](https://discord.com/channels/1159124119074381945/1164175825474686996) #extensions channel to get feedback, showcase your work, and connect with other developers.
-Then take it to the next level by submitting your extension to the BApp store, making it available to the community of 80,000+ users worldwide.
-
-For guidance on the submission process, see [Submitting extensions to the BApp store](https://portswigger.net/burp/documentation/desktop/extend-burp/extensions/creating/bapp-store-submitting-extensions).

@@ -7,6 +7,7 @@ import java.util.List;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 import treepeater.Treepeater;
+import treepeater.tree.RequestTreeNode;
 
 public class RequestHistory {
     private final List<HistoryEntry> history;
@@ -72,5 +73,20 @@ public class RequestHistory {
 
     public HistoryEntry getCurrentEntry() {
         return this.history.get(this.currentIndex);
+    }
+
+    /**
+     * Ensures the node's history has at least one entry and a valid current index (used when opening a tab).
+     */
+    public static void ensureSeededFromNode(RequestTreeNode node) {
+        RequestHistory nodeHistory = node.getHistory();
+        if (nodeHistory.isEmpty()) {
+            nodeHistory.addEntry(node.getRequest().httpService().host(), node.getRequest(), node.getResponse());
+        } else {
+            int idx = nodeHistory.getCurrentIndex();
+            if (idx < 0 || idx >= nodeHistory.size()) {
+                nodeHistory.setCurrentIndex(nodeHistory.size() - 1);
+            }
+        }
     }
 }

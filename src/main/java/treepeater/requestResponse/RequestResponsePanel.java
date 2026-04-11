@@ -1,39 +1,23 @@
 package treepeater.requestResponse;
 
 import java.awt.BorderLayout;
-import java.awt.Color;
-import java.awt.Component;
 import java.awt.Font;
-import java.awt.KeyboardFocusManager;
-import java.awt.event.ActionEvent;
 import java.time.LocalDateTime;
 import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 
-import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JLabel;
-import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
-import javax.swing.JPopupMenu;
 import javax.swing.JSplitPane;
-import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
-import javax.swing.SwingWorker;
 import javax.swing.UIManager;
-import javax.swing.border.Border;
-import javax.swing.event.AncestorEvent;
-import javax.swing.event.AncestorListener;
 import javax.swing.tree.TreePath;
 
-import burp.api.montoya.http.HttpService;
-import burp.api.montoya.http.RequestOptions;
-import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 import burp.api.montoya.ui.editor.EditorOptions;
@@ -42,8 +26,6 @@ import burp.api.montoya.ui.editor.HttpResponseEditor;
 import treepeater.Treepeater;
 import treepeater.TreepeaterModel;
 import treepeater.components.CustomButton;
-import treepeater.components.SplitButtonPanel;
-import treepeater.settings.HotkeyCaptureDialog;
 import treepeater.settings.TreepeaterSettings;
 import treepeater.tree.RequestTree;
 import treepeater.tree.RequestTreeNode;
@@ -74,15 +56,12 @@ public class RequestResponsePanel extends JPanel {
     private JLabel targetValueLabel;
     private JButton editTargetButton;
 
-    private String targetHost;
-    private int targetPort;
-    private boolean targetHttps;
-    private boolean sniEnabled;
+    private final RequestPanelHttpTarget httpTarget = new RequestPanelHttpTarget();
 
-    private SwingWorker<HttpResponse, Void> activeWorker;
+    private RequestHistoryNavigator historyNavigator;
 
     private final HotkeyHandler hotkeyHandler;
-    private boolean hotkeyHandlerRegistered;
+    private final AtomicBoolean hotkeyHandlerRegistered = new AtomicBoolean(false);
 
     private final HashMap<String, Runnable> hotkeyActions = new HashMap<>();
 
@@ -116,100 +95,18 @@ public class RequestResponsePanel extends JPanel {
         this.historyBackDropButton = new JButton("▼");
         this.historyForwardDropButton = new JButton("▼");
 
-        this.historyBackSplitButton = buildHistorySplitButton(this.historyBackButton, this.historyBackDropButton);
-        this.historyForwardSplitButton = buildHistorySplitButton(this.historyForwardButton, this.historyForwardDropButton);
-
-        this.historyBackButton.addActionListener(e -> navigateBack());
-        this.historyForwardButton.addActionListener(e -> navigateForward());
-        this.historyBackDropButton.addActionListener(e -> showHistoryMenu(-1, this.historyBackDropButton));
-        this.historyForwardDropButton.addActionListener(e -> showHistoryMenu(1, this.historyForwardDropButton));
+        this.historyBackSplitButton = RequestResponsePanelUi.buildHistorySplitButton(this.historyBackButton, this.historyBackDropButton);
+        this.historyForwardSplitButton = RequestResponsePanelUi.buildHistorySplitButton(this.historyForwardButton, this.historyForwardDropButton);
 
         this.sendButton = new CustomButton("Send");
         this.sendButton.setBorder(BorderFactory.createEmptyBorder(3, 0, 3, 0));
 
         this.cancelButton = new JButton();
 
-        initTargetStateFromRequest(this.node.getRequest());
-        refreshTargetLabel();
+        this.httpTarget.initFromRequest(this.node.getRequest());
+        this.refreshTargetLabel();
 
-        // TODO: Move this to the requesttreenode initializeer
-        RequestHistory nodeHistory = this.node.getHistory();
-        if (nodeHistory.isEmpty()) {
-            nodeHistory.addEntry(node.getRequest().httpService().host(), node.getRequest(), node.getResponse());
-        } else {
-            int idx = nodeHistory.getCurrentIndex();
-            if (idx < 0 || idx >= nodeHistory.size()) {
-                nodeHistory.setCurrentIndex(nodeHistory.size() - 1);
-            }
-        }
-        refreshHistoryNavState();
-
-        this.sendButton.setAction(new AbstractAction("Send") {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                RequestResponsePanel.this.sendButton.setEnabled(false);
-                RequestResponsePanel.this.cancelButton.setEnabled(true);
-
-                HttpRequest requestToSend = RequestResponsePanel.this.requestEditor.getRequest();
-                requestToSend = withTargetFromState(requestToSend);
-                RequestResponsePanel.this.requestEditor.setRequest(requestToSend);
-                RequestResponsePanel.this.node.setRequest(requestToSend);
-
-                final HttpRequest historyRequestSnapshot = requestToSend;
-                final String historyTargetLabel = targetLabelFromState();
-                final LocalDateTime historyTime = LocalDateTime.now();
-
-                SwingWorker<HttpResponse, Void> worker = new SwingWorker<>() {
-
-                    @Override
-                    protected HttpResponse doInBackground() throws Exception {
-                        RequestOptions options = RequestOptions.requestOptions();
-                        if (RequestResponsePanel.this.sniEnabled && RequestResponsePanel.this.targetHttps && RequestResponsePanel.this.targetHost != null
-                                && !RequestResponsePanel.this.targetHost.isBlank()) {
-                            options = options.withServerNameIndicator(RequestResponsePanel.this.targetHost.trim());
-                        }
-                        HttpRequestResponse response = Treepeater.api.http().sendRequest(historyRequestSnapshot, options);
-                        return response.response();
-                    }
-
-                    protected void done() {
-                        try {
-                            if (isCancelled()) {
-                                return;
-                            }
-                            HttpResponse r = get();
-                            RequestResponsePanel.this.setResponse(r);
-                            RequestResponsePanel.this.addToHistory(historyRequestSnapshot, r, historyTime, historyTargetLabel);
-                        } catch (Exception e) {
-                            Treepeater.api.logging().logToError(e);
-                        } finally {
-                            RequestResponsePanel.this.sendButton.setEnabled(true);
-                            RequestResponsePanel.this.cancelButton.setEnabled(false);
-                            if (Objects.equals(RequestResponsePanel.this.activeWorker, this)) {
-                                RequestResponsePanel.this.activeWorker = null;
-                            }
-                        }
-                    }
-                };
-
-                RequestResponsePanel.this.activeWorker = worker;
-                worker.execute();
-            }
-        });
-
-        this.cancelButton.setAction(new AbstractAction("Cancel") {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                SwingWorker<HttpResponse, Void> w = RequestResponsePanel.this.activeWorker;
-                if (w != null) {
-                    w.cancel(true);
-                }
-                RequestResponsePanel.this.activeWorker = null;
-                RequestResponsePanel.this.sendButton.setEnabled(true);
-                RequestResponsePanel.this.cancelButton.setEnabled(false);
-            }
-        });
-        this.cancelButton.setEnabled(false);
+        RequestHistory.ensureSeededFromNode(this.node);
 
         this.topBar.add(this.sendButton);
         this.topBar.add(Box.createHorizontalStrut(6));
@@ -242,18 +139,49 @@ public class RequestResponsePanel extends JPanel {
         this.responseEditor = Treepeater.api.userInterface().createHttpResponseEditor(EditorOptions.READ_ONLY);
         this.responseEditor.setResponse(this.node.getResponse());
 
-        this.splitPane.setLeftComponent(this.makeHeaderPanel("Request", this.requestEditor.uiComponent()));
-        this.splitPane.setRightComponent(this.makeHeaderPanel("Response", this.responseEditor.uiComponent()));
+        this.historyNavigator = new RequestHistoryNavigator(
+                this.node,
+                this.requestEditor,
+                this.historyBackButton,
+                this.historyBackDropButton,
+                this.historyForwardButton,
+                this.historyForwardDropButton,
+                this::setResponse,
+                () -> {
+                    this.httpTarget.initFromRequest(this.requestEditor.getRequest());
+                    this.refreshTargetLabel();
+                    this.historyNavigator.refreshNavState();
+                });
+
+        this.historyBackButton.addActionListener(e -> this.historyNavigator.navigateBack());
+        this.historyForwardButton.addActionListener(e -> this.historyNavigator.navigateForward());
+        this.historyBackDropButton.addActionListener(e -> this.historyNavigator.showHistoryMenu(-1, this.historyBackDropButton));
+        this.historyForwardDropButton.addActionListener(e -> this.historyNavigator.showHistoryMenu(1, this.historyForwardDropButton));
+
+        this.historyNavigator.refreshNavState();
+
+        new RequestResponseSendCoordinator(
+                this.requestEditor,
+                this.node,
+                this.httpTarget,
+                this.sendButton,
+                this.cancelButton,
+                (snapshot, response, time, label) -> {
+                    this.setResponse(response);
+                    this.addToHistory(snapshot, response, time, label);
+                }).registerActions();
+
+        this.splitPane.setLeftComponent(RequestResponsePanelUi.makeHeaderPanel("Request", this.requestEditor.uiComponent()));
+        this.splitPane.setRightComponent(RequestResponsePanelUi.makeHeaderPanel("Response", this.responseEditor.uiComponent()));
 
         this.splitPane.setDividerLocation(0.5);
         this.splitPane.setResizeWeight(0.5);
 
         this.add(splitPane, BorderLayout.CENTER);
 
-        this.hotkeyHandlerRegistered = false;
         this.hotkeyHandler = new HotkeyHandler();
         this.populateHotkeyActions();
-        this.installHotkeys();
+        RequestResponseHotkeyInstaller.install(this, this.hotkeyHandler, this.hotkeyActions, this.hotkeyHandlerRegistered);
     }
 
     @Override
@@ -267,95 +195,27 @@ public class RequestResponsePanel extends JPanel {
      * but must track Burp theme changes.
      */
     private void applyThemeLocalStyles() {
-        // Top bar was never passed to applyThemeToComponent (only the split pane was), so Burp
-        // never pushed fonts/colors onto Send / nav controls. Re-apply whenever theme/LAF sync runs.
-        if (this.topBarWrapper != null && Treepeater.api != null) {
-            Treepeater.api.userInterface().applyThemeToComponent(this.topBarWrapper);
-        }
-        if (this.topBarWrapper != null) {
-            this.topBarWrapper.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, uiBorderColor()));
-        }
-        if (this.sendButton != null) {
-            Color bg = UIManager.getColor("Button.primary.background");
-            Color fg = UIManager.getColor("Button.primary.foreground");
-            Color hov = UIManager.getColor("Button.primary.hoverBackground");
-
-            this.sendButton.setBackground(bg);
-            this.sendButton.setForeground(fg);
-            this.sendButton.setHoverBackground(hov);
-            this.sendButton.setBorder(BorderFactory.createEmptyBorder(3, 0, 3, 0));
-            this.sendButton.repaint();
-        }
-        if (this.historyBackButton != null) {
-            this.restyleFlatToolbarButton(this.historyBackButton);
-            this.restyleFlatToolbarButton(this.historyBackDropButton);
-            this.restyleFlatToolbarButton(this.historyForwardButton);
-            this.restyleFlatToolbarButton(this.historyForwardDropButton);
-        }
-        if (this.historyBackSplitButton != null) {
-            this.historyBackSplitButton.repaint();
-        }
-        if (this.historyForwardSplitButton != null) {
-            this.historyForwardSplitButton.repaint();
-        }
+        RequestResponsePanelUi.applyTopBarTheme(
+                this.topBarWrapper,
+                this.sendButton,
+                this.historyBackSplitButton,
+                this.historyForwardSplitButton,
+                this.historyBackButton,
+                this.historyBackDropButton,
+                this.historyForwardButton,
+                this.historyForwardDropButton);
     }
 
     private void populateHotkeyActions() {
         this.hotkeyActions.put(TreepeaterSettings.SEND_REQUEST_HOTKEY_SETTING, this::handleSendRequest);
-        this.hotkeyActions.put(TreepeaterSettings.HISTORY_BACK_HOTKEY_SETTING, this::navigateBack);
-        this.hotkeyActions.put(TreepeaterSettings.HISTORY_FORWARD_HOTKEY_SETTING, this::navigateForward);
+        this.hotkeyActions.put(TreepeaterSettings.HISTORY_BACK_HOTKEY_SETTING, this.historyNavigator::navigateBack);
+        this.hotkeyActions.put(TreepeaterSettings.HISTORY_FORWARD_HOTKEY_SETTING, this.historyNavigator::navigateForward);
         this.hotkeyActions.put(TreepeaterSettings.COPY_SAME_PARENT_REQUEST_HOTKEY_SETTING, this::handleCopySameParentRequest);
         this.hotkeyActions.put(TreepeaterSettings.RENAME_HOTKEY_SETTING, this::handleRename);
         this.hotkeyActions.put(TreepeaterSettings.CHANGE_STATUS_HOTKEY_SETTING, this::handleChangeStatus);
         this.hotkeyActions.put(TreepeaterSettings.EDIT_TARGET_HOTKEY_SETTING, () -> this.editTargetButton.doClick());
         this.hotkeyActions.put(TreepeaterSettings.TAB_PREVIOUS_HOTKEY_SETTING, this.selectPreviousRequestResponseTab);
         this.hotkeyActions.put(TreepeaterSettings.TAB_NEXT_HOTKEY_SETTING, this.selectNextRequestResponseTab);
-    }
-
-    private void installHotkeys() {
-        TreepeaterSettings settings = TreepeaterSettings.getInstance();
-        for (Map.Entry<String, Runnable> entry : this.hotkeyActions.entrySet()) {
-            KeyStroke ks = HotkeyCaptureDialog.parseBurpHotkeyToKeyStroke(settings.getStringWithDefault(entry.getKey()));
-            if (ks != null) {
-                this.hotkeyHandler.addBinding(entry.getKey(), ks, entry.getValue());
-            }
-        }
-
-        settings.addListener((key, value) -> {
-            if (!this.hotkeyActions.containsKey(key) || !(value instanceof String newHotkey)) {
-                return;
-            }
-            KeyStroke newKs = HotkeyCaptureDialog.parseBurpHotkeyToKeyStroke(newHotkey);
-            if (newKs != null) {
-                this.hotkeyHandler.changeBinding(key, newKs);
-            }
-        });
-
-        addAncestorListener(new AncestorListener() {
-            @Override
-            public void ancestorAdded(AncestorEvent event) {
-                if (RequestResponsePanel.this.hotkeyHandlerRegistered) {
-                    return;
-                }
-                KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(
-                        RequestResponsePanel.this.hotkeyHandler);
-                RequestResponsePanel.this.hotkeyHandlerRegistered = true;
-            }
-
-            @Override
-            public void ancestorRemoved(AncestorEvent event) {
-                if (!RequestResponsePanel.this.hotkeyHandlerRegistered) {
-                    return;
-                }
-                KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(
-                        RequestResponsePanel.this.hotkeyHandler);
-                RequestResponsePanel.this.hotkeyHandlerRegistered = false;
-            }
-
-            @Override
-            public void ancestorMoved(AncestorEvent event) {
-            }
-        });
     }
 
     private void handleSendRequest() {
@@ -388,13 +248,12 @@ public class RequestResponsePanel extends JPanel {
         SwingUtilities.invokeLater(() -> this.tree.startProgrammaticEditForNode(this.node, ProgrammaticEdit.STATUS));
     }
 
-
     public void setRequest(HttpRequest request) {
         this.requestEditor.setRequest(request);
         this.node.setRequest(request);
         Treepeater.saveState();
-        initTargetStateFromRequest(request);
-        refreshTargetLabel();
+        this.httpTarget.initFromRequest(request);
+        this.refreshTargetLabel();
     }
 
     private void setResponse(HttpResponse response) {
@@ -403,88 +262,14 @@ public class RequestResponsePanel extends JPanel {
         Treepeater.saveState();
     }
 
-    private JPanel makeHeaderPanel(String header, Component component) {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-
-        Border labelPadding = BorderFactory.createEmptyBorder(12, 8, 12, 0);
-
-        JLabel label = new JLabel(header);
-        label.setBorder(labelPadding);
-        
-        label.setFont(label.getFont().deriveFont(Font.BOLD, 16f));
-
-        panel.add(label);
-        panel.add(component);
-        
-        panel.setBackground(UIManager.getColor("Colors.ui.background.1"));
-
-        return panel;
-    }
-
     private void addToHistory(HttpRequest request, HttpResponse response, LocalDateTime time, String targetLabel) {
         RequestHistory h = this.node.getHistory();
         h.addEntry(targetLabel, request, response);
-        refreshHistoryNavState();
-    }
-
-    private void initTargetStateFromRequest(HttpRequest request) {
-        if (request == null) {
-            return;
-        }
-        HttpService service;
-        try {
-            service = request.httpService();
-        } catch (Exception ignored) {
-            return;
-        }
-        if (service == null) {
-            return;
-        }
-
-        this.targetHost = service.host();
-        this.targetPort = service.port();
-        this.targetHttps = service.secure();
-        if (this.targetPort <= 0) {
-            this.targetPort = this.targetHttps ? 443 : 80;
-        }
-        // Burp defaults SNI on for HTTPS; mimic that.
-        if (!this.targetHttps) {
-            this.sniEnabled = false;
-        } else if (this.targetHost != null && !this.targetHost.isBlank()) {
-            this.sniEnabled = true;
-        }
-    }
-
-    private HttpRequest withTargetFromState(HttpRequest request) {
-        if (request == null) {
-            return null;
-        }
-        String host = (this.targetHost == null) ? "" : this.targetHost.trim();
-        if (host.isEmpty()) {
-            return request;
-        }
-        int port = this.targetPort;
-        boolean secure = this.targetHttps;
-        try {
-            HttpService service = HttpService.httpService(host, port, secure);
-            return request.withService(service);
-        } catch (IllegalArgumentException ex) {
-            return request;
-        }
-    }
-
-    private String targetLabelFromState() {
-        String host = (this.targetHost == null) ? "" : this.targetHost.trim();
-        if (host.isEmpty()) {
-            return "";
-        }
-        String scheme = this.targetHttps ? "https" : "http";
-        return scheme + "://" + host + ":" + this.targetPort + (this.targetHttps ? (this.sniEnabled ? " (SNI)" : " (no SNI)") : "");
+        this.historyNavigator.refreshNavState();
     }
 
     private void refreshTargetLabel() {
-        String label = targetLabelFromState();
+        String label = this.httpTarget.statusLineLabel();
         if (label.isEmpty()) {
             label = "Target: (not set)";
         } else {
@@ -493,106 +278,19 @@ public class RequestResponsePanel extends JPanel {
         this.targetValueLabel.setText(label);
     }
 
-    private void refreshHistoryNavState() {
-        RequestHistory h = this.node.getHistory();
-        boolean hasHistory = !h.isEmpty();
-        int cur = h.getCurrentIndex();
-        boolean canBack = hasHistory && cur > 0;
-        boolean canForward = hasHistory && cur >= 0 && cur < (h.size() - 1);
-
-        this.historyBackButton.setEnabled(canBack);
-        this.historyBackDropButton.setEnabled(canBack);
-        this.historyForwardButton.setEnabled(canForward);
-        this.historyForwardDropButton.setEnabled(canForward);
-    }
-
-    private void navigateBack() {
-        RequestHistory h = this.node.getHistory();
-        if (h.getCurrentIndex() <= 0) {
-            return;
-        }
-
-        h.navigateBack();
-        applyHistoryIndex();
-    }
-
-    private void navigateForward() {
-        RequestHistory h = this.node.getHistory();
-
-        if (h.getCurrentIndex() >= h.size() - 1) {
-            return;
-        }
-
-        h.navigateForward();
-        applyHistoryIndex();
-    }
-
-    private void showHistoryMenu(int direction, JButton anchor) {
-        RequestHistory h = this.node.getHistory();
-        if (h.isEmpty() || h.getCurrentIndex() < 0) {
-            return;
-        }
-
-        JPopupMenu menu = new JPopupMenu();
-        int current = h.getCurrentIndex();
-
-        if (direction < 0) {
-            for (int i = current - 1; i >= 0; i--) {
-                HistoryEntry entry = h.getEntry(i);
-                JMenuItem item = new JMenuItem(entry.toString());
-                final int idx = i;
-                item.addActionListener(e -> setHistoryIndex(idx));
-                menu.add(item);
-            }
-        } else {
-            for (int i = current + 1; i < h.size(); i++) {
-                HistoryEntry entry = h.getEntry(i);
-                JMenuItem item = new JMenuItem(entry.toString());
-                final int idx = i;
-                item.addActionListener(e -> setHistoryIndex(idx));
-                menu.add(item);
-            }
-        }
-
-        if (menu.getComponentCount() == 0) {
-            return;
-        }
-
-        menu.show(anchor, 0, anchor.getHeight());
-    }
-
-    private void setHistoryIndex(int index) {
-        RequestHistory h = this.node.getHistory();
-        
-        h.setCurrentIndex(index);
-        this.applyHistoryIndex();
-    }
-
-    private void applyHistoryIndex() {
-        RequestHistory h = this.node.getHistory();
-        
-        HistoryEntry selected = h.getCurrentEntry();
-
-        this.requestEditor.setRequest(selected.request);
-        this.node.setRequest(selected.request);
-        if (selected.response != null) {
-            this.setResponse(selected.response);
-        }
-        initTargetStateFromRequest(selected.request);
-        refreshTargetLabel();
-        refreshHistoryNavState();
-    }
-
     private void openEditTargetDialog() {
-        EditTargetDialogContent content = new EditTargetDialogContent(this.targetHost, this.targetPort, this.targetHttps, this.sniEnabled);
-        
+        EditTargetDialogContent content = new EditTargetDialogContent(
+                this.httpTarget.getHost(),
+                this.httpTarget.getPort(),
+                this.httpTarget.isHttps(),
+                this.httpTarget.isSniEnabled());
+
         int result = JOptionPane.showConfirmDialog(
                 this,
                 content,
                 "Edit target",
                 JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.PLAIN_MESSAGE
-        );
+                JOptionPane.PLAIN_MESSAGE);
 
         if (result != JOptionPane.OK_OPTION) {
             return;
@@ -600,115 +298,14 @@ public class RequestResponsePanel extends JPanel {
 
         TargetSettings settings = content.getSettings();
 
-        this.targetHost = settings.host();
-        this.targetPort = settings.port();
-        this.targetHttps = settings.https();
-        this.sniEnabled = settings.sniEnabled();
+        this.httpTarget.applyFromDialog(settings);
 
         HttpRequest current = this.requestEditor.getRequest();
-        HttpRequest updated = withTargetFromState(current);
+        HttpRequest updated = this.httpTarget.applyToRequest(current);
         if (updated != null) {
             this.requestEditor.setRequest(updated);
             this.node.setRequest(updated);
         }
-        refreshTargetLabel();
-    }
-
-    private static JPanel buildHistorySplitButton(JButton navButton, JButton dropButton) {
-        styleAsFlatButton(navButton);
-        styleAsFlatButton(dropButton);
-
-        // Make them look like a single split-button control.
-        navButton.setBorder(BorderFactory.createEmptyBorder(4, 10, 4, 10));
-        dropButton.setBorder(BorderFactory.createEmptyBorder(7, 0, 6, 0));
-        dropButton.setFont(dropButton.getFont().deriveFont(dropButton.getFont().getSize2D() - 4f));
-
-        installHoverBackground(navButton);
-        installHoverBackground(dropButton);
-
-        SplitButtonPanel panel = new SplitButtonPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.X_AXIS));
-
-        panel.add(navButton);
-        panel.add(dropButton);
-
-        return panel;
-    }
-
-    private static void styleAsFlatButton(JButton button) {
-        button.setFocusPainted(false);
-        button.setContentAreaFilled(true);
-        button.setOpaque(true);
-        button.setBorderPainted(false);
-        button.setRolloverEnabled(true);
-        Color bg =
-                UIManager.getColor("Panel.background") != null ? UIManager.getColor("Panel.background") :
-                UIManager.getColor("control");
-        if (bg != null) {
-            button.setBackground(bg);
-        }
-    }
-
-    private static Color uiBorderColor() {
-        Color c =
-                UIManager.getColor("Separator.foreground") != null ? UIManager.getColor("Separator.foreground") :
-                UIManager.getColor("Component.borderColor") != null ? UIManager.getColor("Component.borderColor") :
-                UIManager.getColor("controlShadow");
-        if (c != null) {
-            return c;
-        }
-        return new Color(0, 0, 0, 80);
-    }
-    
-
-    private static Color uiHoverColor() {
-        Color c =
-                UIManager.getColor("Button.hoverBackground") != null ? UIManager.getColor("Button.hoverBackground") :
-                UIManager.getColor("Button.highlight") != null ? UIManager.getColor("Button.highlight") :
-                UIManager.getColor("Table.selectionBackground");
-        if (c != null) {
-            return new Color(c.getRed(), c.getGreen(), c.getBlue(), 70);
-        }
-        return new Color(0, 0, 0, 18);
-    }
-
-    private static void installHoverBackground(JButton button) {
-        button.getModel().addChangeListener(e -> applyFlatButtonHoverVisual(button));
-    }
-
-    private static void applyFlatButtonHoverVisual(JButton button) {
-        Color normalBg = flatPanelBackground();
-        Color hoverBg = uiHoverColor();
-        Color next;
-        if (!button.isEnabled()) {
-            next = normalBg;
-        } else {
-            next = button.getModel().isRollover() ? hoverBg : normalBg;
-        }
-        if (!Objects.equals(button.getBackground(), next)) {
-            button.setBackground(next);
-        }
-        button.repaint();
-        Component parent = button.getParent();
-        if (parent != null) {
-            parent.repaint();
-        }
-    }
-
-    private static Color flatPanelBackground() {
-        Color bg = UIManager.getColor("Panel.background");
-        if (bg != null) {
-            return bg;
-        }
-        Color c = UIManager.getColor("control");
-        return c != null ? c : Color.LIGHT_GRAY;
-    }
-
-    /**
-     * After a theme change, reset baseline background and re-apply hover if the pointer is still over the control.
-     */
-    private void restyleFlatToolbarButton(JButton button) {
-        styleAsFlatButton(button);
-        applyFlatButtonHoverVisual(button);
+        this.refreshTargetLabel();
     }
 }

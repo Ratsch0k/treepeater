@@ -3,8 +3,6 @@ package treepeater.components;
 import javax.swing.JPanel;
 import javax.swing.border.Border;
 
-import treepeater.Treepeater;
-
 import java.awt.Color;
 import java.awt.Graphics;
 import java.awt.Graphics2D;

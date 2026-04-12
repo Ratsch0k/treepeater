@@ -1,5 +1,6 @@
 package treepeater;
 import burp.api.montoya.BurpExtension;
+import burp.api.montoya.EnhancedCapability;
 import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.core.Registration;
 import burp.api.montoya.http.message.HttpRequestResponse;
@@ -107,6 +108,10 @@ public class Treepeater implements BurpExtension {
                 this.sendHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(newHotkey, sendHotKeyHandler);
             }
         });
+    }
+
+    public java.util.Set<EnhancedCapability> enhancedCapabilities() {
+        return java.util.Set.of(EnhancedCapability.AI_FEATURES);
     }
 
     public static StatusRegistry getStatusRegistry() {

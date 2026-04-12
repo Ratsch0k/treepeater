@@ -4,8 +4,6 @@ import javax.swing.JButton;
 
 import com.formdev.flatlaf.FlatClientProperties;
 
-import treepeater.Treepeater;
-
 public class StyledButton extends JButton {
     public enum Style {
         DEFAULT,
@@ -70,8 +68,6 @@ public class StyledButton extends JButton {
         }
         
         String styleString = String.format(formatString, style);
-
-        Treepeater.api.logging().logToOutput("Building style string for style: " +  styleString);
             
         return styleString;
     }

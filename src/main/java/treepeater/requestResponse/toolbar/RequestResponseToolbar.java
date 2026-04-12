@@ -24,7 +24,7 @@ import treepeater.tree.RequestTreeNode;
 public class RequestResponseToolbar extends JPanel {
     private final InfoToolbarTab infoToolbarTab;
     private final NotesToolbarTab notesToolbarTab;
-    private final MagicToolbarTab magicToolbarTab;
+    private final AIToolbarTab magicToolbarTab;
 
     private final JButton expandButton;
 
@@ -37,10 +37,15 @@ public class RequestResponseToolbar extends JPanel {
 
     public RequestResponseToolbar(RequestTreeNode node) {
         super(new BorderLayout());
+        setBorder(
+                BorderFactory.createCompoundBorder(
+                        BorderFactory.createMatteBorder(0, 1, 0, 0, RequestResponsePanelUi.uiBorderColor()),
+                        BorderFactory.createEmptyBorder(8, 6, 8, 6)));
+
 
         this.infoToolbarTab = new InfoToolbarTab();
         this.notesToolbarTab = new NotesToolbarTab(node);
-        this.magicToolbarTab = new MagicToolbarTab();
+        this.magicToolbarTab = new AIToolbarTab();
 
         this.toolbarCardLayout = new CardLayout();
         this.toolbarPanel = new JPanel(this.toolbarCardLayout);
@@ -167,7 +172,7 @@ public class RequestResponseToolbar extends JPanel {
         return this.notesToolbarTab.getButton();
     }
 
-    public MagicToolbarTab getMagicToolbarTab() {
+    public AIToolbarTab getMagicToolbarTab() {
         return this.magicToolbarTab;
     }
 

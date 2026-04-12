@@ -21,7 +21,6 @@ public class Status {
     public record StatusNamedColors(String backgroundColorKey, String borderColorKey, String backgroundDarkModeColorKey, String borderColorDarkModeColorKey) {}
 
     public Status(String id, String statusName, StatusColors colors, String svgContent) {
-        Treepeater.api.logging().logToOutput("Creating status with color values: " + colors);
         this.id = id;
         this.statusName = statusName;
         this.colors = Optional.of(colors);
@@ -31,7 +30,6 @@ public class Status {
     }
 
     public Status(String id, String statusName, StatusNamedColors colors, String svgContent) {
-        Treepeater.api.logging().logToOutput("Creating status with named color values: " + colors);
         this.id = id;
         this.statusName = statusName;
         this.namedColors = Optional.of(colors);

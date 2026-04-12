@@ -17,8 +17,6 @@ import treepeater.settings.TreepeaterSettingsPanel;
 import javax.swing.*;
 import javax.swing.event.TreeModelEvent;
 import javax.swing.event.TreeModelListener;
-import javax.swing.event.TreeSelectionEvent;
-import javax.swing.event.TreeSelectionListener;
 import javax.swing.tree.DefaultMutableTreeNode;
 import java.awt.*;
 import java.util.List;
@@ -59,7 +57,6 @@ public class Treepeater implements BurpExtension {
                     Treepeater.statusRegistry = new StatusRegistry();
                 }
             }
-
         } catch (Exception e) {
             Treepeater.api.logging().logToOutput("Error loading status registry from file: " + e.getMessage());
             Treepeater.statusRegistry = new StatusRegistry();
@@ -104,7 +101,6 @@ public class Treepeater implements BurpExtension {
         this.sendHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(sendHotKey, sendHotKeyHandler);
 
         settings.addListener((key, value) -> {
-            Treepeater.api.logging().logToOutput("Settings changed: " + key);
             if (key.equals(TreepeaterSettings.SEND_HOTKEY_SETTING)) {
                 this.sendHotKeyRegistration.deregister();
                 HotKey newHotkey = HotKey.hotKey("Send to Treepeater", (String) value);
@@ -122,7 +118,6 @@ public class Treepeater implements BurpExtension {
      */
     public static void saveState() {
         SwingUtilities.invokeLater(() ->  {
-            Treepeater.api.logging().logToOutput("Saving state");
             Treepeater.persistence.saveStatusRegistry(Treepeater.statusRegistry);
             Treepeater.persistence.saveModel(Treepeater.model);
         });
@@ -138,16 +133,6 @@ public class Treepeater implements BurpExtension {
         for (HttpRequestResponse r : selectedRequestResponses) {
             model.insertNode(r);
         }
-    }
-
-
-    class CustomTreeSelectionListener implements TreeSelectionListener {
-
-        @Override
-        public void valueChanged(TreeSelectionEvent e) {
-            Treepeater.api.logging().logToOutput("Selected request: " + e);
-        }
-
     }
 
     class CustomTreeModelListener implements TreeModelListener {

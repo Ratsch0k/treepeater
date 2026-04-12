@@ -5,13 +5,11 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 
-import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.TreeNode;
 
 import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
-import treepeater.requestResponse.HistoryEntry;
 import treepeater.requestResponse.RequestHistory;
 
 import treepeater.tree.RequestTree;
@@ -42,23 +40,6 @@ public class TreepeaterModel implements RequestTreeNodeListener {
         this.requestCount = 0;
         this.activeNode = null;
         this.listeners = new HashSet<>();
-
-        //this.tree.addMouseListener(new MouseAdapter() {
-        //    @Override
-        //    public void mouseClicked(MouseEvent e) {
-        //        Treepeater.api.logging().logToOutput("Clicked on tree");
-        //        if (e.getClickCount() == 2) {
-        //            Treepeater.api.logging().logToOutput("Double clicked on tree");
-        //            TreePath path = tree.getPathForLocation(e.getX(), e.getY());
-        //            Treepeater.api.logging().logToOutput("Path is " + path);
-        //            if (path != null) {
-        //                RequestTreeNode node = (RequestTreeNode) path.getLastPathComponent();
-        //                TreepeaterModel.this.activeNode = Optional.of(node);
-        //                listeners.forEach(l -> l.onOpen(node));
-        //            }
-        //        }
-        //    }
-        //});
     }
 
     private void listenToAllNodes(RequestTreeNode node) {
@@ -149,7 +130,6 @@ public class TreepeaterModel implements RequestTreeNodeListener {
     }
 
     public void insertNodeInto(RequestTreeNode child, RequestTreeNode parent, int index) {
-        Treepeater.api.logging().logToOutput("[TreepeaterModel]: insertNodeInto(" + child + ", " + parent + ", " + index + ")");
         this.tree.insertNodeInto(child, parent, index);
         Treepeater.saveState();
     }
@@ -200,7 +180,6 @@ public class TreepeaterModel implements RequestTreeNodeListener {
 
     @Override
     public void onSelect(RequestTreeNode node) {
-        Treepeater.api.logging().logToOutput("[TreepeaterModel] onSelect: " + node);
         this.addTab(node);
     }
 
@@ -214,200 +193,6 @@ public class TreepeaterModel implements RequestTreeNodeListener {
 
     public List<RequestTreeNode> getTabs() {
         return this.tabs;
-    }
-
-    /**
-     * Logs a JSON-like snapshot of this model to the Burp extension output (or stdout if the API is not set).
-     */
-    public void debugDump() {
-        String dump = toDebugJsonString();
-        if (Treepeater.api != null) {
-            for (String line : dump.split("\n", -1)) {
-                Treepeater.api.logging().logToOutput(line);
-            }
-        } else {
-            System.out.print(dump);
-        }
-    }
-
-    /**
-     * Returns a pretty-printed JSON-like representation of the full model (tree, tabs, active node, counts).
-     */
-    public String toDebugJsonString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("{\n");
-        appendPair(sb, 1, "requestCount", this.requestCount);
-        sb.append(",\n");
-        appendPair(sb, 1, "listenerCount", this.listeners.size());
-        sb.append(",\n");
-        indent(sb, 1);
-        sb.append("\"activeNode\": ");
-        appendNodeRef(sb, this.activeNode);
-        sb.append(",\n");
-        indent(sb, 1);
-        sb.append("\"tabs\": [\n");
-        for (int i = 0; i < this.tabs.size(); i++) {
-            indent(sb, 2);
-            appendNodeRef(sb, this.tabs.get(i));
-            if (i < this.tabs.size() - 1) {
-                sb.append(",");
-            }
-            sb.append("\n");
-        }
-        indent(sb, 1);
-        sb.append("],\n");
-        indent(sb, 1);
-        sb.append("\"tree\": ");
-        Object root = this.tree.getTreeModel().getRoot();
-        if (root instanceof RequestTreeNode) {
-            appendRequestTreeNode(sb, (RequestTreeNode) root, 1);
-        } else {
-            sb.append("null");
-        }
-        sb.append("\n}\n");
-        return sb.toString();
-    }
-
-    private static void appendRequestTreeNode(StringBuilder sb, RequestTreeNode node, int depth) {
-        indent(sb, depth);
-        sb.append("{\n");
-        appendPair(sb, depth + 1, "id", node.getId());
-        sb.append(",\n");
-        appendEscapedPair(sb, depth + 1, "name", node.getName());
-        sb.append(",\n");
-        appendEscapedPair(sb, depth + 1, "status",
-                node.getStatus() != null ? node.getStatus().getStatus() : null);
-        sb.append(",\n");
-        indent(sb, depth + 1);
-        sb.append("\"request\": ");
-        appendHttpMessage(sb, node.getRequest());
-        sb.append(",\n");
-        indent(sb, depth + 1);
-        sb.append("\"response\": ");
-        appendHttpMessage(sb, node.getResponse());
-        sb.append(",\n");
-        appendRequestHistory(sb, node.getHistory(), depth + 1);
-        sb.append(",\n");
-        indent(sb, depth + 1);
-        sb.append("\"children\": [\n");
-        int n = node.getChildCount();
-        for (int i = 0; i < n; i++) {
-            DefaultMutableTreeNode raw = (DefaultMutableTreeNode) node.getChildAt(i);
-            if (raw instanceof RequestTreeNode) {
-                appendRequestTreeNode(sb, (RequestTreeNode) raw, depth + 2);
-            } else {
-                indent(sb, depth + 2);
-                sb.append("null");
-            }
-            if (i < n - 1) {
-                sb.append(",");
-            }
-            sb.append("\n");
-        }
-        indent(sb, depth + 1);
-        sb.append("]\n");
-        indent(sb, depth);
-        sb.append("}");
-    }
-
-    private static void appendRequestHistory(StringBuilder sb, RequestHistory history, int depth) {
-        indent(sb, depth);
-        sb.append("\"history\": {\n");
-        appendPair(sb, depth + 1, "currentIndex", history.getCurrentIndex());
-        sb.append(",\n");
-        indent(sb, depth + 1);
-        sb.append("\"entries\": [\n");
-        List<HistoryEntry> entries = history.entries();
-        for (int i = 0; i < entries.size(); i++) {
-            HistoryEntry e = entries.get(i);
-            indent(sb, depth + 2);
-            sb.append("{\n");
-            appendPair(sb, depth + 3, "index", e.getIndex());
-            sb.append(",\n");
-            appendEscapedPair(sb, depth + 3, "time", e.getTime() != null ? e.getTime().toString() : null);
-            sb.append(",\n");
-            appendEscapedPair(sb, depth + 3, "targetLabel", e.getTargetLabel());
-            sb.append(",\n");
-            indent(sb, depth + 3);
-            sb.append("\"request\": ");
-            appendHttpMessage(sb, e.getRequest());
-            sb.append(",\n");
-            indent(sb, depth + 3);
-            sb.append("\"response\": ");
-            appendHttpMessage(sb, e.getResponse());
-            sb.append("\n");
-            indent(sb, depth + 2);
-            sb.append("}");
-            if (i < entries.size() - 1) {
-                sb.append(",");
-            }
-            sb.append("\n");
-        }
-        indent(sb, depth + 1);
-        sb.append("]\n");
-        indent(sb, depth);
-        sb.append("}");
-    }
-
-    private static void appendNodeRef(StringBuilder sb, RequestTreeNode node) {
-        if (node == null) {
-            sb.append("null");
-            return;
-        }
-        sb.append("{ \"id\": ").append(node.getId()).append(", \"name\": ");
-        appendEscaped(sb, node.getName());
-        sb.append(" }");
-    }
-
-    private static void appendHttpMessage(StringBuilder sb, Object message) {
-        if (message == null) {
-            sb.append("null");
-            return;
-        }
-        appendEscaped(sb, message.toString());
-    }
-
-    private static void appendPair(StringBuilder sb, int depth, String key, int value) {
-        indent(sb, depth);
-        sb.append('"').append(key).append("\": ").append(value);
-    }
-
-    private static void appendEscapedPair(StringBuilder sb, int depth, String key, String value) {
-        indent(sb, depth);
-        sb.append('"').append(key).append("\": ");
-        appendEscaped(sb, value);
-    }
-
-    private static void appendEscaped(StringBuilder sb, String s) {
-        if (s == null) {
-            sb.append("null");
-            return;
-        }
-        sb.append('"');
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '"' -> sb.append("\\\"");
-                case '\\' -> sb.append("\\\\");
-                case '\n' -> sb.append("\\n");
-                case '\r' -> sb.append("\\r");
-                case '\t' -> sb.append("\\t");
-                default -> {
-                    if (c < 0x20) {
-                        sb.append(String.format("\\u%04x", (int) c));
-                    } else {
-                        sb.append(c);
-                    }
-                }
-            }
-        }
-        sb.append('"');
-    }
-
-    private static void indent(StringBuilder sb, int depth) {
-        for (int i = 0; i < depth; i++) {
-            sb.append("  ");
-        }
     }
 
     @Override

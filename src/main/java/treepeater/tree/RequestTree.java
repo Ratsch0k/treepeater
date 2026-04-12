@@ -16,7 +16,6 @@ import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreePath;
 import javax.swing.tree.TreeSelectionModel;
 
-import treepeater.Treepeater;
 import treepeater.draggable.RequestTreeNodeSimple;
 import treepeater.draggable.TreeTransferHandler;
 import treepeater.tree.CustomTreeCellEditor.ProgrammaticEdit;
@@ -39,7 +38,6 @@ public class RequestTree extends JTree {
                 int y = e.getY();
 
                 TreePath path = RequestTree.this.getPathForLocation(x, y);
-                Treepeater.api.logging().logToOutput("MouseListener: " + path);
 
                 if (path == null) {
                     return;
@@ -47,7 +45,6 @@ public class RequestTree extends JTree {
 
                 Object lastComponent = path.getLastPathComponent();
 
-                Treepeater.api.logging().logToOutput(lastComponent);
                 if (!(lastComponent instanceof RequestTreeNode)) {
                     return;
                 }
@@ -130,7 +127,6 @@ public class RequestTree extends JTree {
     }
 
     public void insertNodeInto(RequestTreeNode child, RequestTreeNode parent, int index) {
-        Treepeater.api.logging().logToOutput("[RequestTree]: insertNodeInto(" + child + ", " + parent + ", " + index + ")");
         this.model.insertNodeInto(child, parent, index);
     }
 

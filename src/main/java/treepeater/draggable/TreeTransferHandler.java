@@ -23,23 +23,16 @@ public class TreeTransferHandler extends TransferHandler {
     RequestTreeNode[] nodesToRemove;
 
     public TreeTransferHandler() {
-        //try {
-            nodesFlavor = new DataFlavor(RequestTreeNodeTransferable.class, "RequestTreeNodeTransferable");
-            flavors[0] = nodesFlavor;
-        //} catch(ClassNotFoundException e) {
-        //    Treepeater.api.logging().logToError("ClassNotFound: " + e);
-        //}
+        nodesFlavor = new DataFlavor(RequestTreeNodeTransferable.class, "RequestTreeNodeTransferable");
+        flavors[0] = nodesFlavor;
     }
 
     public boolean canImport(TransferHandler.TransferSupport support) {
-        Treepeater.api.logging().logToOutput("CanImport?");
         if(!support.isDrop()) {
-            Treepeater.api.logging().logToOutput("CanImport -> no, does not support drop");
             return false;
         }
         support.setShowDropLocation(true);
         if(!support.isDataFlavorSupported(nodesFlavor)) {
-            Treepeater.api.logging().logToOutput("CanImport? -> no, data flavor not supported");
             return false;
         }
         // Do not allow a drop on the drag source selections.
@@ -50,28 +43,23 @@ public class TreeTransferHandler extends TransferHandler {
         int[] selRows = tree.getSelectionRows();
         for(int i = 0; i < selRows.length; i++) {
             if(selRows[i] == dropRow) {
-                Treepeater.api.logging().logToOutput("CanImport? -> no, is the source");
                 return false;
             }
             RequestTreeNode treeNode =
                     (RequestTreeNode)tree.getPathForRow(selRows[i]).getLastPathComponent();
             for (TreeNode offspring: Collections.list(treeNode.depthFirstEnumeration())) {
                 if (tree.getRowForPath(new TreePath(((RequestTreeNode)offspring).getPath())) == dropRow) {
-                    Treepeater.api.logging().logToOutput("CanImport? -> no, is the source");
                     return false;
                 }
             }
         }
-        Treepeater.api.logging().logToOutput("CanImport? -> yes");
         return true;
     }
 
     protected Transferable createTransferable(JComponent c) {
-        Treepeater.api.logging().logToOutput("Creating Transferable");
         JTree tree = (JTree) c;
         TreePath[] paths = tree.getSelectionPaths();
         if (paths == null) {
-            Treepeater.api.logging().logToOutput("Creating Transferable -> return null");
             return null;
         }
         // Make up a node array of copies for transfer and
@@ -109,12 +97,10 @@ public class TreeTransferHandler extends TransferHandler {
                 copies.toArray(new RequestTreeNode[copies.size()]);
         nodesToRemove =
                 toRemove.toArray(new RequestTreeNode[toRemove.size()]);
-        Treepeater.api.logging().logToOutput("Creating Transferable -> nodes: " + nodes);
         return new NodesTransferable(nodes);
     }
 
     private RequestTreeNode copy(RequestTreeNode node, HashSet<TreeNode> doneItems, JTree tree) {
-        Treepeater.api.logging().logToOutput("Copy");
         RequestTreeNode copy = new RequestTreeNode(node);
         doneItems.add(node);
         for (int i=0; i<node.getChildCount(); i++) {
@@ -122,12 +108,10 @@ public class TreeTransferHandler extends TransferHandler {
         }
         int row = tree.getRowForPath(new TreePath(copy.getPath()));
         tree.expandRow(row);
-        Treepeater.api.logging().logToOutput("Copy -> return " + copy);
         return copy;
     }
 
     protected void exportDone(JComponent source, Transferable data, int action) {
-        Treepeater.api.logging().logToOutput("ExportDone");
         if((action & MOVE) == MOVE) {
             JTree tree = (JTree)source;
             DefaultTreeModel model = (DefaultTreeModel)tree.getModel();
@@ -143,19 +127,15 @@ public class TreeTransferHandler extends TransferHandler {
     }
 
     public boolean importData(TransferHandler.TransferSupport support) {
-        Treepeater.api.logging().logToOutput("ImportData?");
         if(!canImport(support)) {
-            Treepeater.api.logging().logToOutput("ImportData -> does not support import");
             return false;
         }
 
-        Treepeater.api.logging().logToOutput("ImportData -> support: " + support);
 
         // Extract transfer data.
         RequestTreeNodeTransferable[] nodes = null;
         try {
             Transferable t = support.getTransferable();
-            Treepeater.api.logging().logToOutput("ImportData -> got transferable: " + t);
             nodes = (RequestTreeNodeTransferable[])t.getTransferData(nodesFlavor);
             Treepeater.api.logging().logToOutput("ImportData -> nodes: " + nodes);
         } catch(UnsupportedFlavorException ufe) {
@@ -169,33 +149,24 @@ public class TreeTransferHandler extends TransferHandler {
         // Get drop location info.
         JTree.DropLocation dl =
                 (JTree.DropLocation)support.getDropLocation();
-        Treepeater.api.logging().logToOutput("ImportData -> dropoff: " + dl);
         int childIndex = dl.getChildIndex();
-        Treepeater.api.logging().logToOutput("ImportData -> childIndex: " + childIndex);
         TreePath dest = dl.getPath();
-        Treepeater.api.logging().logToOutput("ImportData -> destination: " + dest);
         RequestTreeNode parent =
                 (RequestTreeNode)dest.getLastPathComponent();
-        Treepeater.api.logging().logToOutput("ImportData -> parent: " + parent);
         RequestTree tree = (RequestTree)support.getComponent();
-        Treepeater.api.logging().logToOutput("ImportData -> tree: " + tree);
         DefaultTreeModel model = (DefaultTreeModel)tree.getModel();
-        Treepeater.api.logging().logToOutput("ImportData -> mode: " + model);
         // Configure for drop mode.
         int index = childIndex;    // DropMode.INSERT
         if(childIndex == -1) {     // DropMode.ON
             index = parent.getChildCount();
         }
-        Treepeater.api.logging().logToOutput("ImportData -> index: " + childIndex);
         // Add data to model.
         for(int i = 0; i < nodes.length; i++) {
             RequestTreeNodeTransferable transferable = nodes[i];
-            Treepeater.api.logging().logToOutput("ImportData -> converting transferable into node: " + transferable);
             RequestTreeNode node = new RequestTreeNode(transferable.id, transferable.status, transferable.name, transferable.request, transferable.response, transferable.listener, transferable.notes);
 
             model.insertNodeInto(node, parent, index++);
         }
-        Treepeater.api.logging().logToOutput("ImporData -> yes and imported");
         return true;
     }
 
@@ -207,17 +178,14 @@ public class TreeTransferHandler extends TransferHandler {
         RequestTreeNode[] nodes;
 
         public NodesTransferable(RequestTreeNode[] nodes) {
-            Treepeater.api.logging().logToOutput("NodesTransferable: " + nodes);
             this.nodes = nodes;
         }
 
         public Object getTransferData(DataFlavor flavor)
                 throws UnsupportedFlavorException {
                 
-            Treepeater.api.logging().logToOutput("getTransferData");
             if(!isDataFlavorSupported(flavor))
                 throw new UnsupportedFlavorException(flavor);
-            Treepeater.api.logging().logToOutput("getTransferData -> nodes: " + nodes);
 
             ArrayList<RequestTreeNodeTransferable> transferables = new ArrayList<>();
             
@@ -234,7 +202,6 @@ public class TreeTransferHandler extends TransferHandler {
         }
 
         public boolean isDataFlavorSupported(DataFlavor flavor) {
-            Treepeater.api.logging().logToOutput("isDataFlavorSupported (" + nodesFlavor + " equals " + flavor + ")");
             return nodesFlavor.equals(flavor);
         }
     }

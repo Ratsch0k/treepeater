@@ -103,7 +103,6 @@ public class TreepeaterUI extends JSplitPane {
     }
 
     private void openTab(RequestTreeNode node) {
-        Treepeater.api.logging().logToOutput("[TreepeaterUI] openTab: node=" + node);
         RequestResponsePanel panel = this.tabMap.get(node);
         if (panel == null) {
             Treepeater.api.logging().logToError("No tab found for node " + node.getId());
@@ -114,7 +113,6 @@ public class TreepeaterUI extends JSplitPane {
     }
 
     private void addTab(RequestTreeNode node) {
-        Treepeater.api.logging().logToOutput("[TreepeaterUI] addTab: node=" + node);
         RequestResponsePanel panel = new RequestResponsePanel(
                 this.model,
                 node,
@@ -131,7 +129,6 @@ public class TreepeaterUI extends JSplitPane {
     }
 
     private void removeTab(RequestTreeNode node) {
-        Treepeater.api.logging().logToOutput("[TreepeaterUI] removeTab: node=" + node);
         RequestResponsePanel requestResponsePanel = this.tabMap.get(node);
         if (requestResponsePanel == null) {
             Treepeater.api.logging().logToError("No tab found for node " + node.getId());

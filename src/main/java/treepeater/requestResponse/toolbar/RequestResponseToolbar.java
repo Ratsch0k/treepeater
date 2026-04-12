@@ -4,6 +4,7 @@ import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Dimension;
 import java.util.List;
+import java.util.function.Supplier;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import javax.swing.BorderFactory;
@@ -13,6 +14,7 @@ import javax.swing.JButton;
 import javax.swing.JPanel;
 import javax.swing.UIManager;
 
+import treepeater.ai.HttpTargetSnapshot;
 import treepeater.Treepeater;
 import treepeater.icons.DoubleArrowLeftIcon;
 import treepeater.requestResponse.RequestResponsePanelUi;
@@ -35,7 +37,7 @@ public class RequestResponseToolbar extends JPanel {
 
     private final List<RequestResponseToolbarListener> toolbarListeners = new CopyOnWriteArrayList<>();
 
-    public RequestResponseToolbar(RequestTreeNode node) {
+    public RequestResponseToolbar(RequestTreeNode node, Supplier<HttpTargetSnapshot> targetSnapshotSupplier) {
         super(new BorderLayout());
         setBorder(
                 BorderFactory.createCompoundBorder(
@@ -45,7 +47,7 @@ public class RequestResponseToolbar extends JPanel {
 
         this.infoToolbarTab = new InfoToolbarTab();
         this.notesToolbarTab = new NotesToolbarTab(node);
-        this.magicToolbarTab = new AIToolbarTab();
+        this.magicToolbarTab = new AIToolbarTab(targetSnapshotSupplier);
 
         this.toolbarCardLayout = new CardLayout();
         this.toolbarPanel = new JPanel(this.toolbarCardLayout);

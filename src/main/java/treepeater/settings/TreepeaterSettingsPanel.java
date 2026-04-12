@@ -9,6 +9,8 @@ import java.awt.Graphics;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -23,8 +25,10 @@ import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
+import javax.swing.JPasswordField;
 import javax.swing.JSeparator;
 import javax.swing.JTextArea;
+import javax.swing.JTextField;
 import javax.swing.ListCellRenderer;
 import javax.swing.ListSelectionModel;
 import javax.swing.UIManager;
@@ -40,6 +44,8 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
     private static final int ROW_GAP = 10;
     private static final int SECTION_GAP = 20;
     private static final int INNER_SECTION_GAP = 16;
+    /** Padding around each LLM settings row (label + field). */
+    private static final int LLM_ROW_PADDING = 8;
 
     private final TreepeaterSettings settings;
     private final JPanel root;
@@ -62,6 +68,8 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
 
         this.root.add(new JSeparator(JSeparator.HORIZONTAL));
 
+
+
         this.root.add(this.createTitledSection(
             "Status",
             "Configure the statuses available for Treepeater nodes. " +
@@ -69,6 +77,18 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
             "Each status has a name, background and border/icon color, and an SVG icon.",
             this.createStatusPanel()
         ));
+
+        this.root.add(new JSeparator(JSeparator.HORIZONTAL));
+
+        JPanel llmPanel = this.createTitledSection(
+            "LLMs",
+            "Configure connection details for Ollama and Anthropic. The AI tab uses the Ollama base URL and "
+                + "Anthropic API key from here; choose the model in the AI toolbar.",
+            this.createLlmSettingsPanel()
+        );
+        llmPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, SECTION_GAP, 0));
+        this.root.add(llmPanel);
+
 
     }
 
@@ -159,6 +179,114 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
 
         parent.add(hotkeyLabel, labelGbc);
         parent.add(hotkeyButton, buttonGbc);
+        return row + 1;
+    }
+
+    private JComponent createLlmSettingsPanel() {
+        JPanel outer = new JPanel();
+        outer.setLayout(new BoxLayout(outer, BoxLayout.Y_AXIS));
+        outer.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JPanel ollama = new JPanel(new GridBagLayout());
+        ollama.setAlignmentX(Component.LEFT_ALIGNMENT);
+        ollama.setBorder(BorderFactory.createTitledBorder("Ollama"));
+        int row = 0;
+        row = this.addPersistedTextRow(
+                ollama,
+                row,
+                "Base URL:",
+                this.settings.getLlmOllamaBaseUrl(),
+                this.settings::setLlmOllamaBaseUrl,
+                false);
+
+        JPanel anthropic = new JPanel(new GridBagLayout());
+        anthropic.setAlignmentX(Component.LEFT_ALIGNMENT);
+        anthropic.setBorder(BorderFactory.createTitledBorder("Anthropic"));
+        row = 0;
+        String apiKey = this.settings.getLlmAnthropicApiKey();
+        row = this.addPersistedTextRow(
+                anthropic,
+                row,
+                "API key:",
+                apiKey != null ? apiKey : "",
+                this.settings::setLlmAnthropicApiKey,
+                true);
+
+        outer.add(ollama);
+        outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
+        outer.add(anthropic);
+        return outer;
+    }
+
+    private int addPersistedTextRow(
+            JPanel parent,
+            int row,
+            String labelText,
+            String initial,
+            Consumer<String> setter,
+            boolean password) {
+        JLabel rowLabel = new JLabel(labelText);
+        JComponent field;
+        if (password) {
+            JPasswordField pf = new JPasswordField(initial, 40);
+            field = pf;
+            pf.addFocusListener(new FocusAdapter() {
+                @Override
+                public void focusLost(FocusEvent e) {
+                    setter.accept(new String(pf.getPassword()).trim());
+                }
+            });
+        } else {
+            JTextField tf = new JTextField(initial, 40);
+            field = tf;
+            tf.addFocusListener(new FocusAdapter() {
+                @Override
+                public void focusLost(FocusEvent e) {
+                    setter.accept(tf.getText().trim());
+                }
+            });
+        }
+
+        JPanel rowPanel = new JPanel(new GridBagLayout());
+        rowPanel.setOpaque(false);
+        rowPanel.setBorder(BorderFactory.createEmptyBorder(
+                LLM_ROW_PADDING,
+                LLM_ROW_PADDING,
+                LLM_ROW_PADDING,
+                LLM_ROW_PADDING));
+
+        Insets labelInsets = new Insets(0, 0, 0, 8);
+        Insets fieldInsets = new Insets(0, 0, 0, 0);
+
+        GridBagConstraints labelGbc = new GridBagConstraints();
+        labelGbc.gridx = 0;
+        labelGbc.gridy = 0;
+        labelGbc.anchor = GridBagConstraints.WEST;
+        labelGbc.fill = GridBagConstraints.NONE;
+        labelGbc.weightx = 0;
+        labelGbc.insets = labelInsets;
+
+        GridBagConstraints fieldGbc = new GridBagConstraints();
+        fieldGbc.gridx = 1;
+        fieldGbc.gridy = 0;
+        fieldGbc.anchor = GridBagConstraints.WEST;
+        fieldGbc.fill = GridBagConstraints.HORIZONTAL;
+        fieldGbc.weightx = 1;
+        fieldGbc.insets = fieldInsets;
+
+        rowPanel.add(rowLabel, labelGbc);
+        rowPanel.add(field, fieldGbc);
+
+        GridBagConstraints rowGbc = new GridBagConstraints();
+        rowGbc.gridx = 0;
+        rowGbc.gridy = row;
+        rowGbc.gridwidth = 2;
+        rowGbc.anchor = GridBagConstraints.WEST;
+        rowGbc.fill = GridBagConstraints.HORIZONTAL;
+        rowGbc.weightx = 1;
+        rowGbc.insets = new Insets(row > 0 ? ROW_GAP : 0, 0, 0, 0);
+
+        parent.add(rowPanel, rowGbc);
         return row + 1;
     }
 
@@ -401,7 +529,18 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
 
     @Override
     public Set<String> keywords() {
-        return Set.of("Treepeater", "hotkey", "shortcut", "keyboard", "repeater");
+        return Set.of(
+                "Treepeater",
+                "hotkey",
+                "shortcut",
+                "keyboard",
+                "repeater",
+                "LLM",
+                "Ollama",
+                "Anthropic",
+                "AI",
+                "model",
+                "API");
     }
 
     @Override

@@ -38,6 +38,9 @@ public class TreepeaterSettings {
     /** Integer preference: number of stored default statuses (0 means none). */
     public static final String DEFAULT_STATUSES_COUNT_SETTING = DEFAULT_STATUSES_SETTING + "_COUNT";
 
+    public static final String LLM_OLLAMA_BASE_URL_SETTING = "TREEPEATER_LLM_OLLAMA_BASE_URL";
+    public static final String LLM_ANTHROPIC_API_KEY_SETTING = "TREEPEATER_LLM_ANTHROPIC_API_KEY";
+
     private static final String DEFAULT_STATUS_FIELD_ID = "ID";
     private static final String DEFAULT_STATUS_FIELD_NAME = "NAME";
     private static final String DEFAULT_STATUS_FIELD_SVG = "SVG";
@@ -76,6 +79,7 @@ public class TreepeaterSettings {
         STRING_PREFERENCE_DEFAULTS.put(EDIT_TARGET_HOTKEY_SETTING, "Ctrl+L");
         STRING_PREFERENCE_DEFAULTS.put(TAB_PREVIOUS_HOTKEY_SETTING, "Ctrl+Alt+Left");
         STRING_PREFERENCE_DEFAULTS.put(TAB_NEXT_HOTKEY_SETTING, "Ctrl+Alt+Right");
+        STRING_PREFERENCE_DEFAULTS.put(LLM_OLLAMA_BASE_URL_SETTING, "http://127.0.0.1:11434");
     }
 
     public static void init(Preferences preferences) {
@@ -194,6 +198,27 @@ public class TreepeaterSettings {
     public void setTabNextHotkey(String hotkey) {
         this.preferences.setString(TAB_NEXT_HOTKEY_SETTING, hotkey);
         this.notifyListeners(TAB_NEXT_HOTKEY_SETTING, hotkey);
+    }
+
+    public String getLlmOllamaBaseUrl() {
+        return this.getStringWithDefault(LLM_OLLAMA_BASE_URL_SETTING);
+    }
+
+    public void setLlmOllamaBaseUrl(String baseUrl) {
+        this.preferences.setString(LLM_OLLAMA_BASE_URL_SETTING, baseUrl);
+        this.notifyListeners(LLM_OLLAMA_BASE_URL_SETTING, baseUrl);
+    }
+
+    /**
+     * Stored Anthropic API key, or {@code null} if the user has never set one.
+     */
+    public String getLlmAnthropicApiKey() {
+        return this.getString(LLM_ANTHROPIC_API_KEY_SETTING);
+    }
+
+    public void setLlmAnthropicApiKey(String apiKey) {
+        this.preferences.setString(LLM_ANTHROPIC_API_KEY_SETTING, apiKey);
+        this.notifyListeners(LLM_ANTHROPIC_API_KEY_SETTING, apiKey);
     }
 
     /**

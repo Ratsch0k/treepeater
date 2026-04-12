@@ -25,11 +25,13 @@ import javax.swing.plaf.basic.BasicSplitPaneDivider;
 import javax.swing.plaf.basic.BasicSplitPaneUI;
 import javax.swing.tree.TreePath;
 
+import burp.api.montoya.http.HttpService;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 import burp.api.montoya.ui.editor.EditorOptions;
 import burp.api.montoya.ui.editor.HttpRequestEditor;
 import burp.api.montoya.ui.editor.HttpResponseEditor;
+import treepeater.ai.HttpTargetSnapshot;
 import treepeater.Treepeater;
 import treepeater.TreepeaterModel;
 import treepeater.components.CustomButton;
@@ -213,7 +215,7 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
         this.splitPane.setDividerLocation(0.5);
         this.splitPane.setResizeWeight(0.5);
 ;
-        this.sideToolbar = new RequestResponseToolbar(this.node);
+        this.sideToolbar = new RequestResponseToolbar(this.node, this::buildTargetSnapshotForAi);
         this.addRequestResponseChangeListener(this.sideToolbar.getInfoToolbarTab());
         this.sideToolbar.addToolbarListener(this);
         this.expandPanel = this.sideToolbar.getToolbarPanel();
@@ -480,6 +482,75 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
             label = "Target: " + label;
         }
         this.targetValueLabel.setText(label);
+    }
+
+    /**
+     * Current target + request line for the AI tab (aligned with the Info toolbar fields).
+     */
+    private HttpTargetSnapshot buildTargetSnapshotForAi() {
+        String method = "";
+        String url = "";
+        String path = "";
+        String protocol = this.httpTarget.isHttps() ? "HTTPS" : "HTTP";
+        String host = "";
+        String portLabel = "";
+        HttpRequest request = this.requestEditor.getRequest();
+        if (request != null) {
+            HttpService service = safeHttpService(request);
+            if (service != null) {
+                protocol = service.secure() ? "HTTPS" : "HTTP";
+                String h = service.host();
+                host = (h == null || h.isBlank()) ? "" : h;
+                int port = service.port();
+                portLabel = port > 0 ? String.valueOf(port) : "";
+            } else {
+                host = this.httpTarget.getHost() == null ? "" : this.httpTarget.getHost().trim();
+                int p = this.httpTarget.getPort();
+                portLabel = p > 0 ? String.valueOf(p) : "";
+                protocol = this.httpTarget.isHttps() ? "HTTPS" : "HTTP";
+            }
+            method = safeHttpString(() -> request.method(), "");
+            url = safeHttpString(() -> request.url(), "");
+            path = safeHttpString(() -> request.path(), "");
+        } else {
+            host = this.httpTarget.getHost() == null ? "" : this.httpTarget.getHost().trim();
+            int p = this.httpTarget.getPort();
+            portLabel = p > 0 ? String.valueOf(p) : "";
+        }
+        int portNum = -1;
+        try {
+            portNum = Integer.parseInt(portLabel);
+        } catch (NumberFormatException ignored) {
+        }
+        if (portNum <= 0) {
+            portNum = "HTTPS".equals(protocol) ? 443 : 80;
+        }
+        String scheme = "HTTPS".equals(protocol) ? "https" : "http";
+        return new HttpTargetSnapshot(
+                scheme,
+                host,
+                portNum,
+                this.httpTarget.isSniEnabled(),
+                method,
+                url,
+                path);
+    }
+
+    private static HttpService safeHttpService(HttpRequest request) {
+        try {
+            return request.httpService();
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static String safeHttpString(java.util.function.Supplier<String> supplier, String onFailure) {
+        try {
+            String s = supplier.get();
+            return (s == null || s.isBlank()) ? onFailure : s;
+        } catch (Exception ignored) {
+            return onFailure;
+        }
     }
 
     private void openEditTargetDialog() {

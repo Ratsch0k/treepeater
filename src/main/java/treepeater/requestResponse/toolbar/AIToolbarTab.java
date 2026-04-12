@@ -3,6 +3,7 @@ package treepeater.requestResponse.toolbar;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Container;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -12,12 +13,19 @@ import java.awt.Insets;
 import java.awt.Rectangle;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.event.ActionEvent;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
 import java.awt.FontMetrics;
+import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Vector;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
+import javax.swing.AbstractAction;
+import javax.swing.ActionMap;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -30,7 +38,12 @@ import javax.swing.JPanel;
 import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
+import javax.swing.JTextPane;
+import javax.swing.InputMap;
+import javax.swing.JComponent;
+import javax.swing.JEditorPane;
 import javax.swing.JViewport;
+import javax.swing.KeyStroke;
 import javax.swing.Scrollable;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
@@ -38,6 +51,10 @@ import javax.swing.SwingWorker;
 import javax.swing.UIManager;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.Style;
+import javax.swing.text.StyleConstants;
+import javax.swing.text.StyledDocument;
 
 import com.formdev.flatlaf.FlatClientProperties;
 
@@ -46,15 +63,25 @@ import treepeater.ai.AiModelOption;
 import treepeater.ai.ChatErrors;
 import treepeater.ai.ChatMessage;
 import treepeater.ai.ChatRole;
+import treepeater.ai.ChatStreamMessage;
+import treepeater.ai.ChatToolExecutor;
+import treepeater.ai.ChatTooling;
+import treepeater.ai.HttpTargetSnapshot;
+import treepeater.ai.HttpTargetTools;
 import treepeater.ai.StreamingChatClient;
+import treepeater.ai.anthropic.AnthropicClientConfig;
+import treepeater.ai.anthropic.AnthropicStreamingChatClient;
 import treepeater.ai.burp.BurpAiStreamingChatClient;
 import treepeater.ai.ollama.OllamaClientConfig;
 import treepeater.ai.ollama.OllamaStreamingChatClient;
+import treepeater.settings.TreepeaterSettings;
 import treepeater.components.RoundedPanel;
 import treepeater.components.StyledButton;
 import treepeater.icons.WandIcon;
 
 public class AIToolbarTab {
+    private static final Object TOOL_USAGE_BORDER_MARK = new Object();
+
     private static final int INPUT_AREA_MIN_ROWS = 1;
     private static final int INPUT_AREA_MAX_ROWS = 14;
 
@@ -75,7 +102,9 @@ public class AIToolbarTab {
     private final List<ChatMessage> conversation;
     private final AtomicReference<SwingWorker<List<ChatMessage>, Void>> activeChatWorker;
 
-    public AIToolbarTab() {
+    private final Supplier<HttpTargetSnapshot> targetSnapshotSupplier;
+
+    public AIToolbarTab(Supplier<HttpTargetSnapshot> targetSnapshotSupplier) {
         this.button = new ToolbarIconButton(new WandIcon());
         this.content = new JPanel(new BorderLayout());
 
@@ -87,6 +116,7 @@ public class AIToolbarTab {
             this.modelCombo = null;
             this.conversation = null;
             this.activeChatWorker = null;
+            this.targetSnapshotSupplier = null;
 
             this.disabledInfoArea = buildDisabledInfoArea();
 
@@ -124,6 +154,7 @@ public class AIToolbarTab {
             return;
         }
 
+        this.targetSnapshotSupplier = targetSnapshotSupplier;
         this.disabledInfoArea = null;
         this.transcriptList = new TranscriptListPanel();
 
@@ -158,6 +189,16 @@ public class AIToolbarTab {
 
         this.sendButton.addActionListener(e -> AIToolbarTab.this.onSend());
 
+        InputMap inputMap = this.inputArea.getInputMap(JComponent.WHEN_FOCUSED);
+        ActionMap actionMap = this.inputArea.getActionMap();
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_DOWN_MASK), "aiSendPrompt");
+        actionMap.put("aiSendPrompt", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                AIToolbarTab.this.onSend();
+            }
+        });
+
         this.content.add(this.buildContent(), BorderLayout.CENTER);
     }
 
@@ -170,11 +211,66 @@ public class AIToolbarTab {
         if (opt == null || Treepeater.api == null) {
             throw new IllegalStateException("No model or API");
         }
+        TreepeaterSettings settings = TreepeaterSettings.getInstance();
         if (opt.kind() == AiModelOption.Kind.BURP) {
             return new BurpAiStreamingChatClient(Treepeater.api);
         }
-        return new OllamaStreamingChatClient(
-                new OllamaClientConfig(AiModelOption.DEFAULT_OLLAMA_BASE_URL, opt.ollamaModel()));
+        if (opt.kind() == AiModelOption.Kind.ANTHROPIC) {
+            String apiKey = settings.getLlmAnthropicApiKey();
+            if (apiKey == null || apiKey.isBlank()) {
+                throw new IllegalStateException("Anthropic API key not configured");
+            }
+            String model = opt.anthropicModel();
+            if (model == null || model.isBlank()) {
+                throw new IllegalStateException("No Anthropic model id");
+            }
+            return new AnthropicStreamingChatClient(new AnthropicClientConfig(apiKey, model));
+        }
+        String baseUrl = settings.getLlmOllamaBaseUrl();
+        if (baseUrl == null || baseUrl.isBlank()) {
+            throw new IllegalStateException("Ollama base URL not configured");
+        }
+        String model = opt.ollamaModel();
+        if (model == null || model.isBlank()) {
+            throw new IllegalStateException("No Ollama model id");
+        }
+        return new OllamaStreamingChatClient(new OllamaClientConfig(baseUrl, model));
+    }
+
+    /** Built-in HTTP target tools; stream UI uses {@link ChatStreamMessage.ToolUsage} from the client. */
+    private ChatTooling chatTooling() {
+        if (this.targetSnapshotSupplier == null) {
+            return ChatTooling.none();
+        }
+        ChatToolExecutor exec =
+                (name, argsJson) -> HttpTargetTools.execute(name, argsJson, this.targetSnapshotSupplier.get());
+        return new ChatTooling(HttpTargetTools.definitions(), exec);
+    }
+
+    /**
+     * Runs {@code r} on the EDT and blocks the current thread until it finishes. Used so tool UI is
+     * actually laid out and painted before {@code inner.invoke} runs on a worker thread.
+     */
+    private void runOnEdtAndWait(Runnable r) throws Exception {
+        if (SwingUtilities.isEventDispatchThread()) {
+            r.run();
+            return;
+        }
+        try {
+            SwingUtilities.invokeAndWait(r);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
+        } catch (InvocationTargetException e) {
+            Throwable c = e.getCause();
+            if (c instanceof Exception ex) {
+                throw ex;
+            }
+            if (c instanceof Error err) {
+                throw err;
+            }
+            throw new RuntimeException(c);
+        }
     }
 
     private JTextArea buildDisabledInfoArea() {
@@ -211,7 +307,7 @@ public class AIToolbarTab {
             applyDisabledInfoAreaTheme(this.disabledInfoArea);
         }
         if (this.transcriptList != null) {
-            refreshMessageBubbleThemes();
+            refreshTranscriptThemes();
         }
         applyInputPanelTheme();
         if (this.inputScroll != null) {
@@ -373,6 +469,30 @@ public class AIToolbarTab {
             return;
         }
 
+        if (choice != null && choice.kind() == AiModelOption.Kind.ANTHROPIC) {
+            String key = TreepeaterSettings.getInstance().getLlmAnthropicApiKey();
+            if (key == null || key.isBlank()) {
+                JOptionPane.showMessageDialog(
+                        this.content,
+                        "Add your Anthropic API key under Extension settings for Treepeater (LLMs \u2192 Anthropic).",
+                        "Anthropic API key required",
+                        JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+        }
+
+        if (choice != null && choice.kind() == AiModelOption.Kind.OLLAMA) {
+            String base = TreepeaterSettings.getInstance().getLlmOllamaBaseUrl();
+            if (base == null || base.isBlank()) {
+                JOptionPane.showMessageDialog(
+                        this.content,
+                        "Set the Ollama base URL under Extension settings for Treepeater (LLMs \u2192 Ollama).",
+                        "Ollama base URL required",
+                        JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+        }
+
         String text = this.inputArea.getText().trim();
         if (text.isEmpty()) {
             return;
@@ -392,10 +512,10 @@ public class AIToolbarTab {
         this.sendButton.setEnabled(false);
         this.modelCombo.setEnabled(false);
 
-        MessageBubble assistantBubble = createMessageBubble("Assistant", "");
-        appendBubble(assistantBubble.panel());
-        final JTextArea streamingBody = assistantBubble.body();
-        final RoundedPanel streamingCard = assistantBubble.panel();
+        final AtomicReference<AssistantStrip> activeAssistantStrip = new AtomicReference<>();
+        AssistantStrip firstStrip = createPlainAssistantStrip();
+        activeAssistantStrip.set(firstStrip);
+        appendTranscriptRow(firstStrip.root);
 
         SwingWorker<List<ChatMessage>, Void> worker = new SwingWorker<>() {
             private final List<ChatMessage> requestMessages = messages;
@@ -403,25 +523,85 @@ public class AIToolbarTab {
             @Override
             protected List<ChatMessage> doInBackground() throws Exception {
                 return AIToolbarTab.this.clientForSelectedModel()
-                        .streamChat(this.requestMessages, delta -> {
-                    SwingWorker<List<ChatMessage>, Void> w = AIToolbarTab.this.activeChatWorker.get();
-                    if (w == null || w.isCancelled()) {
-                        return;
-                    }
-                    if (delta == null || delta.isEmpty()) {
-                        return;
-                    }
-                    SwingUtilities.invokeLater(() -> {
-                        SwingWorker<List<ChatMessage>, Void> w2 = AIToolbarTab.this.activeChatWorker.get();
-                        if (w2 == null || w2.isCancelled()) {
-                            return;
-                        }
-                        streamingBody.append(delta);
-                        AIToolbarTab.this.applyBubbleWidthConstraint(streamingCard);
-                        AIToolbarTab.this.transcriptList.revalidate();
-                        AIToolbarTab.this.scrollTranscriptToBottom();
-                    });
-                });
+                        .streamChat(
+                                this.requestMessages,
+                                AIToolbarTab.this.chatTooling(),
+                                m -> {
+                                    SwingWorker<List<ChatMessage>, Void> w =
+                                            AIToolbarTab.this.activeChatWorker.get();
+                                    if (w == null || w.isCancelled()) {
+                                        return;
+                                    }
+                                    switch (m) {
+                                        case ChatStreamMessage.AssistantDelta ad -> {
+                                            if (ad.text().isEmpty()) {
+                                                return;
+                                            }
+                                            SwingUtilities.invokeLater(
+                                                    () -> {
+                                                        SwingWorker<List<ChatMessage>, Void> w2 =
+                                                                AIToolbarTab.this.activeChatWorker.get();
+                                                        if (w2 == null || w2.isCancelled()) {
+                                                            return;
+                                                        }
+                                                        AssistantStrip strip =
+                                                                activeAssistantStrip.get();
+                                                        if (strip == null) {
+                                                            return;
+                                                        }
+                                                        AIToolbarTab.this.removeAssistantWaitingIndicator(strip);
+                                                        JTextPane pane =
+                                                                AIToolbarTab.this.ensureAssistantBody(strip);
+                                                        AIToolbarTab.this.appendAssistantReplyDelta(
+                                                                pane, ad.text());
+                                                        AIToolbarTab.this.applyTranscriptRowWidth(strip.root);
+                                                        AIToolbarTab.this.transcriptList.revalidate();
+                                                        AIToolbarTab.this.scrollTranscriptToBottom();
+                                                    });
+                                        }
+                                        case ChatStreamMessage.ToolUsage tu -> {
+                                            try {
+                                                AIToolbarTab.this.runOnEdtAndWait(
+                                                        () -> {
+                                                            SwingWorker<List<ChatMessage>, Void> w2 =
+                                                                    AIToolbarTab.this.activeChatWorker.get();
+                                                            if (w2 == null || w2.isCancelled()) {
+                                                                return;
+                                                            }
+                                                            AssistantStrip strip =
+                                                                    activeAssistantStrip.get();
+                                                            if (strip == null) {
+                                                                return;
+                                                            }
+                                                            AIToolbarTab.this.removeAssistantWaitingIndicator(
+                                                                    strip);
+                                                            if (strip.body == null) {
+                                                                AIToolbarTab.this
+                                                                        .removeAssistantStripRowFromTranscript(
+                                                                                strip.root);
+                                                            }
+                                                            RoundedPanel toolCard =
+                                                                    AIToolbarTab.this.buildToolUsageBorderPanel(
+                                                                            tu.humanDescription());
+                                                            AIToolbarTab.this.appendTranscriptRow(toolCard);
+                                                            AssistantStrip nextStrip =
+                                                                    AIToolbarTab.this
+                                                                            .createPlainAssistantStrip();
+                                                            activeAssistantStrip.set(nextStrip);
+                                                            AIToolbarTab.this.appendTranscriptRow(
+                                                                    nextStrip.root);
+                                                            AIToolbarTab.this.applyTranscriptRowWidth(
+                                                                    nextStrip.root);
+                                                            AIToolbarTab.this.transcriptList.revalidate();
+                                                            AIToolbarTab.this.transcriptList.repaint();
+                                                            AIToolbarTab.this.scrollTranscriptToBottom();
+                                                        });
+                                            } catch (Exception e) {
+                                                throw new RuntimeException(e);
+                                            }
+                                        }
+                                    }
+                                });
             }
 
             @Override
@@ -437,6 +617,10 @@ public class AIToolbarTab {
                     logError(ex);
                     addMessageBubble("Error", ChatErrors.formatUserMessage(ex));
                 } finally {
+                    AssistantStrip last = activeAssistantStrip.get();
+                    if (last != null) {
+                        AIToolbarTab.this.removeAssistantWaitingIndicator(last);
+                    }
                     AIToolbarTab.this.sendButton.setEnabled(true);
                     if (AIToolbarTab.this.modelCombo != null) {
                         AIToolbarTab.this.modelCombo.setEnabled(true);
@@ -458,18 +642,198 @@ public class AIToolbarTab {
 
     private record MessageBubble(RoundedPanel panel, JTextArea body) {}
 
+    /**
+     * Assistant reply segment; {@link #body} is created and added on first {@link ChatStreamMessage.AssistantDelta}.
+     * Tool usage rows sit between segments in the transcript list.
+     */
+    private static final class AssistantStrip {
+        final JPanel root;
+        final JPanel column;
+        final JLabel waitingIndicator;
+        JTextPane body;
+
+        AssistantStrip(JPanel root, JPanel column, JLabel waitingIndicator) {
+            this.root = root;
+            this.column = column;
+            this.waitingIndicator = waitingIndicator;
+        }
+    }
+
     private void appendBubble(RoundedPanel bubble) {
+        appendTranscriptRow(bubble);
+    }
+
+    /**
+     * Drops a pending assistant row when a tool runs before any streamed text, so the tool card sits
+     * directly under the user message without an empty strip.
+     */
+    private void removeAssistantStripRowFromTranscript(JPanel root) {
+        this.transcriptList.remove(this.transcriptBottomGlue);
+        int n = this.transcriptList.getComponentCount();
+        int idx = -1;
+        for (int i = 0; i < n; i++) {
+            if (this.transcriptList.getComponent(i) == root) {
+                idx = i;
+                break;
+            }
+        }
+        if (idx < 0) {
+            this.transcriptList.add(this.transcriptBottomGlue);
+            return;
+        }
+        if (idx > 0) {
+            Component prev = this.transcriptList.getComponent(idx - 1);
+            if (isTranscriptInterRowStrut(prev)) {
+                this.transcriptList.remove(idx - 1);
+                idx--;
+            }
+        }
+        this.transcriptList.remove(idx);
+        this.transcriptList.add(this.transcriptBottomGlue);
+        this.transcriptList.revalidate();
+        this.transcriptList.repaint();
+    }
+
+    private static boolean isTranscriptInterRowStrut(Component c) {
+        if (!(c instanceof JComponent jc)) {
+            return false;
+        }
+        Dimension p = jc.getPreferredSize();
+        Dimension mn = jc.getMinimumSize();
+        Dimension mx = jc.getMaximumSize();
+        return p != null
+                && p.width == 0
+                && p.height >= 2
+                && p.height <= 16
+                && mn != null
+                && mn.height == p.height
+                && mx != null
+                && mx.height == p.height;
+    }
+
+    private void appendTranscriptRow(JComponent row) {
         this.transcriptList.remove(this.transcriptBottomGlue);
         if (this.transcriptList.getComponentCount() > 0) {
             this.transcriptList.add(Box.createVerticalStrut(6));
         }
-        this.transcriptList.add(bubble);
+        this.transcriptList.add(row);
         this.transcriptList.add(this.transcriptBottomGlue);
-        constrainAllMessageBubbles();
+        applyTranscriptRowWidth(row);
         this.transcriptList.revalidate();
         this.transcriptList.repaint();
         SwingUtilities.invokeLater(this::constrainAllMessageBubbles);
         scrollTranscriptToBottom();
+    }
+
+    private AssistantStrip createPlainAssistantStrip() {
+        JPanel root = new JPanel(new BorderLayout(0, 4));
+        root.setOpaque(false);
+        root.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JLabel waitingIndicator = new JLabel("...");
+        waitingIndicator.setAlignmentX(Component.LEFT_ALIGNMENT);
+        Color waitMuted = UIManager.getColor("Label.disabledForeground");
+        if (waitMuted != null) {
+            waitingIndicator.setForeground(waitMuted);
+        }
+
+        JPanel column = new JPanel();
+        column.setOpaque(false);
+        column.setLayout(new BoxLayout(column, BoxLayout.PAGE_AXIS));
+        column.setAlignmentX(Component.LEFT_ALIGNMENT);
+        column.add(waitingIndicator);
+        root.add(column, BorderLayout.NORTH);
+
+        return new AssistantStrip(root, column, waitingIndicator);
+    }
+
+    /** Lazily creates the assistant {@link JTextPane} when the first token arrives. */
+    private JTextPane ensureAssistantBody(AssistantStrip strip) {
+        if (strip.body != null) {
+            return strip.body;
+        }
+        JTextPane body = new JTextPane();
+        body.setEditable(false);
+        body.setOpaque(false);
+        body.setBorder(null);
+        body.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
+        Font lf = UIManager.getFont("Label.font");
+        if (lf != null) {
+            body.setFont(lf);
+        }
+        Style regular = body.addStyle("regular", null);
+        Color fg = UIManager.getColor("Label.foreground");
+        if (fg != null) {
+            StyleConstants.setForeground(regular, fg);
+        }
+        strip.column.add(body);
+        strip.body = body;
+        return body;
+    }
+
+    private void removeAssistantWaitingIndicator(AssistantStrip strip) {
+        JLabel w = strip.waitingIndicator;
+        if (w == null || w.getParent() == null) {
+            return;
+        }
+        Container parent = w.getParent();
+        parent.remove(w);
+        parent.revalidate();
+        parent.repaint();
+    }
+
+    /** One-line status only, e.g. {@code Getting target}. */
+    private RoundedPanel buildToolUsageBorderPanel(String statusLine) {
+        String line = statusLine != null ? statusLine.trim() : "";
+        if (line.isEmpty()) {
+            line = "Working…";
+        }
+
+        RoundedPanel card = new RoundedPanel();
+        card.putClientProperty(TOOL_USAGE_BORDER_MARK, Boolean.TRUE);
+        card.setLayout(new BorderLayout());
+        card.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
+        card.setOpaque(false);
+        card.setAlignmentX(Component.LEFT_ALIGNMENT);
+        applyToolUsageBorderOnlyTheme(card);
+
+        JLabel label = new JLabel("Tool: " + line);
+        label.setAlignmentX(Component.LEFT_ALIGNMENT);
+        Font lf = UIManager.getFont("Label.font");
+        if (lf != null) {
+            label.setFont(lf.deriveFont(Font.ITALIC));
+        }
+        Color muted = UIManager.getColor("Label.disabledForeground");
+        if (muted != null) {
+            label.setForeground(muted);
+        }
+        card.add(label, BorderLayout.CENTER);
+        return card;
+    }
+
+    /** Rounded outline only; no fill ({@link RoundedPanel} skips painting fill when background is null). */
+    private static void applyToolUsageBorderOnlyTheme(RoundedPanel card) {
+        card.setBackgroundColor(null);
+        Color line = UIManager.getColor("Colors.ui.background.3");
+        if (line == null) {
+            line = UIManager.getColor("Component.borderColor");
+        }
+        if (line != null) {
+            card.setBorderColor(line);
+        }
+    }
+
+    private void appendAssistantReplyDelta(JTextPane pane, String delta) {
+        if (delta == null || delta.isEmpty()) {
+            return;
+        }
+        StyledDocument doc = pane.getStyledDocument();
+        Style regular = pane.getStyle("regular");
+        try {
+            doc.insertString(doc.getLength(), delta, regular);
+        } catch (BadLocationException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private MessageBubble createMessageBubble(String title, String body) {
@@ -524,12 +888,12 @@ public class AIToolbarTab {
         return Math.max(1, viewportW - insets);
     }
 
-    private void applyBubbleWidthConstraint(RoundedPanel card) {
+    private void applyTranscriptRowWidth(JComponent row) {
         int maxW = bubbleMaxWidth();
         if (maxW >= Integer.MAX_VALUE) {
             return;
         }
-        card.setMaximumSize(new Dimension(maxW, Integer.MAX_VALUE));
+        row.setMaximumSize(new Dimension(maxW, Integer.MAX_VALUE));
     }
 
     private void constrainAllMessageBubbles() {
@@ -538,8 +902,8 @@ public class AIToolbarTab {
             return;
         }
         for (Component c : this.transcriptList.getComponents()) {
-            if (c instanceof RoundedPanel) {
-                ((RoundedPanel) c).setMaximumSize(new Dimension(maxW, Integer.MAX_VALUE));
+            if (c instanceof JComponent jc) {
+                jc.setMaximumSize(new Dimension(maxW, Integer.MAX_VALUE));
             }
         }
         this.transcriptList.revalidate();
@@ -551,10 +915,24 @@ public class AIToolbarTab {
         card.setBorderColor(bg);
     }
 
-    private void refreshMessageBubbleThemes() {
+    private void refreshTranscriptThemes() {
         for (Component c : this.transcriptList.getComponents()) {
-            if (c instanceof RoundedPanel) {
-                applyMessageBubbleTheme((RoundedPanel) c);
+            this.refreshTranscriptRowTheme(c);
+        }
+    }
+
+    private void refreshTranscriptRowTheme(Component c) {
+        if (c instanceof RoundedPanel rp) {
+            if (Boolean.TRUE.equals(rp.getClientProperty(TOOL_USAGE_BORDER_MARK))) {
+                applyToolUsageBorderOnlyTheme(rp);
+            } else {
+                applyMessageBubbleTheme(rp);
+            }
+            return;
+        }
+        if (c instanceof Container co) {
+            for (Component child : co.getComponents()) {
+                this.refreshTranscriptRowTheme(child);
             }
         }
     }

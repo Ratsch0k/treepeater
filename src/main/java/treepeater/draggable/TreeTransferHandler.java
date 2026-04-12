@@ -191,7 +191,7 @@ public class TreeTransferHandler extends TransferHandler {
         for(int i = 0; i < nodes.length; i++) {
             RequestTreeNodeTransferable transferable = nodes[i];
             Treepeater.api.logging().logToOutput("ImportData -> converting transferable into node: " + transferable);
-            RequestTreeNode node = new RequestTreeNode(transferable.id, transferable.status, transferable.name, transferable.request, transferable.response, transferable.listener);
+            RequestTreeNode node = new RequestTreeNode(transferable.id, transferable.status, transferable.name, transferable.request, transferable.response, transferable.listener, transferable.notes);
 
             model.insertNodeInto(node, parent, index++);
         }
@@ -222,7 +222,7 @@ public class TreeTransferHandler extends TransferHandler {
             ArrayList<RequestTreeNodeTransferable> transferables = new ArrayList<>();
             
             for (RequestTreeNode treeNode : nodes) {
-                transferables.add(new RequestTreeNodeTransferable(treeNode.getId(), treeNode.getStatus(), treeNode.getName(), treeNode.getRequest(), treeNode.getResponse(), treeNode.getListeners()));
+                transferables.add(new RequestTreeNodeTransferable(treeNode.getId(), treeNode.getStatus(), treeNode.getName(), treeNode.getRequest(), treeNode.getResponse(), treeNode.getNotes(), treeNode.getListeners()));
             }
 
             RequestTreeNodeTransferable[] transferableArray = transferables.toArray(new RequestTreeNodeTransferable[0]);

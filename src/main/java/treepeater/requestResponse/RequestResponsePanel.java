@@ -7,6 +7,8 @@ import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.time.LocalDateTime;
 import java.util.HashMap;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.swing.BorderFactory;
@@ -33,12 +35,14 @@ import treepeater.TreepeaterModel;
 import treepeater.components.CustomButton;
 import treepeater.icons.DoubleArrowLeftIcon;
 import treepeater.icons.DoubleArrowRightIcon;
+import treepeater.requestResponse.toolbar.RequestResponseToolbar;
+import treepeater.requestResponse.toolbar.RequestResponseToolbarListener;
 import treepeater.settings.TreepeaterSettings;
 import treepeater.tree.RequestTree;
 import treepeater.tree.RequestTreeNode;
 import treepeater.tree.CustomTreeCellEditor.ProgrammaticEdit;
 
-public class RequestResponsePanel extends JPanel {
+public class RequestResponsePanel extends JPanel implements RequestResponseToolbarListener {
 
     /** When the expand panel is open, the divider cannot shrink it below this width (button closes only). */
     private static final int EXPAND_PANEL_MIN_OPEN_WIDTH = 120;
@@ -63,7 +67,9 @@ public class RequestResponsePanel extends JPanel {
 
     private JSplitPane splitPane;
     private JPanel mainContent;
-    private RequestResponseSideToolbar sideToolbar;
+    private RequestResponseToolbar sideToolbar;
+
+    private final List<RequestResponseChangeListener> requestResponseChangeListeners = new CopyOnWriteArrayList<>();
 
     private JSplitPane expandSplitPane;
     private JPanel expandPanel;
@@ -179,6 +185,8 @@ public class RequestResponsePanel extends JPanel {
                     this.httpTarget.initFromRequest(this.requestEditor.getRequest());
                     this.refreshTargetLabel();
                     this.historyNavigator.refreshNavState();
+                    this.notifyRequestChanged();
+                    this.notifyResponseChanged();
                 });
 
         this.historyBackButton.addActionListener(e -> this.historyNavigator.navigateBack());
@@ -204,9 +212,14 @@ public class RequestResponsePanel extends JPanel {
 
         this.splitPane.setDividerLocation(0.5);
         this.splitPane.setResizeWeight(0.5);
+;
+        this.sideToolbar = new RequestResponseToolbar(this.node);
+        this.addRequestResponseChangeListener(this.sideToolbar.getInfoToolbarTab());
+        this.sideToolbar.addToolbarListener(this);
+        this.expandPanel = this.sideToolbar.getToolbarPanel();
 
-        this.expandPanel = new RequestResponseExpandPanel();
-        Treepeater.api.userInterface().applyThemeToComponent(this.expandPanel);
+        this.notifyRequestChanged();
+        this.notifyResponseChanged();
 
         this.expandSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, this.splitPane, this.expandPanel);
         Treepeater.api.userInterface().applyThemeToComponent(this.expandSplitPane);
@@ -214,9 +227,6 @@ public class RequestResponsePanel extends JPanel {
         this.expandSplitPane.setOneTouchExpandable(false);
         this.expandSplitPane.setContinuousLayout(true);
         this.syncExpandSplitInteraction();
-
-        this.sideToolbar = new RequestResponseSideToolbar();
-        this.sideToolbar.getExpandButton().addActionListener(e -> this.toggleExpandPanel());
 
         this.mainContent = new JPanel(new BorderLayout());
         this.mainContent.add(this.expandSplitPane, BorderLayout.CENTER);
@@ -236,6 +246,14 @@ public class RequestResponsePanel extends JPanel {
     public void updateUI() {
         super.updateUI();
         this.applyThemeLocalStyles();
+    }
+
+    public void onToolbarOpen() {
+        this.toggleExpandPanel();
+    }
+
+    public void onToolbarClose() {
+        this.toggleExpandPanel();
     }
 
     /**
@@ -392,18 +410,66 @@ public class RequestResponsePanel extends JPanel {
         Treepeater.saveState();
         this.httpTarget.initFromRequest(request);
         this.refreshTargetLabel();
+        this.notifyRequestChanged();
     }
 
     private void setResponse(HttpResponse response) {
         this.responseEditor.setResponse(response);
         this.node.setResponse(response);
         Treepeater.saveState();
+        this.notifyResponseChanged();
     }
 
     private void addToHistory(HttpRequest request, HttpResponse response, LocalDateTime time, String targetLabel) {
         RequestHistory h = this.node.getHistory();
         h.addEntry(targetLabel, request, response);
         this.historyNavigator.refreshNavState();
+        this.notifyResponseChanged();
+    }
+
+    public void addRequestResponseChangeListener(RequestResponseChangeListener listener) {
+        this.requestResponseChangeListeners.add(listener);
+    }
+
+    public void removeRequestResponseChangeListener(RequestResponseChangeListener listener) {
+        this.requestResponseChangeListeners.remove(listener);
+    }
+
+    private void notifyRequestChanged() {
+        LocalDateTime received = this.currentHistoryResponseTime();
+        HttpRequest request = this.requestEditor.getRequest();
+        HttpResponse response = this.responseEditor.getResponse();
+        for (RequestResponseChangeListener listener : this.requestResponseChangeListeners) {
+            listener.onRequestChanged(request, response, received);
+        }
+    }
+
+    private void notifyResponseChanged() {
+        LocalDateTime received = this.currentHistoryResponseTime();
+        HttpRequest request = this.requestEditor.getRequest();
+        HttpResponse response = this.responseEditor.getResponse();
+        for (RequestResponseChangeListener listener : this.requestResponseChangeListeners) {
+            listener.onResponseChanged(request, response, received);
+        }
+    }
+
+    /**
+     * Time associated with the current history entry (typically when that response was received or recorded).
+     */
+    private LocalDateTime currentHistoryResponseTime() {
+        RequestHistory h = this.node.getHistory();
+        if (h.isEmpty()) {
+            return null;
+        }
+        int idx = h.getCurrentIndex();
+        if (idx < 0 || idx >= h.size()) {
+            return null;
+        }
+        try {
+            return h.getEntry(idx).getTime();
+        } catch (RuntimeException ignored) {
+            return null;
+        }
     }
 
     private void refreshTargetLabel() {
@@ -445,5 +511,6 @@ public class RequestResponsePanel extends JPanel {
             this.node.setRequest(updated);
         }
         this.refreshTargetLabel();
+        this.notifyRequestChanged();
     }
 }

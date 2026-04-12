@@ -12,14 +12,16 @@ public class RequestTreeNodeTransferable {
     public String name;
     public HttpRequest request;
     public HttpResponse response;
+    public String notes;
     public HashSet<RequestTreeNodeListener> listener;
 
-    public RequestTreeNodeTransferable(int id, Status status, String name, HttpRequest request, HttpResponse response, HashSet<RequestTreeNodeListener> l) {
+    public RequestTreeNodeTransferable(int id, Status status, String name, HttpRequest request, HttpResponse response, String notes, HashSet<RequestTreeNodeListener> l) {
         this.id = id;
         this.status = status;
         this.name = name;
         this.request = request;
         this.response = response;
+        this.notes = notes;
         this.listener = l;
     }
 }

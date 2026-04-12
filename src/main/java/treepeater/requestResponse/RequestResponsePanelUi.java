@@ -21,7 +21,7 @@ import treepeater.components.SplitButtonPanel;
  * Static Swing helpers for {@link RequestResponsePanel}: themed top bar, flat toolbar buttons,
  * and labeled editor columns.
  */
-final class RequestResponsePanelUi {
+public final class RequestResponsePanelUi {
 
     private RequestResponsePanelUi() {
     }
@@ -46,7 +46,7 @@ final class RequestResponsePanelUi {
         return panel;
     }
 
-    static void styleAsFlatButton(JButton button) {
+    public static void styleAsFlatButton(JButton button) {
         button.setFocusPainted(false);
         button.setContentAreaFilled(true);
         button.setOpaque(true);
@@ -60,7 +60,7 @@ final class RequestResponsePanelUi {
         }
     }
 
-    static Color uiBorderColor() {
+    public static Color uiBorderColor() {
         Color c =
                 UIManager.getColor("Separator.foreground") != null ? UIManager.getColor("Separator.foreground") :
                 UIManager.getColor("Component.borderColor") != null ? UIManager.getColor("Component.borderColor") :
@@ -71,7 +71,7 @@ final class RequestResponsePanelUi {
         return new Color(0, 0, 0, 80);
     }
 
-    static Color uiHoverColor() {
+    public static Color uiHoverColor() {
         Color c =
                 UIManager.getColor("Button.hoverBackground") != null ? UIManager.getColor("Button.hoverBackground") :
                 UIManager.getColor("Button.highlight") != null ? UIManager.getColor("Button.highlight") :
@@ -82,11 +82,11 @@ final class RequestResponsePanelUi {
         return new Color(0, 0, 0, 18);
     }
 
-    static void installHoverBackground(JButton button) {
+    public static void installHoverBackground(JButton button) {
         button.getModel().addChangeListener(e -> applyFlatButtonHoverVisual(button));
     }
 
-    static void applyFlatButtonHoverVisual(JButton button) {
+    public static void applyFlatButtonHoverVisual(JButton button) {
         Color normalBg = flatPanelBackground();
         Color hoverBg = uiHoverColor();
         Color next;
@@ -114,7 +114,7 @@ final class RequestResponsePanelUi {
         return c != null ? c : Color.LIGHT_GRAY;
     }
 
-    static void restyleFlatToolbarButton(JButton button) {
+    public static void restyleFlatToolbarButton(JButton button) {
         styleAsFlatButton(button);
         applyFlatButtonHoverVisual(button);
     }

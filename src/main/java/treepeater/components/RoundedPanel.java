@@ -31,7 +31,6 @@ public class RoundedPanel extends JPanel {
     }
 
     public void setBackgroundColor(Color color) {
-        Treepeater.api.logging().logToOutput("setBackground: " + color);
         this.backgroundColor = color;
         repaint();
     }
@@ -83,7 +82,6 @@ public class RoundedPanel extends JPanel {
         int height = getHeight();
 
         Color bg = this.getBackgroundColor();
-        Treepeater.api.logging().logToOutput("bg: " + bg);
         if (bg != null) {
             g2.setColor(bg);
             g2.fillRoundRect(0, 0, width - 1, height - 1, cornerArc, cornerArc);
@@ -110,7 +108,6 @@ public class RoundedPanel extends JPanel {
 
 
             Color drawColor = borderColor != null ? borderColor : getForeground();
-            Treepeater.api.logging().logToOutput("drawColor: " + drawColor);
             g2.setColor(drawColor);
 
             // Draw rounded border rectangle just inside full bounds

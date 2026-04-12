@@ -10,6 +10,7 @@ dependencies {
     compileOnly("net.portswigger.burp.extensions:montoya-api:2026.2")
     compileOnly("com.formdev:flatlaf:3.7.1")
     implementation("com.formdev:flatlaf-extras:3.7.1")
+    implementation("io.github.ollama4j:ollama4j:1.1.0")
 }
 
 tasks.withType<JavaCompile>().configureEach {

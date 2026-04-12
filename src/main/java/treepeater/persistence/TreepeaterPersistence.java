@@ -35,6 +35,7 @@ public class TreepeaterPersistence {
     private static final String PERSISTENCE_ID = "id";
     private static final String PERSISTENCE_STATUS = "status";
     private static final String PERSISTENCE_NAME = "name";
+    private static final String PERSISTENCE_NOTES = "notes";
     private static final String PERSISTENCE_REQUEST = "request";
     private static final String PERSISTENCE_RESPONSE = "response";
     private static final String PERSISTENCE_HISTORY = "history";
@@ -166,6 +167,7 @@ public class TreepeaterPersistence {
         nodeObject.setInteger(PERSISTENCE_ID, node.getId());
         nodeObject.setString(PERSISTENCE_STATUS, node.getStatus().getStatus());
         nodeObject.setString(PERSISTENCE_NAME, node.getName());
+        nodeObject.setString(PERSISTENCE_NOTES, node.getNotes());
         nodeObject.setHttpRequest(PERSISTENCE_REQUEST, node.getRequest());
         nodeObject.setHttpResponse(PERSISTENCE_RESPONSE, node.getResponse());
         nodeObject.setChildObject(PERSISTENCE_HISTORY, saveHistory(node.getHistory()));
@@ -334,7 +336,10 @@ public class TreepeaterPersistence {
             status = StatusRegistry.getDefault();
         }
 
-        RequestTreeNode node = new RequestTreeNode(id, status, name, request, response, history);
+        String notesPersisted = nodeObject.getString(PERSISTENCE_NOTES);
+        String notes = notesPersisted != null ? notesPersisted : "";
+
+        RequestTreeNode node = new RequestTreeNode(id, status, name, request, response, history, notes);
 
         int childCount = nodeObject.getInteger(PERSISTENCE_SIZE).intValue();
         for (int idx = 0; idx < childCount; idx++) {

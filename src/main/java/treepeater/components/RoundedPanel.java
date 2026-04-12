@@ -2,6 +2,9 @@ package treepeater.components;
 
 import javax.swing.JPanel;
 import javax.swing.border.Border;
+
+import treepeater.Treepeater;
+
 import java.awt.Color;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
@@ -14,14 +17,27 @@ public class RoundedPanel extends JPanel {
 
     private int cornerArc = 10; // Default arc for rounded corners
     private Color borderColor = null; // If null, fallback to darkened background color
+    private Color backgroundColor = null;
 
     public RoundedPanel() {
         super();
+        this.backgroundColor = getBackground();
     }
 
     public RoundedPanel(int arc) {
         super();
         this.cornerArc = arc;
+        this.backgroundColor = getBackground();
+    }
+
+    public void setBackgroundColor(Color color) {
+        Treepeater.api.logging().logToOutput("setBackground: " + color);
+        this.backgroundColor = color;
+        repaint();
+    }
+
+    public Color getBackgroundColor() {
+        return this.backgroundColor;
     }
 
     /**
@@ -66,7 +82,8 @@ public class RoundedPanel extends JPanel {
         int width = getWidth();
         int height = getHeight();
 
-        Color bg = getBackground();
+        Color bg = this.getBackgroundColor();
+        Treepeater.api.logging().logToOutput("bg: " + bg);
         if (bg != null) {
             g2.setColor(bg);
             g2.fillRoundRect(0, 0, width - 1, height - 1, cornerArc, cornerArc);
@@ -93,6 +110,7 @@ public class RoundedPanel extends JPanel {
 
 
             Color drawColor = borderColor != null ? borderColor : getForeground();
+            Treepeater.api.logging().logToOutput("drawColor: " + drawColor);
             g2.setColor(drawColor);
 
             // Draw rounded border rectangle just inside full bounds

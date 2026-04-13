@@ -22,6 +22,7 @@ import com.anthropic.models.messages.ToolUseBlockParam;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import treepeater.Treepeater;
 import treepeater.ai.ChatMessage;
 import treepeater.ai.ChatRole;
 import treepeater.ai.ChatStreamMessage;

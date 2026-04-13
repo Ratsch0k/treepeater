@@ -106,7 +106,43 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
         for (OllamaChatMessage om : history) {
             out.add(fromOllama(om));
         }
-        return out;
+        return withToolCallIdsFromAssistant(out);
+    }
+
+    /**
+     * {@link OllamaChatMessage} has no per-tool id on tool rows; copy from the preceding assistant's
+     * {@code tool_calls} list.
+     */
+    private static List<ChatMessage> withToolCallIdsFromAssistant(List<ChatMessage> messages) {
+        List<ChatMessage> linked = new ArrayList<>(messages.size());
+        ChatMessage assistantWithTools = null;
+        int slot = 0;
+        for (ChatMessage m : messages) {
+            if (m.role() == ChatRole.ASSISTANT) {
+                if (m.hasAssistantToolCalls()) {
+                    assistantWithTools = m;
+                    slot = 0;
+                } else {
+                    assistantWithTools = null;
+                }
+                linked.add(m);
+            } else if (m.role() == ChatRole.TOOL) {
+                String id = m.toolCallId();
+                if ((id == null || id.isBlank())
+                        && assistantWithTools != null
+                        && slot < assistantWithTools.assistantToolCalls().size()) {
+                    id = assistantWithTools.assistantToolCalls().get(slot).id();
+                }
+                slot++;
+                linked.add(new ChatMessage(ChatRole.TOOL, m.content(), List.of(), id));
+            } else {
+                if (m.role() == ChatRole.USER && !m.content().trim().isEmpty()) {
+                    assistantWithTools = null;
+                }
+                linked.add(m);
+            }
+        }
+        return linked;
     }
 
     private static Tools.Tool toOllamaTool(
@@ -179,21 +215,15 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
     }
 
     private static ChatMessage fromOllama(OllamaChatMessage m) {
-        OllamaChatMessageRole r = m.getRole();
-        ChatRole role;
-        if (r == OllamaChatMessageRole.SYSTEM) {
-            role = ChatRole.SYSTEM;
-        } else if (r == OllamaChatMessageRole.USER) {
-            role = ChatRole.USER;
-        } else if (r == OllamaChatMessageRole.ASSISTANT) {
-            role = ChatRole.ASSISTANT;
-        } else if (r == OllamaChatMessageRole.TOOL) {
-            role = ChatRole.TOOL;
-        } else {
-            role = ChatRole.USER;
-        }
+        ChatRole role = mapOllamaRole(m.getRole());
         String c = m.getResponse() != null ? m.getResponse() : "";
-        if (role == ChatRole.ASSISTANT && m.getToolCalls() != null && !m.getToolCalls().isEmpty()) {
+        boolean toolCallsPresent = m.getToolCalls() != null && !m.getToolCalls().isEmpty();
+        /*
+         * Jackson may deserialize role as a *new* OllamaChatMessageRole("assistant") instance, so
+         * r == OllamaChatMessageRole.ASSISTANT is false and we must not rely on reference equality.
+         * Non-empty tool_calls only appear on assistant turns per Ollama chat API.
+         */
+        if (toolCallsPresent) {
             List<ChatToolCall> calls = new ArrayList<>();
             int i = 0;
             for (OllamaChatToolCalls occ : m.getToolCalls()) {
@@ -217,6 +247,25 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
             }
             return new ChatMessage(ChatRole.ASSISTANT, c, calls, null);
         }
+
         return new ChatMessage(role, c);
+    }
+
+    /** Map by {@link OllamaChatMessageRole#getRoleName()} — deserialized roles are not always == to static constants. */
+    private static ChatRole mapOllamaRole(OllamaChatMessageRole r) {
+        if (r == null) {
+            return ChatRole.USER;
+        }
+        String n = r.getRoleName();
+        if (n == null || n.isEmpty()) {
+            return ChatRole.USER;
+        }
+        return switch (n.toLowerCase()) {
+            case "system" -> ChatRole.SYSTEM;
+            case "user" -> ChatRole.USER;
+            case "assistant" -> ChatRole.ASSISTANT;
+            case "tool" -> ChatRole.TOOL;
+            default -> ChatRole.USER;
+        };
     }
 }

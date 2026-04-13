@@ -18,6 +18,7 @@ import treepeater.ai.HttpTargetSnapshot;
 import treepeater.Treepeater;
 import treepeater.icons.DoubleArrowLeftIcon;
 import treepeater.requestResponse.RequestResponsePanelUi;
+import treepeater.requestResponse.toolbar.ai.AIToolbarTab;
 import treepeater.tree.RequestTreeNode;
 
 /**

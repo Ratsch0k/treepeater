@@ -72,7 +72,9 @@ public class BurpAiStreamingChatClient implements StreamingChatClient {
             sb.append("\n--- ").append(def.name()).append(" ---\n");
             onMessage.accept(
                     new ChatStreamMessage.ToolUsage(
-                            def.name(), "{}", HttpTargetTools.humanReadableUsage(def.name(), "{}")));
+                            def.name(),
+                            "{}",
+                            HttpTargetTools.humanReadableUsage(def.name(), "{}", tooling.currentHistoryIndexForToolStatus())));
             sb.append(tooling.executor().invoke(def.name(), "{}"));
             sb.append('\n');
         }

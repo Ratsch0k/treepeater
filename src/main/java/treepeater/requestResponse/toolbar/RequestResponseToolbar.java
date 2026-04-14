@@ -14,7 +14,7 @@ import javax.swing.JButton;
 import javax.swing.JPanel;
 import javax.swing.UIManager;
 
-import treepeater.ai.HttpTargetSnapshot;
+import treepeater.ai.AgentToolContext;
 import treepeater.Treepeater;
 import treepeater.icons.DoubleArrowLeftIcon;
 import treepeater.requestResponse.RequestResponsePanelUi;
@@ -38,7 +38,7 @@ public class RequestResponseToolbar extends JPanel {
 
     private final List<RequestResponseToolbarListener> toolbarListeners = new CopyOnWriteArrayList<>();
 
-    public RequestResponseToolbar(RequestTreeNode node, Supplier<HttpTargetSnapshot> targetSnapshotSupplier) {
+    public RequestResponseToolbar(RequestTreeNode node, Supplier<AgentToolContext> agentToolContextSupplier) {
         super(new BorderLayout());
         setBorder(
                 BorderFactory.createCompoundBorder(
@@ -48,7 +48,7 @@ public class RequestResponseToolbar extends JPanel {
 
         this.infoToolbarTab = new InfoToolbarTab();
         this.notesToolbarTab = new NotesToolbarTab(node);
-        this.magicToolbarTab = new AIToolbarTab(targetSnapshotSupplier);
+        this.magicToolbarTab = new AIToolbarTab(agentToolContextSupplier);
 
         this.toolbarCardLayout = new CardLayout();
         this.toolbarPanel = new JPanel(this.toolbarCardLayout);

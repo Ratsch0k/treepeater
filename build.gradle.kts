@@ -12,6 +12,7 @@ dependencies {
     implementation("com.formdev:flatlaf-extras:3.7.1")
     implementation("io.github.ollama4j:ollama4j:1.1.6")
     implementation("com.anthropic:anthropic-java:2.22.0")
+    implementation("com.openai:openai-java:4.31.0")
 }
 
 tasks.withType<JavaCompile>().configureEach {

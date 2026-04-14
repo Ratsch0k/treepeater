@@ -26,7 +26,6 @@ import treepeater.ai.ChatRole;
 import treepeater.ai.ChatStreamMessage;
 import treepeater.ai.ChatToolCall;
 import treepeater.ai.ChatToolDefinition;
-import treepeater.ai.ChatToolExecutor;
 import treepeater.ai.ChatTooling;
 import treepeater.ai.HttpTargetTools;
 import treepeater.ai.StreamingChatClient;
@@ -60,7 +59,7 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
         }
         try {
             for (ChatToolDefinition def : tooling.tools()) {
-                this.api.registerTool(toOllamaTool(def, tooling.executor(), onMessage));
+                this.api.registerTool(toOllamaTool(def, tooling, onMessage));
             }
             return streamPlain(messages, onMessage, true);
         } finally {
@@ -146,7 +145,7 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
     }
 
     private static Tools.Tool toOllamaTool(
-            ChatToolDefinition def, ChatToolExecutor exec, Consumer<ChatStreamMessage> onMessage) {
+            ChatToolDefinition def, ChatTooling tooling, Consumer<ChatStreamMessage> onMessage) {
         Tools.Parameters parameters = new Tools.Parameters();
         parameters.setProperties(new HashMap<>());
 
@@ -165,8 +164,9 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
                                 new ChatStreamMessage.ToolUsage(
                                         def.name(),
                                         argsJson,
-                                        HttpTargetTools.humanReadableUsage(def.name(), argsJson)));
-                        return exec.invoke(def.name(), argsJson);
+                                        HttpTargetTools.humanReadableUsage(
+                                                def.name(), argsJson, tooling.currentHistoryIndexForToolStatus())));
+                        return tooling.executor().invoke(def.name(), argsJson);
                     } catch (Exception e) {
                         throw new RuntimeException(e);
                     }

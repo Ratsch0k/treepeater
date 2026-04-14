@@ -64,7 +64,8 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
                         new ChatStreamMessage.ToolUsage(
                                 tc.name() != null ? tc.name() : "",
                                 argsJson,
-                                HttpTargetTools.humanReadableUsage(tc.name(), argsJson)));
+                                HttpTargetTools.humanReadableUsage(
+                                        tc.name(), argsJson, tooling.currentHistoryIndexForToolStatus())));
                 String result = tooling.executor().invoke(tc.name(), argsJson);
                 work.add(new ChatMessage(ChatRole.TOOL, result, List.of(), tc.id()));
             }

@@ -6,6 +6,7 @@ import java.awt.Font;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -31,6 +32,7 @@ import burp.api.montoya.http.message.responses.HttpResponse;
 import burp.api.montoya.ui.editor.EditorOptions;
 import burp.api.montoya.ui.editor.HttpRequestEditor;
 import burp.api.montoya.ui.editor.HttpResponseEditor;
+import treepeater.ai.AgentToolContext;
 import treepeater.ai.HttpTargetSnapshot;
 import treepeater.Treepeater;
 import treepeater.TreepeaterModel;
@@ -215,7 +217,7 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
         this.splitPane.setDividerLocation(0.5);
         this.splitPane.setResizeWeight(0.5);
 ;
-        this.sideToolbar = new RequestResponseToolbar(this.node, this::buildTargetSnapshotForAi);
+        this.sideToolbar = new RequestResponseToolbar(this.node, this::buildAgentToolContextForAi);
         this.addRequestResponseChangeListener(this.sideToolbar.getInfoToolbarTab());
         this.sideToolbar.addToolbarListener(this);
         this.expandPanel = this.sideToolbar.getToolbarPanel();
@@ -534,6 +536,50 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
                 method,
                 url,
                 path);
+    }
+
+    /**
+     * Full AI tool context: target line, repeater history summary, and request/response resolved per index (live editors
+     * for the current history entry; stored snapshots for other indices).
+     */
+    private AgentToolContext buildAgentToolContextForAi() {
+        RequestHistory h = this.node.getHistory();
+        int cur = h.getCurrentIndex();
+        List<AgentToolContext.HistoryEntryInfo> infos = new ArrayList<>();
+        for (int i = 0; i < h.size(); i++) {
+            HistoryEntry e = h.getEntry(i);
+            infos.add(
+                    new AgentToolContext.HistoryEntryInfo(
+                            i,
+                            e.getTime() != null ? e.getTime().toString() : "",
+                            e.getTargetLabel() != null ? e.getTargetLabel() : ""));
+        }
+        return new AgentToolContext(
+                buildTargetSnapshotForAi(),
+                cur,
+                infos,
+                idx -> resolveRequestForHistoryIndex(h, cur, idx),
+                idx -> resolveResponseForHistoryIndex(h, cur, idx));
+    }
+
+    private HttpRequest resolveRequestForHistoryIndex(RequestHistory h, int currentIndex, int index) {
+        if (index < 0 || index >= h.size()) {
+            return null;
+        }
+        if (index == currentIndex) {
+            return this.requestEditor.getRequest();
+        }
+        return h.getEntry(index).getRequest();
+    }
+
+    private HttpResponse resolveResponseForHistoryIndex(RequestHistory h, int currentIndex, int index) {
+        if (index < 0 || index >= h.size()) {
+            return null;
+        }
+        if (index == currentIndex) {
+            return this.responseEditor.getResponse();
+        }
+        return h.getEntry(index).getResponse();
     }
 
     private static HttpService safeHttpService(HttpRequest request) {

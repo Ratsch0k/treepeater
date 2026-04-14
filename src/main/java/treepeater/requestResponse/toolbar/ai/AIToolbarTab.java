@@ -18,10 +18,10 @@ import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 
 import treepeater.Treepeater;
+import treepeater.ai.AgentToolContext;
 import treepeater.ai.AiModelOption;
 import treepeater.ai.ChatToolExecutor;
 import treepeater.ai.ChatTooling;
-import treepeater.ai.HttpTargetSnapshot;
 import treepeater.ai.HttpTargetTools;
 import treepeater.ai.StreamingChatClient;
 import treepeater.ai.anthropic.AnthropicClientConfig;
@@ -43,13 +43,13 @@ public class AIToolbarTab implements AIChatHost {
     private JTabbedPane chatTabPane;
     private int nextChatTabIndex = 1;
 
-    private final Supplier<HttpTargetSnapshot> targetSnapshotSupplier;
+    private final Supplier<AgentToolContext> agentToolContextSupplier;
 
-    public AIToolbarTab(Supplier<HttpTargetSnapshot> targetSnapshotSupplier) {
+    public AIToolbarTab(Supplier<AgentToolContext> agentToolContextSupplier) {
         this.button = new ToolbarIconButton(new WandIcon());
         this.content = new JPanel(new BorderLayout());
 
-        this.targetSnapshotSupplier = targetSnapshotSupplier;
+        this.agentToolContextSupplier = agentToolContextSupplier;
         this.disabledInfoArea = null;
 
         this.content.add(this.buildContent(), BorderLayout.CENTER);
@@ -90,12 +90,18 @@ public class AIToolbarTab implements AIChatHost {
     /** Built-in HTTP target tools; stream UI uses {@link treepeater.ai.ChatStreamMessage.ToolUsage} from the client. */
     @Override
     public ChatTooling chatTooling() {
-        if (this.targetSnapshotSupplier == null) {
+        if (this.agentToolContextSupplier == null) {
             return ChatTooling.none();
         }
         ChatToolExecutor exec =
-                (name, argsJson) -> HttpTargetTools.execute(name, argsJson, this.targetSnapshotSupplier.get());
-        return new ChatTooling(HttpTargetTools.definitions(), exec);
+                (name, argsJson) -> HttpTargetTools.execute(name, argsJson, this.agentToolContextSupplier.get());
+        return new ChatTooling(
+                HttpTargetTools.definitions(),
+                exec,
+                () -> {
+                    AgentToolContext c = this.agentToolContextSupplier.get();
+                    return c != null ? c.currentHistoryIndex() : Integer.MIN_VALUE;
+                });
     }
 
     @Override

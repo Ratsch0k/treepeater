@@ -558,7 +558,7 @@ public final class AIAgentChatPanel extends JPanel {
         card.setAlignmentX(Component.LEFT_ALIGNMENT);
         applyToolUsageBorderOnlyTheme(card);
 
-        JLabel label = new JLabel("Tool: " + line);
+        JLabel label = new JLabel(line);
         label.setAlignmentX(Component.LEFT_ALIGNMENT);
         Font lf = UIManager.getFont("Label.font");
         if (lf != null) {

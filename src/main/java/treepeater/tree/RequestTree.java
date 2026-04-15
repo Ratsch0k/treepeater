@@ -8,22 +8,34 @@ import java.util.ArrayList;
 import java.util.List;
 
 import javax.swing.DropMode;
+import javax.swing.JMenuItem;
+import javax.swing.JPopupMenu;
 import javax.swing.JTree;
 import javax.swing.JViewport;
 import javax.swing.SwingUtilities;
-import javax.swing.tree.DefaultMutableTreeNode;
 import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreePath;
 import javax.swing.tree.TreeSelectionModel;
 
 import treepeater.draggable.RequestTreeNodeSimple;
 import treepeater.draggable.TreeTransferHandler;
+import treepeater.settings.StatusRegistry;
 import treepeater.tree.CustomTreeCellEditor.ProgrammaticEdit;
 
 public class RequestTree extends JTree {
-    private DefaultMutableTreeNode root;
+    private FolderTreeNode root;
     private DefaultTreeModel model;
     private final CustomTreeUI ui;
+    private CreateFolderHandler createFolderHandler;
+
+    @FunctionalInterface
+    public interface CreateFolderHandler {
+        FolderTreeNode createFolder(TreepeaterNode parent);
+    }
+
+    public void setCreateFolderHandler(CreateFolderHandler handler) {
+        this.createFolderHandler = handler;
+    }
 
     public RequestTree() {
         this.setDragEnabled(true);
@@ -34,6 +46,11 @@ public class RequestTree extends JTree {
         this.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
+                if (SwingUtilities.isRightMouseButton(e)) {
+                    handleRightClick(e);
+                    return;
+                }
+
                 int x = e.getX();
                 int y = e.getY();
 
@@ -41,11 +58,11 @@ public class RequestTree extends JTree {
 
                 if (path == null) {
                     return;
-                };
+                }
 
                 Object lastComponent = path.getLastPathComponent();
 
-                if (!(lastComponent instanceof RequestTreeNode)) {
+                if (!(lastComponent instanceof TreepeaterNode)) {
                     return;
                 }
 
@@ -55,7 +72,7 @@ public class RequestTree extends JTree {
 
                 RequestTree.this.startEditingAtPath(path);
 
-                RequestTreeNode node = (RequestTreeNode) lastComponent;
+                TreepeaterNode node = (TreepeaterNode) lastComponent;
 
                 Rectangle bounds = RequestTree.this.getPathBounds(path);
 
@@ -75,14 +92,21 @@ public class RequestTree extends JTree {
                     return;
                 }
 
-                node.select();
+                if (node instanceof FolderTreeNode) {
+                    if (RequestTree.this.isExpanded(path)) {
+                        RequestTree.this.collapsePath(path);
+                    } else {
+                        RequestTree.this.expandPath(path);
+                    }
+                } else {
+                    node.select();
+                }
             }
         });
         this.ui = new CustomTreeUI();
         this.setUI(ui);
-        this.root = new RequestTreeNode(0, "Treepeater", null, null);
+        this.root = new FolderTreeNode(0, StatusRegistry.getDefault(), "Treepeater");
         this.model = new DefaultTreeModel(this.root);
-        //this.setMinimumSize(new Dimension(300, 0));
         this.expandRow(0);
         this.setRootVisible(false);
         this.setShowsRootHandles(true);
@@ -99,6 +123,39 @@ public class RequestTree extends JTree {
                 RequestTree.this.ui.invalidateNodeLayoutCache();
             }
         });
+    }
+
+    private void handleRightClick(MouseEvent e) {
+        TreePath path = this.getPathForLocation(e.getX(), e.getY());
+        TreepeaterNode target;
+        if (path != null) {
+            Object component = path.getLastPathComponent();
+            if (component instanceof FolderTreeNode folder) {
+                target = folder;
+                this.setSelectionPath(path);
+            } else if (component instanceof TreepeaterNode node) {
+                target = (TreepeaterNode) node.getParent();
+            } else {
+                target = this.root;
+            }
+        } else {
+            target = this.root;
+        }
+
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem newFolder = new JMenuItem("New Folder");
+        newFolder.addActionListener(ev -> {
+            if (this.createFolderHandler != null) {
+                FolderTreeNode folder = this.createFolderHandler.createFolder(target);
+                if (folder != null) {
+                    TreePath parentPath = new TreePath(((TreepeaterNode) folder.getParent()).getPath());
+                    this.expandPath(parentPath);
+                    this.startProgrammaticEditForNode(folder, ProgrammaticEdit.RENAME);
+                }
+            }
+        });
+        menu.add(newFolder);
+        menu.show(this, e.getX(), e.getY());
     }
 
     /**
@@ -120,49 +177,40 @@ public class RequestTree extends JTree {
         return this.model;
     }
 
-    public void insertRootNode(RequestTreeNode node) {
+    public void insertRootNode(TreepeaterNode node) {
         this.model.insertNodeInto(node, this.root, this.root.getChildCount());
         this.model.nodeStructureChanged(this.root);
-
     }
 
-    public void insertNodeInto(RequestTreeNode child, RequestTreeNode parent, int index) {
+    public void insertNodeInto(TreepeaterNode child, TreepeaterNode parent, int index) {
         this.model.insertNodeInto(child, parent, index);
     }
 
     public List<RequestTreeNodeSimple> toSimpleRepeaterList() {
         ArrayList<RequestTreeNodeSimple> children = new ArrayList<>();
-        
+
         for (int idx = 0; idx < this.root.getChildCount(); idx++) {
-            RequestTreeNode child = (RequestTreeNode) this.root.getChildAt(idx);
-
+            TreepeaterNode child = (TreepeaterNode) this.root.getChildAt(idx);
             String childName = "[TR] " + child.getName();
-            RequestTreeNodeSimple simple = new RequestTreeNodeSimple(child.getRequest(), childName);
-            children.add(simple);
-
-            children.addAll(this.toSimpleRepeaterList(childName, child));
+            collectRepeaterNodes(childName, child, children);
         }
 
         return children;
     }
 
-    public List<RequestTreeNodeSimple> toSimpleRepeaterList(String prefix, RequestTreeNode node) {
-        ArrayList<RequestTreeNodeSimple> children = new ArrayList<>();
-        
+    private void collectRepeaterNodes(String prefix, TreepeaterNode node, List<RequestTreeNodeSimple> out) {
+        if (node instanceof RequestTreeNode requestNode) {
+            out.add(new RequestTreeNodeSimple(requestNode.getRequest(), prefix));
+        }
+
         for (int idx = 0; idx < node.getChildCount(); idx++) {
-            RequestTreeNode child = (RequestTreeNode) node.getChildAt(idx);
-
+            TreepeaterNode child = (TreepeaterNode) node.getChildAt(idx);
             String childName = prefix + " / " + child.getName();
-
-            children.add(new RequestTreeNodeSimple(child.getRequest(), childName));
-
-            children.addAll(this.toSimpleRepeaterList(childName, child));
+            collectRepeaterNodes(childName, child, out);
         }
-
-        return children;
     }
 
-    public boolean startProgrammaticEditForNode(RequestTreeNode node, ProgrammaticEdit editType) {
+    public boolean startProgrammaticEditForNode(TreepeaterNode node, ProgrammaticEdit editType) {
         if (node == null || node.getParent() == null) {
             return false;
         }

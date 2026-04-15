@@ -20,8 +20,10 @@ import treepeater.requestResponse.HistoryEntry;
 import treepeater.requestResponse.RequestHistory;
 import treepeater.requestResponse.Status;
 import treepeater.settings.StatusRegistry;
+import treepeater.tree.FolderTreeNode;
 import treepeater.tree.RequestTree;
 import treepeater.tree.RequestTreeNode;
+import treepeater.tree.TreepeaterNode;
 
 public class TreepeaterPersistence {
     private final Persistence persistence;
@@ -47,6 +49,9 @@ public class TreepeaterPersistence {
     private static final String PERSISTENCE_HISTORY_ENTRY_REQUEST = "request";
     private static final String PERSISTENCE_HISTORY_ENTRY_RESPONSE = "response";
     private static final String PERSISTENCE_SIZE = "size";
+    private static final String PERSISTENCE_TYPE = "nodeType";
+    private static final String TYPE_FOLDER = "folder";
+    private static final String TYPE_REQUEST = "request";
     private static final String PERSISTENCE_STATUS_REGISTRY = "statusRegistry";
     private static final String PERSISTENCE_STATUS_ID = "id";
     private static final String PERSISTENCE_STATUS_BACKGROUND_COLOR = "backgroundColor";
@@ -141,9 +146,6 @@ public class TreepeaterPersistence {
         tabsObject.setInteger(PERSISTENCE_SIZE, tabs.size());
         for (int idx = 0; idx < tabs.size(); idx++) {
             RequestTreeNode tab = tabs.get(idx);
-            // Do not store the entire tab. In that case we would create copies
-            // of the tab and its children. Instead, we only store the id of the tab.
-            // On load reconstruct the tabs from the node in the node and reference it instead.
             tabsObject.setInteger(PERSISTENCE_TABS + "_" + idx, tab.getId());
         }
         return tabsObject;
@@ -151,7 +153,7 @@ public class TreepeaterPersistence {
 
     private PersistedObject saveTree(RequestTree tree) {
         DefaultTreeModel treeModel = tree.getTreeModel();
-        RequestTreeNode root = (RequestTreeNode) treeModel.getRoot();
+        TreepeaterNode root = (TreepeaterNode) treeModel.getRoot();
 
         PersistedObject treeObject = PersistedObject.persistedObject();
 
@@ -161,20 +163,26 @@ public class TreepeaterPersistence {
         return treeObject;
     }
 
-    private PersistedObject saveTreeNode(RequestTreeNode node) {
+    private PersistedObject saveTreeNode(TreepeaterNode node) {
         PersistedObject nodeObject = PersistedObject.persistedObject();
 
         nodeObject.setInteger(PERSISTENCE_ID, node.getId());
         nodeObject.setString(PERSISTENCE_STATUS, node.getStatus().getStatus());
         nodeObject.setString(PERSISTENCE_NAME, node.getName());
-        nodeObject.setString(PERSISTENCE_NOTES, node.getNotes());
-        nodeObject.setHttpRequest(PERSISTENCE_REQUEST, node.getRequest());
-        nodeObject.setHttpResponse(PERSISTENCE_RESPONSE, node.getResponse());
-        nodeObject.setChildObject(PERSISTENCE_HISTORY, saveHistory(node.getHistory()));
+
+        if (node instanceof FolderTreeNode) {
+            nodeObject.setString(PERSISTENCE_TYPE, TYPE_FOLDER);
+        } else if (node instanceof RequestTreeNode requestNode) {
+            nodeObject.setString(PERSISTENCE_TYPE, TYPE_REQUEST);
+            nodeObject.setString(PERSISTENCE_NOTES, requestNode.getNotes());
+            nodeObject.setHttpRequest(PERSISTENCE_REQUEST, requestNode.getRequest());
+            nodeObject.setHttpResponse(PERSISTENCE_RESPONSE, requestNode.getResponse());
+            nodeObject.setChildObject(PERSISTENCE_HISTORY, saveHistory(requestNode.getHistory()));
+        }
 
         nodeObject.setInteger(PERSISTENCE_SIZE, node.getChildCount());
         for (int idx = 0; idx < node.getChildCount(); idx++) {
-            RequestTreeNode child = (RequestTreeNode) node.getChildAt(idx);
+            TreepeaterNode child = (TreepeaterNode) node.getChildAt(idx);
             PersistedObject childObject = saveTreeNode(child);
             nodeObject.setChildObject(PERSISTENCE_CHILDREN + "_" + idx, childObject);
         }
@@ -219,7 +227,6 @@ public class TreepeaterPersistence {
 
         RequestTree tree = this.loadTree(root.getChildObject(PERSISTENCE_TREE));
     
-        // Go though the entire tree and build a map that maps each node ID to the actual request node
         HashMap<Integer, RequestTreeNode> nodeMap = this.buildNodeIdMap(tree);
 
         LinkedList<RequestTreeNode> tabs = this.loadTabs(root.getChildObject(PERSISTENCE_TABS), nodeMap);
@@ -308,47 +315,82 @@ public class TreepeaterPersistence {
     private RequestTree loadTree(PersistedObject treeObject) {
         RequestTree tree = new RequestTree();
 
-        // This will be the root and empty treepeater node. Don't actually load this
         PersistedObject rootChild = treeObject.getChildObject(PERSISTENCE_CHILDREN);
 
-        // Do a depth-first traversal through the tree and slowly load each node
         int childCount = rootChild.getInteger(PERSISTENCE_SIZE).intValue();
 
         for (int idx = 0; idx < childCount; idx++) {
             PersistedObject childObject = rootChild.getChildObject(PERSISTENCE_CHILDREN + "_" + idx);
-            RequestTreeNode child = this.loadTreeNode(childObject);
+            TreepeaterNode child = this.loadTreeNode(childObject);
             tree.insertRootNode(child);
         }
 
         return tree;
     }
 
-    private RequestTreeNode loadTreeNode(PersistedObject nodeObject) {
+    private TreepeaterNode loadTreeNode(PersistedObject nodeObject) {
         int id = nodeObject.getInteger(PERSISTENCE_ID).intValue();
         String name = nodeObject.getString(PERSISTENCE_NAME);
         String statusId = nodeObject.getString(PERSISTENCE_STATUS);
-        HttpRequest request = nodeObject.getHttpRequest(PERSISTENCE_REQUEST);
-        HttpResponse response = nodeObject.getHttpResponse(PERSISTENCE_RESPONSE);
-        RequestHistory history = this.loadHistory(nodeObject.getChildObject(PERSISTENCE_HISTORY));
 
         Status status = Treepeater.getStatusRegistry().getById(statusId);
         if (status == null) {
             status = StatusRegistry.getDefault();
         }
 
-        String notesPersisted = nodeObject.getString(PERSISTENCE_NOTES);
-        String notes = notesPersisted != null ? notesPersisted : "";
-
-        RequestTreeNode node = new RequestTreeNode(id, status, name, request, response, history, notes);
-
         int childCount = nodeObject.getInteger(PERSISTENCE_SIZE).intValue();
-        for (int idx = 0; idx < childCount; idx++) {
-            PersistedObject childObject = nodeObject.getChildObject(PERSISTENCE_CHILDREN + "_" + idx);
-            RequestTreeNode child = this.loadTreeNode(childObject);
-            node.add(child);
+        String type = nodeObject.getString(PERSISTENCE_TYPE);
+
+        if (TYPE_FOLDER.equals(type)) {
+            FolderTreeNode folder = new FolderTreeNode(id, status, name);
+            for (int idx = 0; idx < childCount; idx++) {
+                PersistedObject childObject = nodeObject.getChildObject(PERSISTENCE_CHILDREN + "_" + idx);
+                TreepeaterNode child = this.loadTreeNode(childObject);
+                folder.add(child);
+            }
+            return folder;
         }
 
-        return node;
+        if (TYPE_REQUEST.equals(type)) {
+            HttpRequest request = nodeObject.getHttpRequest(PERSISTENCE_REQUEST);
+            HttpResponse response = nodeObject.getHttpResponse(PERSISTENCE_RESPONSE);
+            RequestHistory history = this.loadHistory(nodeObject.getChildObject(PERSISTENCE_HISTORY));
+            String notesPersisted = nodeObject.getString(PERSISTENCE_NOTES);
+            String notes = notesPersisted != null ? notesPersisted : "";
+            return new RequestTreeNode(id, status, name, request, response, history, notes);
+        }
+
+        // Migration: legacy data without a type discriminator
+        if (childCount > 0) {
+            FolderTreeNode folder = new FolderTreeNode(id, status, name);
+
+            HttpRequest request = nodeObject.getHttpRequest(PERSISTENCE_REQUEST);
+            if (request != null) {
+                HttpResponse response = nodeObject.getHttpResponse(PERSISTENCE_RESPONSE);
+                PersistedObject historyObj = nodeObject.getChildObject(PERSISTENCE_HISTORY);
+                RequestHistory history = historyObj != null ? this.loadHistory(historyObj) : new RequestHistory();
+                String notesPersisted = nodeObject.getString(PERSISTENCE_NOTES);
+                String notes = notesPersisted != null ? notesPersisted : "";
+                RequestTreeNode requestChild = new RequestTreeNode(id, status, name, request, response, history, notes);
+                folder.add(requestChild);
+            }
+
+            for (int idx = 0; idx < childCount; idx++) {
+                PersistedObject childObject = nodeObject.getChildObject(PERSISTENCE_CHILDREN + "_" + idx);
+                TreepeaterNode child = this.loadTreeNode(childObject);
+                folder.add(child);
+            }
+            return folder;
+        }
+
+        // Legacy leaf node -> RequestTreeNode
+        HttpRequest request = nodeObject.getHttpRequest(PERSISTENCE_REQUEST);
+        HttpResponse response = nodeObject.getHttpResponse(PERSISTENCE_RESPONSE);
+        PersistedObject historyObj = nodeObject.getChildObject(PERSISTENCE_HISTORY);
+        RequestHistory history = historyObj != null ? this.loadHistory(historyObj) : new RequestHistory();
+        String notesPersisted = nodeObject.getString(PERSISTENCE_NOTES);
+        String notes = notesPersisted != null ? notesPersisted : "";
+        return new RequestTreeNode(id, status, name, request, response, history, notes);
     }
 
 
@@ -390,32 +432,23 @@ public class TreepeaterPersistence {
         return tabs;
     }
 
-    /**
-     * Traverses the given RequestTree and returns a map from node IDs to RequestTreeNodes.
-     * @param tree The RequestTree to traverse.
-     * @return HashMap mapping node IDs to their corresponding RequestTreeNode.
-     */
     private HashMap<Integer, RequestTreeNode> buildNodeIdMap(RequestTree tree) {
         HashMap<Integer, RequestTreeNode> nodeMap = new HashMap<>();
-
-        traverseAndMap((RequestTreeNode) tree.getModel().getRoot(), nodeMap);
+        traverseAndMap((TreepeaterNode) tree.getModel().getRoot(), nodeMap);
         return nodeMap;
     }
 
-    /**
-     * Helper method to recursively traverse the tree and fill the map.
-     * @param node The current RequestTreeNode.
-     * @param nodeMap The map to populate.
-     */
-    private void traverseAndMap(RequestTreeNode node, HashMap<Integer, RequestTreeNode> nodeMap) {
+    private void traverseAndMap(TreepeaterNode node, HashMap<Integer, RequestTreeNode> nodeMap) {
         if (node == null) {
             return;
         }
-        nodeMap.put(node.getId(), node);
+        if (node instanceof RequestTreeNode requestNode) {
+            nodeMap.put(requestNode.getId(), requestNode);
+        }
         for (int i = 0; i < node.getChildCount(); i++) {
             Object childObj = node.getChildAt(i);
-            if (childObj instanceof RequestTreeNode) {
-                traverseAndMap((RequestTreeNode) childObj, nodeMap);
+            if (childObj instanceof TreepeaterNode childNode) {
+                traverseAndMap(childNode, nodeMap);
             }
         }
     }

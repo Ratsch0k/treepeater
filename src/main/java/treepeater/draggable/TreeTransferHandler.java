@@ -13,14 +13,16 @@ import javax.swing.*;
 import javax.swing.tree.*;
 
 import treepeater.Treepeater;
+import treepeater.tree.FolderTreeNode;
 import treepeater.tree.RequestTree;
 import treepeater.tree.RequestTreeNode;
+import treepeater.tree.TreepeaterNode;
 
 
 public class TreeTransferHandler extends TransferHandler {
     DataFlavor nodesFlavor;
     DataFlavor[] flavors = new DataFlavor[1];
-    RequestTreeNode[] nodesToRemove;
+    TreepeaterNode[] nodesToRemove;
 
     public TreeTransferHandler() {
         nodesFlavor = new DataFlavor(RequestTreeNodeTransferable.class, "RequestTreeNodeTransferable");
@@ -35,21 +37,38 @@ public class TreeTransferHandler extends TransferHandler {
         if(!support.isDataFlavorSupported(nodesFlavor)) {
             return false;
         }
-        // Do not allow a drop on the drag source selections.
+
         JTree.DropLocation dl =
                 (JTree.DropLocation)support.getDropLocation();
         JTree tree = (JTree)support.getComponent();
+
+        TreePath destPath = dl.getPath();
+        if (destPath == null) {
+            return false;
+        }
+        Object destComponent = destPath.getLastPathComponent();
+
+        // Only allow drops onto FolderTreeNode (or the root, which is also a folder)
+        if (!(destComponent instanceof FolderTreeNode)) {
+            return false;
+        }
+
         int dropRow = tree.getRowForPath(dl.getPath());
         int[] selRows = tree.getSelectionRows();
+        if (selRows == null) {
+            return false;
+        }
         for(int i = 0; i < selRows.length; i++) {
             if(selRows[i] == dropRow) {
                 return false;
             }
-            RequestTreeNode treeNode =
-                    (RequestTreeNode)tree.getPathForRow(selRows[i]).getLastPathComponent();
+            TreepeaterNode treeNode =
+                    (TreepeaterNode)tree.getPathForRow(selRows[i]).getLastPathComponent();
             for (TreeNode offspring: Collections.list(treeNode.depthFirstEnumeration())) {
-                if (tree.getRowForPath(new TreePath(((RequestTreeNode)offspring).getPath())) == dropRow) {
-                    return false;
+                if (offspring instanceof TreepeaterNode offspringNode) {
+                    if (tree.getRowForPath(new TreePath(offspringNode.getPath())) == dropRow) {
+                        return false;
+                    }
                 }
             }
         }
@@ -62,49 +81,47 @@ public class TreeTransferHandler extends TransferHandler {
         if (paths == null) {
             return null;
         }
-        // Make up a node array of copies for transfer and
-        // another for/of the nodes that will be removed in
-        // exportDone after a successful drop.
-        List<RequestTreeNode> copies =
-                new ArrayList<RequestTreeNode>();
-        List<RequestTreeNode> toRemove =
-                new ArrayList<RequestTreeNode>();
-        RequestTreeNode firstNode =
-                (RequestTreeNode) paths[0].getLastPathComponent();
+        List<TreepeaterNode> copies = new ArrayList<>();
+        List<TreepeaterNode> toRemove = new ArrayList<>();
+        TreepeaterNode firstNode =
+                (TreepeaterNode) paths[0].getLastPathComponent();
         HashSet<TreeNode> doneItems = new LinkedHashSet<>(paths.length);
-        RequestTreeNode copy = copy(firstNode, doneItems, tree);
+        TreepeaterNode copy = copy(firstNode, doneItems, tree);
         copies.add(copy);
         toRemove.add(firstNode);
         for (int i = 1; i < paths.length; i++) {
-            RequestTreeNode next =
-                    (RequestTreeNode) paths[i].getLastPathComponent();
+            TreepeaterNode next =
+                    (TreepeaterNode) paths[i].getLastPathComponent();
             if (doneItems.contains(next)) {
                 continue;
             }
-            // Do not allow higher level nodes to be added to list.
             if (next.getLevel() < firstNode.getLevel()) {
                 break;
-            } else if (next.getLevel() > firstNode.getLevel()) {  // child node
+            } else if (next.getLevel() > firstNode.getLevel()) {
                 copy.add(copy(next, doneItems, tree));
-                // node already contains child
-            } else {                                        // sibling
+            } else {
                 copies.add(copy(next, doneItems, tree));
                 toRemove.add(next);
             }
             doneItems.add(next);
         }
-        RequestTreeNode[] nodes =
-                copies.toArray(new RequestTreeNode[copies.size()]);
+        TreepeaterNode[] nodes =
+                copies.toArray(new TreepeaterNode[copies.size()]);
         nodesToRemove =
-                toRemove.toArray(new RequestTreeNode[toRemove.size()]);
+                toRemove.toArray(new TreepeaterNode[toRemove.size()]);
         return new NodesTransferable(nodes);
     }
 
-    private RequestTreeNode copy(RequestTreeNode node, HashSet<TreeNode> doneItems, JTree tree) {
-        RequestTreeNode copy = new RequestTreeNode(node);
+    private TreepeaterNode copy(TreepeaterNode node, HashSet<TreeNode> doneItems, JTree tree) {
+        TreepeaterNode copy;
+        if (node instanceof FolderTreeNode folderNode) {
+            copy = new FolderTreeNode(folderNode);
+        } else {
+            copy = new RequestTreeNode((RequestTreeNode) node);
+        }
         doneItems.add(node);
-        for (int i=0; i<node.getChildCount(); i++) {
-            copy.add(copy((RequestTreeNode)((TreeNode)node).getChildAt(i), doneItems, tree));
+        for (int i = 0; i < node.getChildCount(); i++) {
+            copy.add(copy((TreepeaterNode) node.getChildAt(i), doneItems, tree));
         }
         int row = tree.getRowForPath(new TreePath(copy.getPath()));
         tree.expandRow(row);
@@ -115,7 +132,6 @@ public class TreeTransferHandler extends TransferHandler {
         if((action & MOVE) == MOVE) {
             JTree tree = (JTree)source;
             DefaultTreeModel model = (DefaultTreeModel)tree.getModel();
-            // Remove nodes saved in nodesToRemove in createTransferable.
             for(int i = 0; i < nodesToRemove.length; i++) {
                 model.removeNodeFromParent(nodesToRemove[i]);
             }
@@ -131,8 +147,6 @@ public class TreeTransferHandler extends TransferHandler {
             return false;
         }
 
-
-        // Extract transfer data.
         RequestTreeNodeTransferable[] nodes = null;
         try {
             Transferable t = support.getTransferable();
@@ -146,25 +160,26 @@ public class TreeTransferHandler extends TransferHandler {
             Treepeater.api.logging().logToError(e);
         }
 
-        // Get drop location info.
         JTree.DropLocation dl =
                 (JTree.DropLocation)support.getDropLocation();
         int childIndex = dl.getChildIndex();
         TreePath dest = dl.getPath();
-        RequestTreeNode parent =
-                (RequestTreeNode)dest.getLastPathComponent();
+        TreepeaterNode parent =
+                (TreepeaterNode)dest.getLastPathComponent();
         RequestTree tree = (RequestTree)support.getComponent();
         DefaultTreeModel model = (DefaultTreeModel)tree.getModel();
-        // Configure for drop mode.
-        int index = childIndex;    // DropMode.INSERT
-        if(childIndex == -1) {     // DropMode.ON
+        int index = childIndex;
+        if(childIndex == -1) {
             index = parent.getChildCount();
         }
-        // Add data to model.
         for(int i = 0; i < nodes.length; i++) {
             RequestTreeNodeTransferable transferable = nodes[i];
-            RequestTreeNode node = new RequestTreeNode(transferable.id, transferable.status, transferable.name, transferable.request, transferable.response, transferable.listener, transferable.notes);
-
+            TreepeaterNode node;
+            if (transferable.isFolder) {
+                node = new FolderTreeNode(transferable.id, transferable.status, transferable.name);
+            } else {
+                node = new RequestTreeNode(transferable.id, transferable.status, transferable.name, transferable.request, transferable.response, transferable.listener, transferable.notes);
+            }
             model.insertNodeInto(node, parent, index++);
         }
         return true;
@@ -175,9 +190,9 @@ public class TreeTransferHandler extends TransferHandler {
     }
 
     public class NodesTransferable implements Transferable {
-        RequestTreeNode[] nodes;
+        TreepeaterNode[] nodes;
 
-        public NodesTransferable(RequestTreeNode[] nodes) {
+        public NodesTransferable(TreepeaterNode[] nodes) {
             this.nodes = nodes;
         }
 
@@ -189,8 +204,14 @@ public class TreeTransferHandler extends TransferHandler {
 
             ArrayList<RequestTreeNodeTransferable> transferables = new ArrayList<>();
             
-            for (RequestTreeNode treeNode : nodes) {
-                transferables.add(new RequestTreeNodeTransferable(treeNode.getId(), treeNode.getStatus(), treeNode.getName(), treeNode.getRequest(), treeNode.getResponse(), treeNode.getNotes(), treeNode.getListeners()));
+            for (TreepeaterNode treeNode : nodes) {
+                boolean isFolder = treeNode instanceof FolderTreeNode;
+                if (isFolder) {
+                    transferables.add(new RequestTreeNodeTransferable(true, treeNode.getId(), treeNode.getStatus(), treeNode.getName(), null, null, null, treeNode.getListeners()));
+                } else {
+                    RequestTreeNode reqNode = (RequestTreeNode) treeNode;
+                    transferables.add(new RequestTreeNodeTransferable(false, reqNode.getId(), reqNode.getStatus(), reqNode.getName(), reqNode.getRequest(), reqNode.getResponse(), reqNode.getNotes(), reqNode.getListeners()));
+                }
             }
 
             RequestTreeNodeTransferable[] transferableArray = transferables.toArray(new RequestTreeNodeTransferable[0]);
@@ -206,4 +227,3 @@ public class TreeTransferHandler extends TransferHandler {
         }
     }
 }
-

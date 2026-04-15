@@ -42,7 +42,7 @@ public class CustomTreeCellEditor extends DefaultTreeCellEditor {
 
     @Override
     public Component getTreeCellEditorComponent(JTree tree, Object value, boolean isSelected, boolean expanded, boolean leaf, int row) {
-        RequestTreeNode node = (RequestTreeNode) value;
+        TreepeaterNode node = (TreepeaterNode) value;
         this.cell.setNode(node);
 
         // Handle the programmatic edit.

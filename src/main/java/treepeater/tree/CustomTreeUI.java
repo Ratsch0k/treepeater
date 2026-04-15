@@ -234,8 +234,8 @@ public class CustomTreeUI extends BasicTreeUI {
         Object component = path.getLastPathComponent();
         Color fill;
         Color border;
-        if (component instanceof RequestTreeNode) {
-            Status status = ((RequestTreeNode) component).getStatus();
+        if (component instanceof TreepeaterNode) {
+            Status status = ((TreepeaterNode) component).getStatus();
 
             fill = status.getBackgroundColor();
             border = status.getBorderColor();

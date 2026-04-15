@@ -1,6 +1,7 @@
 package treepeater;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.event.ActionEvent;
 import java.util.HashMap;
 import java.util.List;
@@ -16,7 +17,10 @@ import javax.swing.JTabbedPane;
 import javax.swing.event.TreeModelEvent;
 import javax.swing.event.TreeModelListener;
 
+import treepeater.tree.FolderTreeNode;
 import treepeater.tree.RequestTreeNode;
+import treepeater.tree.TreepeaterNode;
+import treepeater.tree.CustomTreeCellEditor.ProgrammaticEdit;
 import treepeater.draggable.RequestTreeNodeSimple;
 import treepeater.requestResponse.RequestResponsePanel;
 import treepeater.requestResponse.RequestResponseTab;
@@ -40,6 +44,8 @@ public class TreepeaterUI extends JSplitPane {
 
         this.setDividerLocation(0.3);
         this.resetToPreferredSizes();
+
+        model.getTree().setCreateFolderHandler(model::createFolder);
 
         if (model.getRequestCount() > 0) {
             this.treePanelActive = true;
@@ -73,7 +79,7 @@ public class TreepeaterUI extends JSplitPane {
 
             @Override
             public void treeNodesRemoved(TreeModelEvent e) {
-                RequestTreeNode root = (RequestTreeNode) model.getTree().getTreeModel().getRoot();
+                TreepeaterNode root = (TreepeaterNode) model.getTree().getTreeModel().getRoot();
                 if (root.getChildCount() == 0) {
                     treePanelActive = false;
                     TreepeaterUI.this.setLeftComponent(TreepeaterUI.this.buildDefaultLeftPanel());
@@ -138,7 +144,7 @@ public class TreepeaterUI extends JSplitPane {
             Treepeater.api.logging().logToError("No tab found for node " + node.getId());
             return;
         }
-        this.requestResponseTabbedPane.remove(requestResponsePanel);;
+        this.requestResponseTabbedPane.remove(requestResponsePanel);
         this.tabMap.remove(node);
     }
 
@@ -192,6 +198,24 @@ public class TreepeaterUI extends JSplitPane {
 
         leftPanel.add(scrollPane, BorderLayout.CENTER);
 
+        JPanel buttonBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
+
+        JButton newFolderButton = new JButton("New Folder");
+        newFolderButton.addActionListener(ev -> {
+            TreepeaterNode selected = null;
+            if (this.model.getTree().getSelectionPath() != null) {
+                Object comp = this.model.getTree().getSelectionPath().getLastPathComponent();
+                if (comp instanceof TreepeaterNode) {
+                    selected = (TreepeaterNode) comp;
+                }
+            }
+            FolderTreeNode folder = this.model.createFolder(selected);
+            if (folder != null) {
+                this.model.getTree().startProgrammaticEditForNode(folder, ProgrammaticEdit.RENAME);
+            }
+        });
+        buttonBar.add(newFolderButton);
+
         JButton syncButton = new JButton("Sync");
         syncButton.addActionListener(new AbstractAction() {
             @Override
@@ -203,10 +227,10 @@ public class TreepeaterUI extends JSplitPane {
                     Treepeater.api.repeater().sendToRepeater(node.request, node.name);
                 }
             }
-            
         });
+        buttonBar.add(syncButton);
 
-        leftPanel.add(syncButton, BorderLayout.PAGE_END);
+        leftPanel.add(buttonBar, BorderLayout.PAGE_END);
         
         return leftPanel;
     }

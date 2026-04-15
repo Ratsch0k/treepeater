@@ -37,7 +37,7 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
     private JTextField field;
     private CardLayout card;
     private JPanel textPanel;
-    private RequestTreeNode node;
+    private TreepeaterNode node;
     private JButton closeButton;
     private boolean noPropagation = false;
 
@@ -167,7 +167,7 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
         this.card.show(this.textPanel, "label");
     }
 
-    public void setNode(RequestTreeNode node) {
+    public void setNode(TreepeaterNode node) {
         this.node = node;
         this.updateComponents();
     }

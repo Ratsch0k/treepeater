@@ -3,6 +3,7 @@ package treepeater.ai;
 import java.util.ArrayList;
 import java.util.List;
 
+
 /**
  * Entry in the AI toolbar model combo: Burp's built-in AI, Anthropic, Azure OpenAI / Foundry, or a specific Ollama model.
  */
@@ -27,10 +28,12 @@ public record AiModelOption(String label, Kind kind, String ollamaModel, String 
     public static List<AiModelOption> defaultChoices() {
         List<AiModelOption> list = new ArrayList<>();
         list.add(new AiModelOption("Burp", Kind.BURP, null, null, null));
-        list.add(new AiModelOption("Anthropic — Claude Sonnet 4", Kind.ANTHROPIC, null, "claude-sonnet-4-20250514", null));
-        list.add(new AiModelOption("Anthropic — Claude Haiku 4.5", Kind.ANTHROPIC, null, "claude-haiku-4-5-20251001", null));
-        list.add(new AiModelOption("Foundry — gpt-4o (deployment name)", Kind.OPENAI, null, null, "gpt-4o"));
-        list.add(new AiModelOption("Foundry — o4-mini (deployment name)", Kind.OPENAI, null, null, "o4-mini"));
+        list.add(new AiModelOption("Claude Opus 4.6", Kind.ANTHROPIC, null, com.anthropic.models.messages.Model.CLAUDE_OPUS_4_6.asString(), null));
+        list.add(new AiModelOption("Claude Sonnet 4.6", Kind.ANTHROPIC, null, com.anthropic.models.messages.Model.CLAUDE_SONNET_4_6.asString(), null));
+        list.add(new AiModelOption("Claude Haiku 4.5", Kind.ANTHROPIC, null, com.anthropic.models.messages.Model.CLAUDE_HAIKU_4_5.asString(), null));
+        list.add(new AiModelOption("GPT-5.4", Kind.OPENAI, null, null, com.openai.models.ChatModel.GPT_5_4.asString()));
+        list.add(new AiModelOption("GPT-5.4 mini", Kind.OPENAI, null, null, com.openai.models.ChatModel.GPT_5_4_MINI.asString()));
+        list.add(new AiModelOption("GPT-5.3", Kind.OPENAI, null, null, com.openai.models.ChatModel.GPT_5_3_CHAT_LATEST.asString()));
         String[] ollamaModels = {"qwen3.5", "llama3.2", "mistral", "codellama"};
         for (String model : ollamaModels) {
             list.add(new AiModelOption("Ollama — " + model, Kind.OLLAMA, model, null, null));

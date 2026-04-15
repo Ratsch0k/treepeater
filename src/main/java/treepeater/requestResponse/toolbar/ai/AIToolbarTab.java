@@ -27,6 +27,8 @@ import treepeater.ai.StreamingChatClient;
 import treepeater.ai.anthropic.AnthropicClientConfig;
 import treepeater.ai.anthropic.AnthropicStreamingChatClient;
 import treepeater.ai.burp.BurpAiStreamingChatClient;
+import treepeater.ai.openai.OpenAiClientConfig;
+import treepeater.ai.openai.OpenAiStreamingChatClient;
 import treepeater.ai.ollama.OllamaClientConfig;
 import treepeater.ai.ollama.OllamaStreamingChatClient;
 import treepeater.components.StyledButton;
@@ -75,6 +77,21 @@ public class AIToolbarTab implements AIChatHost {
                 throw new IllegalStateException("No Anthropic model id");
             }
             return new AnthropicStreamingChatClient(new AnthropicClientConfig(apiKey, model));
+        }
+        if (opt.kind() == AiModelOption.Kind.OPENAI) {
+            String endpoint = settings.getLlmAzureOpenAiEndpoint();
+            if (endpoint == null || endpoint.isBlank()) {
+                throw new IllegalStateException("Azure OpenAI endpoint not configured");
+            }
+            String apiKey = settings.getLlmAzureOpenAiApiKey();
+            if (apiKey == null || apiKey.isBlank()) {
+                throw new IllegalStateException("Azure OpenAI API key not configured");
+            }
+            String deployment = opt.openAiDeployment();
+            if (deployment == null || deployment.isBlank()) {
+                throw new IllegalStateException("No deployment name for Azure OpenAI");
+            }
+            return new OpenAiStreamingChatClient(new OpenAiClientConfig(endpoint, apiKey, deployment));
         }
         String baseUrl = settings.getLlmOllamaBaseUrl();
         if (baseUrl == null || baseUrl.isBlank()) {

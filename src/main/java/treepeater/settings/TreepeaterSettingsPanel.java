@@ -82,8 +82,8 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
 
         JPanel llmPanel = this.createTitledSection(
             "LLMs",
-            "Configure connection details for Ollama and Anthropic. The AI tab uses the Ollama base URL and "
-                + "Anthropic API key from here; choose the model in the AI toolbar.",
+            "Configure connection details for Ollama, Anthropic, and Azure OpenAI / Microsoft Foundry. "
+                + "The AI tab reads these values from here; pick the provider and model (or deployment name) in the AI toolbar.",
             this.createLlmSettingsPanel()
         );
         llmPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, SECTION_GAP, 0));
@@ -212,9 +212,32 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
                 this.settings::setLlmAnthropicApiKey,
                 true);
 
+        JPanel azure = new JPanel(new GridBagLayout());
+        azure.setAlignmentX(Component.LEFT_ALIGNMENT);
+        azure.setBorder(BorderFactory.createTitledBorder("Azure OpenAI / Foundry"));
+        row = 0;
+        String azureEndpoint = this.settings.getLlmAzureOpenAiEndpoint();
+        row = this.addPersistedTextRow(
+                azure,
+                row,
+                "Endpoint:",
+                azureEndpoint != null ? azureEndpoint : "",
+                this.settings::setLlmAzureOpenAiEndpoint,
+                false);
+        String azureKey = this.settings.getLlmAzureOpenAiApiKey();
+        row = this.addPersistedTextRow(
+                azure,
+                row,
+                "API key:",
+                azureKey != null ? azureKey : "",
+                this.settings::setLlmAzureOpenAiApiKey,
+                true);
+
         outer.add(ollama);
         outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
         outer.add(anthropic);
+        outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
+        outer.add(azure);
         return outer;
     }
 

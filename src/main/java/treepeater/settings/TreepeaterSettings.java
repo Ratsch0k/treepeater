@@ -40,6 +40,9 @@ public class TreepeaterSettings {
 
     public static final String LLM_OLLAMA_BASE_URL_SETTING = "TREEPEATER_LLM_OLLAMA_BASE_URL";
     public static final String LLM_ANTHROPIC_API_KEY_SETTING = "TREEPEATER_LLM_ANTHROPIC_API_KEY";
+    /** Azure OpenAI / Microsoft Foundry resource endpoint (no trailing path), e.g. {@code https://myresource.openai.azure.com}. */
+    public static final String LLM_AZURE_OPENAI_ENDPOINT_SETTING = "TREEPEATER_LLM_AZURE_OPENAI_ENDPOINT";
+    public static final String LLM_AZURE_OPENAI_API_KEY_SETTING = "TREEPEATER_LLM_AZURE_OPENAI_API_KEY";
 
     private static final String DEFAULT_STATUS_FIELD_ID = "ID";
     private static final String DEFAULT_STATUS_FIELD_NAME = "NAME";
@@ -219,6 +222,30 @@ public class TreepeaterSettings {
     public void setLlmAnthropicApiKey(String apiKey) {
         this.preferences.setString(LLM_ANTHROPIC_API_KEY_SETTING, apiKey);
         this.notifyListeners(LLM_ANTHROPIC_API_KEY_SETTING, apiKey);
+    }
+
+    /**
+     * Azure OpenAI / Foundry endpoint base URL, or {@code null} if unset.
+     */
+    public String getLlmAzureOpenAiEndpoint() {
+        return this.getString(LLM_AZURE_OPENAI_ENDPOINT_SETTING);
+    }
+
+    public void setLlmAzureOpenAiEndpoint(String endpoint) {
+        this.preferences.setString(LLM_AZURE_OPENAI_ENDPOINT_SETTING, endpoint);
+        this.notifyListeners(LLM_AZURE_OPENAI_ENDPOINT_SETTING, endpoint);
+    }
+
+    /**
+     * API key for Azure OpenAI / Foundry, or {@code null} if unset.
+     */
+    public String getLlmAzureOpenAiApiKey() {
+        return this.getString(LLM_AZURE_OPENAI_API_KEY_SETTING);
+    }
+
+    public void setLlmAzureOpenAiApiKey(String apiKey) {
+        this.preferences.setString(LLM_AZURE_OPENAI_API_KEY_SETTING, apiKey);
+        this.notifyListeners(LLM_AZURE_OPENAI_API_KEY_SETTING, apiKey);
     }
 
     /**

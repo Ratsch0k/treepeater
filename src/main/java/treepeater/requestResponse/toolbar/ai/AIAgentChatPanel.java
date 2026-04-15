@@ -287,6 +287,21 @@ public final class AIAgentChatPanel extends JPanel {
             }
         }
 
+        if (choice != null && choice.kind() == AiModelOption.Kind.OPENAI) {
+            TreepeaterSettings s = TreepeaterSettings.getInstance();
+            String endpoint = s.getLlmAzureOpenAiEndpoint();
+            String key = s.getLlmAzureOpenAiApiKey();
+            if (endpoint == null || endpoint.isBlank() || key == null || key.isBlank()) {
+                JOptionPane.showMessageDialog(
+                        this.host.dialogParent(),
+                        "Add your Azure OpenAI / Foundry endpoint and API key under Extension settings for Treepeater "
+                                + "(LLMs \u2192 Azure OpenAI / Foundry).",
+                        "Azure OpenAI configuration required",
+                        JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+        }
+
         String text = this.inputArea.getText().trim();
         if (text.isEmpty()) {
             return;

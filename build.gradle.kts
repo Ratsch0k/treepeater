@@ -13,6 +13,10 @@ dependencies {
     implementation("io.github.ollama4j:ollama4j:1.1.6")
     implementation("com.anthropic:anthropic-java:2.22.0")
     implementation("com.openai:openai-java:4.31.0")
+    implementation("org.commonmark:commonmark:0.28.0")
+    implementation("org.commonmark:commonmark-ext-gfm-tables:0.28.0")
+    implementation("org.commonmark:commonmark-ext-gfm-strikethrough:0.28.0")
+    implementation("org.commonmark:commonmark-ext-task-list-items:0.28.0")
 }
 
 tasks.withType<JavaCompile>().configureEach {

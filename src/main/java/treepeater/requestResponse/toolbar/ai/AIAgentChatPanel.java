@@ -37,24 +37,22 @@ import javax.swing.JPanel;
 import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
-import javax.swing.JTextPane;
 import javax.swing.JViewport;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
+import javax.swing.Timer;
 import javax.swing.UIManager;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
-import javax.swing.text.BadLocationException;
-import javax.swing.text.Style;
-import javax.swing.text.StyleConstants;
-import javax.swing.text.StyledDocument;
+import javax.swing.event.HyperlinkEvent;
 
 import com.formdev.flatlaf.FlatClientProperties;
 
 import treepeater.Treepeater;
 import treepeater.ai.AgentSystemPrompt;
 import treepeater.ai.AiModelOption;
+import treepeater.ai.MarkdownRenderer;
 import treepeater.ai.ChatErrors;
 import treepeater.ai.ChatMessage;
 import treepeater.ai.ChatRole;
@@ -84,6 +82,7 @@ public final class AIAgentChatPanel extends JPanel {
     private final StyledButton sendButton;
     private final JComboBox<AiModelOption> modelCombo;
     private final List<ChatMessage> conversation = new ArrayList<>();
+    private final List<AssistantStrip> renderedStrips = new ArrayList<>();
     private final AtomicReference<SwingWorker<List<ChatMessage>, Void>> activeChatWorker =
             new AtomicReference<>();
 
@@ -248,6 +247,11 @@ public final class AIAgentChatPanel extends JPanel {
         for (Component c : this.transcriptList.getComponents()) {
             this.refreshTranscriptRowTheme(c);
         }
+        for (AssistantStrip strip : this.renderedStrips) {
+            if (strip.body != null && strip.textAccumulator.length() > 0) {
+                renderMarkdown(strip);
+            }
+        }
     }
 
     private void startSend() {
@@ -361,10 +365,8 @@ public final class AIAgentChatPanel extends JPanel {
                                                             return;
                                                         }
                                                         removeAssistantWaitingIndicator(strip);
-                                                        JTextPane pane = ensureAssistantBody(strip);
-                                                        appendAssistantReplyDelta(pane, ad.text());
-                                                        AIAgentChatPanel.this.transcriptList.revalidate();
-                                                        scrollTranscriptToBottom();
+                                                        ensureAssistantBody(strip);
+                                                        appendAssistantReplyDelta(strip, ad.text());
                                                     });
                                         }
                                         case ChatStreamMessage.ToolUsage tu -> {
@@ -381,6 +383,7 @@ public final class AIAgentChatPanel extends JPanel {
                                                                 return;
                                                             }
                                                             removeAssistantWaitingIndicator(strip);
+                                                            flushMarkdownRender(strip);
                                                             if (strip.body == null) {
                                                                 removeAssistantStripRowFromTranscript(strip.root);
                                                             }
@@ -418,6 +421,7 @@ public final class AIAgentChatPanel extends JPanel {
                     AssistantStrip last = activeAssistantStrip.get();
                     if (last != null) {
                         removeAssistantWaitingIndicator(last);
+                        flushMarkdownRender(last);
                     }
                     AIAgentChatPanel.this.sendButton.setEnabled(true);
                     AIAgentChatPanel.this.modelCombo.setEnabled(true);
@@ -524,28 +528,37 @@ public final class AIAgentChatPanel extends JPanel {
         return new AssistantStrip(root, column, waitingIndicator);
     }
 
-    /** Lazily creates the assistant {@link JTextPane} when the first token arrives. */
-    private JTextPane ensureAssistantBody(AssistantStrip strip) {
+    /** Lazily creates the assistant {@link JEditorPane} (HTML) when the first token arrives. */
+    private JEditorPane ensureAssistantBody(AssistantStrip strip) {
         if (strip.body != null) {
             return strip.body;
         }
-        JTextPane body = new JTextPane();
+        JEditorPane body = new JEditorPane() {
+            @Override
+            public Dimension getPreferredSize() {
+                java.awt.Container p = getParent();
+                if (p != null && p.getWidth() > 0) {
+                    setSize(p.getWidth(), Short.MAX_VALUE);
+                }
+                return super.getPreferredSize();
+            }
+        };
+        body.setContentType("text/html");
         body.setMinimumSize(new Dimension(0, 0));
         body.setEditable(false);
         body.setOpaque(false);
         body.setBorder(null);
-        body.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
-        Font lf = UIManager.getFont("Label.font");
-        if (lf != null) {
-            body.setFont(lf);
-        }
-        Style regular = body.addStyle("regular", null);
-        Color fg = UIManager.getColor("Label.foreground");
-        if (fg != null) {
-            StyleConstants.setForeground(regular, fg);
-        }
+        body.addHyperlinkListener(e -> {
+            if (e.getEventType() == HyperlinkEvent.EventType.ACTIVATED && e.getURL() != null) {
+                try {
+                    java.awt.Desktop.getDesktop().browse(e.getURL().toURI());
+                } catch (Exception ignored) {
+                }
+            }
+        });
         strip.column.add(body);
         strip.body = body;
+        this.renderedStrips.add(strip);
         return body;
     }
 
@@ -589,16 +602,42 @@ public final class AIAgentChatPanel extends JPanel {
         return card;
     }
 
-    private void appendAssistantReplyDelta(JTextPane pane, String delta) {
+    private static final int MARKDOWN_RENDER_DELAY_MS = 30;
+
+    private void appendAssistantReplyDelta(AssistantStrip strip, String delta) {
         if (delta == null || delta.isEmpty()) {
             return;
         }
-        StyledDocument doc = pane.getStyledDocument();
-        Style regular = pane.getStyle("regular");
-        try {
-            doc.insertString(doc.getLength(), delta, regular);
-        } catch (BadLocationException e) {
-            throw new RuntimeException(e);
+        strip.textAccumulator.append(delta);
+        scheduleMarkdownRender(strip);
+    }
+
+    private void scheduleMarkdownRender(AssistantStrip strip) {
+        if (strip.renderTimer == null) {
+            strip.renderTimer = new Timer(MARKDOWN_RENDER_DELAY_MS, e -> renderMarkdown(strip));
+            strip.renderTimer.setRepeats(false);
+        }
+        strip.renderTimer.restart();
+    }
+
+    private void renderMarkdown(AssistantStrip strip) {
+        if (strip.body == null) {
+            return;
+        }
+        String html = MarkdownRenderer.renderToHtml(strip.textAccumulator.toString());
+        strip.body.setText(html);
+        this.transcriptList.revalidate();
+        this.transcriptList.repaint();
+        scrollTranscriptToBottom();
+    }
+
+    /** Stops the debounce timer and performs a final render if there is accumulated text. */
+    private void flushMarkdownRender(AssistantStrip strip) {
+        if (strip.renderTimer != null) {
+            strip.renderTimer.stop();
+        }
+        if (strip.textAccumulator.length() > 0 && strip.body != null) {
+            renderMarkdown(strip);
         }
     }
 
@@ -728,7 +767,9 @@ public final class AIAgentChatPanel extends JPanel {
         final JPanel root;
         final JPanel column;
         final JLabel waitingIndicator;
-        JTextPane body;
+        final StringBuilder textAccumulator = new StringBuilder();
+        JEditorPane body;
+        Timer renderTimer;
 
         AssistantStrip(JPanel root, JPanel column, JLabel waitingIndicator) {
             this.root = root;

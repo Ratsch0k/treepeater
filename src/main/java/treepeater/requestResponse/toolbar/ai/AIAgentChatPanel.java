@@ -53,6 +53,7 @@ import javax.swing.text.StyledDocument;
 import com.formdev.flatlaf.FlatClientProperties;
 
 import treepeater.Treepeater;
+import treepeater.ai.AgentSystemPrompt;
 import treepeater.ai.AiModelOption;
 import treepeater.ai.ChatErrors;
 import treepeater.ai.ChatMessage;
@@ -317,6 +318,7 @@ public final class AIAgentChatPanel extends JPanel {
 
         List<ChatMessage> messages = new ArrayList<>(this.conversation);
         messages.add(new ChatMessage(ChatRole.USER, text));
+        AgentSystemPrompt.prependDefault(messages);
 
         this.sendButton.setEnabled(false);
         this.modelCombo.setEnabled(false);
@@ -408,7 +410,7 @@ public final class AIAgentChatPanel extends JPanel {
                     }
                     List<ChatMessage> history = get();
                     AIAgentChatPanel.this.conversation.clear();
-                    AIAgentChatPanel.this.conversation.addAll(history);
+                    AIAgentChatPanel.this.conversation.addAll(AgentSystemPrompt.stripDefaultLeadingSystem(history));
                 } catch (Exception ex) {
                     AIAgentChatPanel.this.host.logError(ex);
                     AIAgentChatPanel.this.addMessageBubble("Error", ChatErrors.formatUserMessage(ex));

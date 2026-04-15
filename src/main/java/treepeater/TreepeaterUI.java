@@ -27,6 +27,7 @@ public class TreepeaterUI extends JSplitPane {
     JTabbedPane requestResponseTabbedPane;
     TreepeaterModel model;
     HashMap<RequestTreeNode, RequestResponsePanel> tabMap;
+    private boolean treePanelActive;
 
     public TreepeaterUI(TreepeaterModel model) {
         super(JSplitPane.HORIZONTAL_SPLIT);
@@ -41,8 +42,10 @@ public class TreepeaterUI extends JSplitPane {
         this.resetToPreferredSizes();
 
         if (model.getRequestCount() > 0) {
+            this.treePanelActive = true;
             this.setLeftComponent(this.buildTreePanel());
         } else {
+            this.treePanelActive = false;
             this.setLeftComponent(this.buildDefaultLeftPanel());
         }
 
@@ -62,9 +65,9 @@ public class TreepeaterUI extends JSplitPane {
 
             @Override
             public void treeNodesInserted(TreeModelEvent e) {
-                if (model.getRequestCount() > 0) {
-                    JComponent leftPanel = TreepeaterUI.this.buildTreePanel();
-                    TreepeaterUI.this.setLeftComponent(leftPanel);
+                if (!treePanelActive && model.getRequestCount() > 0) {
+                    treePanelActive = true;
+                    TreepeaterUI.this.setLeftComponent(TreepeaterUI.this.buildTreePanel());
                 }
             }
 
@@ -72,6 +75,7 @@ public class TreepeaterUI extends JSplitPane {
             public void treeNodesRemoved(TreeModelEvent e) {
                 RequestTreeNode root = (RequestTreeNode) model.getTree().getTreeModel().getRoot();
                 if (root.getChildCount() == 0) {
+                    treePanelActive = false;
                     TreepeaterUI.this.setLeftComponent(TreepeaterUI.this.buildDefaultLeftPanel());
                 }
             }

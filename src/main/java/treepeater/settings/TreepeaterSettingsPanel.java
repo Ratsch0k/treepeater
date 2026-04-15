@@ -11,6 +11,7 @@ import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -24,6 +25,7 @@ import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JSeparator;
@@ -35,6 +37,7 @@ import javax.swing.UIManager;
 
 import burp.api.montoya.ui.settings.SettingsPanelWithData;
 import treepeater.Treepeater;
+import treepeater.ai.AiModelOption;
 import treepeater.requestResponse.Status;
 
 /**
@@ -187,17 +190,24 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         outer.setLayout(new BoxLayout(outer, BoxLayout.Y_AXIS));
         outer.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        JPanel ollama = new JPanel(new GridBagLayout());
+        JPanel ollama = new JPanel();
+        ollama.setLayout(new BoxLayout(ollama, BoxLayout.Y_AXIS));
         ollama.setAlignmentX(Component.LEFT_ALIGNMENT);
         ollama.setBorder(BorderFactory.createTitledBorder("Ollama"));
+
+        JPanel ollamaFields = new JPanel(new GridBagLayout());
+        ollamaFields.setAlignmentX(Component.LEFT_ALIGNMENT);
         int row = 0;
         row = this.addPersistedTextRow(
-                ollama,
+                ollamaFields,
                 row,
                 "Base URL:",
                 this.settings.getLlmOllamaBaseUrl(),
                 this.settings::setLlmOllamaBaseUrl,
                 false);
+        ollama.add(ollamaFields);
+        ollama.add(Box.createVerticalStrut(ROW_GAP));
+        ollama.add(this.createOllamaModelsPanel());
 
         JPanel anthropic = new JPanel(new GridBagLayout());
         anthropic.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -239,6 +249,115 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
         outer.add(azure);
         return outer;
+    }
+
+    private JComponent createOllamaModelsPanel() {
+        JPanel wrapper = new JPanel();
+        wrapper.setLayout(new BoxLayout(wrapper, BoxLayout.Y_AXIS));
+        wrapper.setAlignmentX(Component.LEFT_ALIGNMENT);
+        wrapper.setOpaque(false);
+        wrapper.setBorder(BorderFactory.createEmptyBorder(0, LLM_ROW_PADDING, LLM_ROW_PADDING, LLM_ROW_PADDING));
+
+        JLabel modelsLabel = new JLabel("Models:");
+        modelsLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        wrapper.add(modelsLabel);
+        wrapper.add(Box.createVerticalStrut(4));
+
+        JTextArea warning = new JTextArea(
+                "\u26A0 Models listed here must be pulled/installed in your Ollama instance before they can be used. "
+                        + "Run \"ollama pull <model>\" for each model you add.");
+        warning.setEditable(false);
+        warning.setFocusable(false);
+        warning.setLineWrap(true);
+        warning.setWrapStyleWord(true);
+        warning.setOpaque(false);
+        warning.setBorder(null);
+        warning.setFont(UIManager.getFont("Label.font"));
+        warning.setForeground(UIManager.getColor("Objects.YellowDark") != null
+                ? UIManager.getColor("Objects.YellowDark")
+                : new Color(0xB8860B));
+        warning.setAlignmentX(Component.LEFT_ALIGNMENT);
+        wrapper.add(warning);
+        wrapper.add(Box.createVerticalStrut(8));
+
+        DefaultListModel<String> listModel = new DefaultListModel<>();
+        List<String> persisted = this.settings.getOllamaModels();
+        if (persisted != null) {
+            persisted.forEach(listModel::addElement);
+        } else {
+            for (String m : AiModelOption.FALLBACK_OLLAMA_MODELS) {
+                listModel.addElement(m);
+            }
+        }
+
+        JList<String> modelList = new JList<>(listModel);
+        modelList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        modelList.setVisibleRowCount(6);
+        modelList.setFixedCellHeight(24);
+        modelList.setPreferredSize(new Dimension(280, 144));
+        modelList.setMaximumSize(new Dimension(280, 144));
+        modelList.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor"), 1),
+                BorderFactory.createEmptyBorder(4, 8, 4, 8)));
+        modelList.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JButton addBtn = new JButton("Add");
+        JButton removeBtn = new JButton("Remove");
+        removeBtn.setEnabled(false);
+
+        modelList.addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                removeBtn.setEnabled(modelList.getSelectedIndex() >= 0);
+            }
+        });
+
+        Runnable persistModels = () -> {
+            List<String> models = new ArrayList<>(listModel.size());
+            for (int i = 0; i < listModel.size(); i++) {
+                models.add(listModel.get(i));
+            }
+            this.settings.setOllamaModels(models);
+        };
+
+        addBtn.addActionListener(e -> {
+            String name = JOptionPane.showInputDialog(
+                    this.root,
+                    "Enter the Ollama model name (e.g. llama3.2, mistral, codellama):",
+                    "Add Ollama Model",
+                    JOptionPane.PLAIN_MESSAGE);
+            if (name != null && !name.trim().isEmpty()) {
+                String trimmed = name.trim();
+                for (int i = 0; i < listModel.size(); i++) {
+                    if (listModel.get(i).equalsIgnoreCase(trimmed)) {
+                        return;
+                    }
+                }
+                listModel.addElement(trimmed);
+                persistModels.run();
+            }
+        });
+
+        removeBtn.addActionListener(e -> {
+            int idx = modelList.getSelectedIndex();
+            if (idx >= 0) {
+                listModel.remove(idx);
+                int newSel = Math.min(idx, listModel.size() - 1);
+                if (newSel >= 0) modelList.setSelectedIndex(newSel);
+                persistModels.run();
+            }
+        });
+
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        buttons.setOpaque(false);
+        buttons.setAlignmentX(Component.LEFT_ALIGNMENT);
+        buttons.add(addBtn);
+        buttons.add(removeBtn);
+
+        wrapper.add(modelList);
+        wrapper.add(Box.createVerticalStrut(4));
+        wrapper.add(buttons);
+
+        return wrapper;
     }
 
     private int addPersistedTextRow(

@@ -3,6 +3,8 @@ package treepeater.ai;
 import java.util.ArrayList;
 import java.util.List;
 
+import treepeater.settings.TreepeaterSettings;
+
 
 /**
  * Entry in the AI toolbar model combo: Burp's built-in AI, Anthropic, Azure OpenAI / Foundry, or a specific Ollama model.
@@ -17,13 +19,15 @@ public record AiModelOption(String label, Kind kind, String ollamaModel, String 
 
     public static final String DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 
+    public static final String[] FALLBACK_OLLAMA_MODELS = {"qwen3.5", "llama3.2", "mistral", "codellama"};
+
     @Override
     public String toString() {
         return this.label;
     }
 
     /**
-     * Burp first (default), then Anthropic presets, then Ollama presets for the configured base URL.
+     * Burp first (default), then Anthropic presets, then Ollama models from user settings.
      */
     public static List<AiModelOption> defaultChoices() {
         List<AiModelOption> list = new ArrayList<>();
@@ -34,10 +38,20 @@ public record AiModelOption(String label, Kind kind, String ollamaModel, String 
         list.add(new AiModelOption("GPT-5.4", Kind.OPENAI, null, null, com.openai.models.ChatModel.GPT_5_4.asString()));
         list.add(new AiModelOption("GPT-5.4 mini", Kind.OPENAI, null, null, com.openai.models.ChatModel.GPT_5_4_MINI.asString()));
         list.add(new AiModelOption("GPT-5.3", Kind.OPENAI, null, null, com.openai.models.ChatModel.GPT_5_3_CHAT_LATEST.asString()));
-        String[] ollamaModels = {"qwen3.5", "llama3.2", "mistral", "codellama"};
-        for (String model : ollamaModels) {
-            list.add(new AiModelOption("Ollama — " + model, Kind.OLLAMA, model, null, null));
+        for (String model : getConfiguredOllamaModels()) {
+            list.add(new AiModelOption(model + " (Ollama)", Kind.OLLAMA, model, null, null));
         }
         return list;
+    }
+
+    private static List<String> getConfiguredOllamaModels() {
+        try {
+            List<String> configured = TreepeaterSettings.getInstance().getOllamaModels();
+            if (configured != null) {
+                return configured;
+            }
+        } catch (IllegalStateException ignored) {
+        }
+        return List.of(FALLBACK_OLLAMA_MODELS);
     }
 }

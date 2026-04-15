@@ -165,7 +165,7 @@ public final class AIAgentChatPanel extends JPanel {
                             }
                         });
 
-        this.modelCombo.setPreferredSize(new Dimension(120, this.modelCombo.getPreferredSize().height));
+        this.modelCombo.setPreferredSize(new Dimension(140, this.modelCombo.getPreferredSize().height));
 
         JPanel sendControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         sendControls.setOpaque(false);

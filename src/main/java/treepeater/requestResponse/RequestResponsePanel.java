@@ -27,6 +27,8 @@ import javax.swing.plaf.basic.BasicSplitPaneUI;
 import javax.swing.tree.TreePath;
 
 import burp.api.montoya.http.HttpService;
+import burp.api.montoya.http.RequestOptions;
+import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 import burp.api.montoya.ui.editor.EditorOptions;
@@ -409,6 +411,7 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
     }
 
     public void setRequest(HttpRequest request) {
+        Treepeater.api.logging().logToOutput("setRequest: " + request.url());
         this.requestEditor.setRequest(request);
         this.node.setRequest(request);
         Treepeater.saveState();
@@ -559,7 +562,56 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
                 cur,
                 infos,
                 idx -> resolveRequestForHistoryIndex(h, cur, idx),
-                idx -> resolveResponseForHistoryIndex(h, cur, idx));
+                idx -> resolveResponseForHistoryIndex(h, cur, idx),
+                this::setRequest,
+                this::sendCurrentHttpRequestBlocking);
+    }
+
+    /**
+     * Sends the live editor request (target applied), then updates the response editor and send history on the EDT,
+     * matching the Send button. Blocks until the HTTP exchange finishes. Call from a background thread; uses {@link
+     * SwingUtilities#invokeAndWait} for UI segments.
+     *
+     * @return HTTP status code of the response
+     */
+    private int sendCurrentHttpRequestBlocking() throws Exception {
+        if (Treepeater.api == null) {
+            throw new IllegalStateException("Burp API unavailable");
+        }
+        final HttpRequest[] prepared = new HttpRequest[1];
+        final String[] targetLabel = new String[1];
+        SwingUtilities.invokeAndWait(
+                () -> {
+                    HttpRequest r = this.requestEditor.getRequest();
+                    r = this.httpTarget.applyToRequest(r);
+                    this.requestEditor.setRequest(r);
+                    this.node.setRequest(r);
+                    prepared[0] = r;
+                    targetLabel[0] = this.httpTarget.statusLineLabel();
+                });
+
+        RequestOptions options = RequestOptions.requestOptions();
+        if (this.httpTarget.isSniEnabled() && this.httpTarget.isHttps()) {
+            String host = this.httpTarget.getHost();
+            if (host != null && !host.isBlank()) {
+                options = options.withServerNameIndicator(host.trim());
+            }
+        }
+
+        HttpRequestResponse rr = Treepeater.api.http().sendRequest(prepared[0], options);
+        HttpResponse response = rr.response();
+        if (response == null) {
+            throw new IllegalStateException("no HTTP response");
+        }
+        int status = Short.toUnsignedInt(response.statusCode());
+        LocalDateTime time = LocalDateTime.now();
+        HttpRequest snapshot = prepared[0];
+        SwingUtilities.invokeAndWait(
+                () -> {
+                    this.setResponse(response);
+                    this.addToHistory(snapshot, response, time, targetLabel[0]);
+                });
+        return status;
     }
 
     private HttpRequest resolveRequestForHistoryIndex(RequestHistory h, int currentIndex, int index) {
@@ -576,10 +628,14 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
         if (index < 0 || index >= h.size()) {
             return null;
         }
+        HttpResponse fromEntry = h.getEntry(index).getResponse();
+        if (fromEntry != null) {
+            return fromEntry;
+        }
         if (index == currentIndex) {
             return this.responseEditor.getResponse();
         }
-        return h.getEntry(index).getResponse();
+        return null;
     }
 
     private static HttpService safeHttpService(HttpRequest request) {

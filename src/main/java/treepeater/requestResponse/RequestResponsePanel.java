@@ -211,6 +211,7 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
                 (snapshot, response, time, label) -> {
                     this.setResponse(response);
                     this.addToHistory(snapshot, response, time, label);
+                    this.refreshTreeAndRequestListenersAfterSendResponse();
                 }).registerActions();
 
         this.splitPane.setLeftComponent(RequestResponsePanelUi.makeHeaderPanel("Request", this.requestEditor.uiComponent()));
@@ -411,7 +412,6 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
     }
 
     public void setRequest(HttpRequest request) {
-        Treepeater.api.logging().logToOutput("setRequest: " + request.url());
         this.requestEditor.setRequest(request);
         this.node.setRequest(request);
         Treepeater.saveState();
@@ -449,6 +449,15 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
         for (RequestResponseChangeListener listener : this.requestResponseChangeListeners) {
             listener.onRequestChanged(request, response, received);
         }
+    }
+
+    /**
+     * Called on the EDT when the HTTP response has been received and applied ({@link RequestResponseSendCoordinator}
+     * completion path). Refreshes the tree method prefix and {@link RequestResponseChangeListener} request snapshot.
+     */
+    private void refreshTreeAndRequestListenersAfterSendResponse() {
+        this.tree.getTreeModel().nodeChanged(this.node);
+        this.notifyRequestChanged();
     }
 
     private void notifyResponseChanged() {

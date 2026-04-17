@@ -8,7 +8,6 @@ import java.awt.Insets;
 import java.util.List;
 
 import javax.swing.BorderFactory;
-import javax.swing.Box;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
@@ -62,20 +61,15 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
 
         GridBagConstraints gc = new GridBagConstraints();
         gc.gridy = 0;
-        gc.insets = new Insets(2, 3, 2, 3);
+        gc.insets = new Insets(2, 8, 2, 3);
 
         this.box = box;
-        this.box.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
+        this.box.setBorder(BorderFactory.createEmptyBorder(0, 4, 0, 0));
         this.box.setOpaque(false);
         gc.gridx = 0;
         gc.weightx = 0;
         gc.fill = GridBagConstraints.NONE;
         this.add(this.box, gc);
-
-        gc.gridx = 1;
-        gc.weightx = 0;
-        gc.fill = GridBagConstraints.NONE;
-        this.add(Box.createHorizontalStrut(4), gc);
         
         this.label = new JLabel();
         this.label.setOpaque(false);
@@ -94,12 +88,12 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
         int textRowHeight = Math.max(this.field.getPreferredSize().height, this.label.getPreferredSize().height);
         this.textPanel.setMinimumSize(new Dimension(0, textRowHeight));
 
-        gc.gridx = 2;
+        gc.gridx = 1;
         gc.weightx = 1;
         gc.fill =  GridBagConstraints.HORIZONTAL;
         this.add(this.textPanel, gc);
 
-        gc.gridx = 3;
+        gc.gridx = 2;
         gc.weightx = 0;
         gc.fill = GridBagConstraints.NONE;
         this.closeButton = new JButton();
@@ -121,11 +115,8 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
 
             this.node.delete();
         });
-        this.add(Box.createHorizontalStrut(4), gc);
-        gc.gridx = 4;
+        gc.gridx = 3;
         this.add(this.closeButton, gc);
-
-        this.add(Box.createHorizontalStrut(8), gc);
 
         this.setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
         this.setOpaque(false);

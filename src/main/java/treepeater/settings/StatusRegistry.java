@@ -143,7 +143,7 @@ public class StatusRegistry {
             "DEFAULT",
              "Default",
              new Status.StatusNamedColors("Colors.ui.background.3", "Colors.ui.background.4", "Colors.ui.background.3", "Colors.ui.background.4"),
-             StatusRegistry.readSvgResource("/icons/folder.svg"));
+             StatusRegistry.readSvgResource("/icons/circle.svg"));
     }
 
     static String readSvgResource(String resourcePath) {

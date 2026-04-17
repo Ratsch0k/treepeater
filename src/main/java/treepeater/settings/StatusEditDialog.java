@@ -175,7 +175,7 @@ public final class StatusEditDialog {
             id = initial != null ? initial.getId() : Treepeater.getStatusRegistry().generateId();
             colors = initial != null ? initial.getColors().orElse(StatusDialog.getDefaultColors()) : StatusDialog.getDefaultColors();
             keyedColors = initial != null ? initial.getNamedColors().orElse(StatusDialog.getDefaultNamedColors()) : StatusDialog.getDefaultNamedColors();
-            svgContent = initial != null ? initial.getSvgContent() : StatusRegistry.readSvgResource("/icons/folder.svg");
+            svgContent = initial != null ? initial.getSvgContent() : StatusRegistry.readSvgResource("/icons/circle.svg");
         }
 
         private static Status.StatusColors getDefaultColors() {

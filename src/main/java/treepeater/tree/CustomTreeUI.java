@@ -64,7 +64,7 @@ public class CustomTreeUI extends BasicTreeUI {
      * Extra horizontal inset for {@code depth == 1} (first model level under the root: top-level
      * folders/requests when the root row is hidden). Deeper levels keep the compact per-level step only.
      */
-    private static final int FIRST_LAYER_EXTRA_INDENT_PX = 5;
+    private static final int FIRST_LAYER_EXTRA_INDENT_PX = 7;
     /** Max characters of {@link HttpRequest#method()} drawn in the expand-control slot for {@link RequestTreeNode}. */
     private static final int REQUEST_METHOD_LABEL_MAX_CHARS = 4;
 

@@ -18,6 +18,7 @@ import javax.swing.JTextField;
 import javax.swing.JTree;
 import javax.swing.ListCellRenderer;
 import javax.swing.SwingUtilities;
+import javax.swing.tree.TreePath;
 import javax.swing.UIManager;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -53,6 +54,7 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
                 this.node.setStatus(selected);
             }
             CustomTreeCell.this.updateComponents();
+            CustomTreeCell.this.repaintHostingTreeRowStrip();
         });
 
         this.setLayout(new GridBagLayout());
@@ -161,6 +163,23 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
     public void setNode(TreepeaterNode node) {
         this.node = node;
         this.updateComponents();
+    }
+
+    /**
+     * Row background and border are painted by {@link CustomTreeUI}, not this panel. After status
+     * changes, repaint the full-width row so that chrome matches the combo/text styling.
+     */
+    private void repaintHostingTreeRowStrip() {
+        if (this.node == null) {
+            return;
+        }
+        JTree tree = (JTree) SwingUtilities.getAncestorOfClass(JTree.class, this);
+        if (tree == null) {
+            return;
+        }
+        TreePath path = new TreePath(this.node.getPath());
+        int row = tree.getRowForPath(path);
+        CustomTreeUI.repaintRowStrip(tree, row);
     }
 
     public void updateComponents() {

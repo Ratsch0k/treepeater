@@ -170,7 +170,11 @@ public class CustomTreeUI extends BasicTreeUI {
         t.addMouseListener(mouse);
     }
 
-    private static void repaintRowStrip(JTree tree, int row) {
+    /**
+     * Repaints the full tree width for {@code row} so {@link #paintFullWidthRowStrip} runs after
+     * model data used only for row chrome (e.g. status colors) changes without touching child components.
+     */
+    static void repaintRowStrip(JTree tree, int row) {
         if (row < 0) {
             return;
         }

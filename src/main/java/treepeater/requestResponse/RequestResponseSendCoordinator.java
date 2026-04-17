@@ -61,7 +61,6 @@ final class RequestResponseSendCoordinator {
 
                 HttpRequest requestToSend = RequestResponseSendCoordinator.this.requestEditor.getRequest();
                 requestToSend = RequestResponseSendCoordinator.this.target.applyToRequest(requestToSend);
-                RequestResponseSendCoordinator.this.requestEditor.setRequest(requestToSend);
                 RequestResponseSendCoordinator.this.node.setRequest(requestToSend);
 
                 final HttpRequest historyRequestSnapshot = requestToSend;

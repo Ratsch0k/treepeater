@@ -127,12 +127,19 @@ public class RequestTree extends JTree {
 
     private void handleRightClick(MouseEvent e) {
         TreePath path = this.getPathForLocation(e.getX(), e.getY());
+        final TreepeaterNode clickedNode;
+        if (path != null && path.getLastPathComponent() instanceof TreepeaterNode node) {
+            clickedNode = node;
+            this.setSelectionPath(path);
+        } else {
+            clickedNode = null;
+        }
+
         TreepeaterNode target;
         if (path != null) {
             Object component = path.getLastPathComponent();
             if (component instanceof FolderTreeNode folder) {
                 target = folder;
-                this.setSelectionPath(path);
             } else if (component instanceof TreepeaterNode node) {
                 target = (TreepeaterNode) node.getParent();
             } else {
@@ -143,6 +150,25 @@ public class RequestTree extends JTree {
         }
 
         JPopupMenu menu = new JPopupMenu();
+        boolean canEditNode = clickedNode != null && clickedNode.getParent() != null;
+        if (canEditNode) {
+            JMenuItem changeName = new JMenuItem("Change Name");
+            changeName.addActionListener(ev -> this.startProgrammaticEditForNode(clickedNode,
+                    ProgrammaticEdit.RENAME));
+            menu.add(changeName);
+
+            JMenuItem changeStatus = new JMenuItem("Change Status");
+            changeStatus.addActionListener(ev -> this.startProgrammaticEditForNode(clickedNode,
+                    ProgrammaticEdit.STATUS));
+            menu.add(changeStatus);
+
+            JMenuItem delete = new JMenuItem("Delete");
+            delete.addActionListener(ev -> clickedNode.delete());
+            menu.add(delete);
+
+            menu.addSeparator();
+        }
+
         JMenuItem newFolder = new JMenuItem("New Folder");
         newFolder.addActionListener(ev -> {
             if (this.createFolderHandler != null) {

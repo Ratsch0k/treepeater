@@ -16,6 +16,7 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -67,6 +68,7 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
     private HttpResponseEditor responseEditor;
 
     private CustomButton sendButton;
+    private JCheckBox updateContentLengthCheckBox;
     private JButton cancelButton;
     private JPanel topBar;
     private JPanel topBarWrapper;
@@ -141,6 +143,11 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
         this.sendButton = new CustomButton("Send");
         this.sendButton.setBorder(BorderFactory.createEmptyBorder(3, 0, 3, 0));
 
+        this.updateContentLengthCheckBox = new JCheckBox("Update Content-Length");
+        this.updateContentLengthCheckBox.setSelected(true);
+        this.updateContentLengthCheckBox.setToolTipText(
+                "When enabled, Content-Length is set from the request body before sending (omitted for chunked encoding).");
+
         this.cancelButton = new JButton();
 
         this.httpTarget.initFromRequest(this.node.getRequest());
@@ -156,6 +163,9 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
         this.topBar.add(this.historyBackSplitButton);
         this.topBar.add(Box.createHorizontalStrut(4));
         this.topBar.add(this.historyForwardSplitButton);
+
+        this.topBar.add(Box.createHorizontalStrut(6));
+        this.topBar.add(this.updateContentLengthCheckBox);
 
         this.topBar.add(Box.createHorizontalGlue());
         this.topBar.add(this.targetValueLabel);
@@ -203,11 +213,10 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
         this.historyNavigator.refreshNavState();
 
         new RequestResponseSendCoordinator(
-                this.requestEditor,
-                this.node,
                 this.httpTarget,
                 this.sendButton,
                 this.cancelButton,
+                this::prepareAndCommitRequestForSend,
                 (snapshot, response, time, label) -> {
                     this.setResponse(response);
                     this.addToHistory(snapshot, response, time, label);
@@ -291,6 +300,9 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
         }
         if (this.sideToolbar != null) {
             this.sideToolbar.applyLocalTheme();
+        }
+        if (this.updateContentLengthCheckBox != null && Treepeater.api != null) {
+            Treepeater.api.userInterface().applyThemeToComponent(this.updateContentLengthCheckBox);
         }
         SwingUtilities.invokeLater(this::applyExpandDividerInteractionState);
     }
@@ -577,6 +589,22 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
     }
 
     /**
+     * EDT. Applies host/target and optionally syncs {@code Content-Length} to the body, returning the request that
+     * will actually be sent and stored on the node. The request editor document is left untouched so the user's
+     * undo history is preserved across sends; the content-length/target adjustments live only on the outgoing
+     * snapshot.
+     */
+    private HttpRequest prepareAndCommitRequestForSend() {
+        HttpRequest r = this.requestEditor.getRequest();
+        r = this.httpTarget.applyToRequest(r);
+        if (this.updateContentLengthCheckBox.isSelected()) {
+            r = RequestContentLength.syncContentLengthToBody(r);
+        }
+        this.node.setRequest(r);
+        return r;
+    }
+
+    /**
      * Sends the live editor request (target applied), then updates the response editor and send history on the EDT,
      * matching the Send button. Blocks until the HTTP exchange finishes. Call from a background thread; uses {@link
      * SwingUtilities#invokeAndWait} for UI segments.
@@ -591,11 +619,7 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
         final String[] targetLabel = new String[1];
         SwingUtilities.invokeAndWait(
                 () -> {
-                    HttpRequest r = this.requestEditor.getRequest();
-                    r = this.httpTarget.applyToRequest(r);
-                    this.requestEditor.setRequest(r);
-                    this.node.setRequest(r);
-                    prepared[0] = r;
+                    prepared[0] = this.prepareAndCommitRequestForSend();
                     targetLabel[0] = this.httpTarget.statusLineLabel();
                 });
 

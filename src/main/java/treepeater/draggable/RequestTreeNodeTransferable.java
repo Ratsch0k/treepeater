@@ -3,6 +3,7 @@ import java.util.HashSet;
 
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
+import treepeater.requestResponse.RequestHistory;
 import treepeater.requestResponse.Status;
 import treepeater.tree.TreepeaterNodeListener;
 
@@ -15,8 +16,10 @@ public class RequestTreeNodeTransferable {
     public HttpResponse response;
     public String notes;
     public HashSet<TreepeaterNodeListener> listener;
+    /** Non-null for request nodes; unused for folders. */
+    public RequestHistory history;
 
-    public RequestTreeNodeTransferable(boolean isFolder, int id, Status status, String name, HttpRequest request, HttpResponse response, String notes, HashSet<TreepeaterNodeListener> l) {
+    public RequestTreeNodeTransferable(boolean isFolder, int id, Status status, String name, HttpRequest request, HttpResponse response, String notes, HashSet<TreepeaterNodeListener> l, RequestHistory history) {
         this.isFolder = isFolder;
         this.id = id;
         this.status = status;
@@ -25,5 +28,6 @@ public class RequestTreeNodeTransferable {
         this.response = response;
         this.notes = notes;
         this.listener = l;
+        this.history = history;
     }
 }

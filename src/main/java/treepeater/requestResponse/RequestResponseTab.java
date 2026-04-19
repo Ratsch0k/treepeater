@@ -21,11 +21,29 @@ public class RequestResponseTab extends JPanel {
     JButton closeButton;
 
     public HashSet<ActionListener> listeners;
+
+    private RequestTreeNode nameSourceNode;
+    private final TreepeaterNodeListener nameChangeListener = new TreepeaterNodeListener() {
+
+        @Override
+        public void onSelect(TreepeaterNode node) {
+        }
+
+        @Override
+        public void onNameChange(String newName) {
+            RequestResponseTab.this.label.setText(newName);
+            RequestResponseTab.this.label.repaint();
+        }
+
+        @Override
+        public void onDelete(TreepeaterNode node) {
+        }
+    };
     
     public RequestResponseTab(RequestTreeNode node) {
         this.setLayout(new FlowLayout());
 
-        this.label = new JLabel(node.getName());
+        this.label = new JLabel();
         this.add(this.label);
         this.listeners = new HashSet<>();
 
@@ -46,24 +64,20 @@ public class RequestResponseTab extends JPanel {
         closeButton.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
         this.add(closeButton);
 
-        node.addListener(new TreepeaterNodeListener() {
+        bindNameSource(node);
+    }
 
-            @Override
-            public void onSelect(TreepeaterNode node) {
+    private void bindNameSource(RequestTreeNode node) {
+        if (this.nameSourceNode != null) {
+            this.nameSourceNode.removeListener(this.nameChangeListener);
+        }
+        this.nameSourceNode = node;
+        this.label.setText(node.getName());
+        node.addListener(this.nameChangeListener);
+    }
 
-            }
-
-            @Override
-            public void onNameChange(String newName) {
-                RequestResponseTab.this.label.setText(newName);
-                RequestResponseTab.this.label.repaint();
-            }
-
-            @Override
-            public void onDelete(TreepeaterNode node) {
-                
-            }            
-        });
+    public void retargetToNode(RequestTreeNode node) {
+        bindNameSource(node);
     }
 
     @Override

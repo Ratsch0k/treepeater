@@ -15,7 +15,7 @@ import treepeater.tree.RequestTreeNode;
  * Back/forward history navigation and dropdown menus for {@link RequestResponsePanel}.
  */
 final class RequestHistoryNavigator {
-    private final RequestTreeNode node;
+    private RequestTreeNode node;
     private final HttpRequestEditor requestEditor;
     private final JButton historyBackButton;
     private final JButton historyBackDropButton;
@@ -41,6 +41,11 @@ final class RequestHistoryNavigator {
         this.historyForwardDropButton = historyForwardDropButton;
         this.setResponse = setResponse;
         this.afterHistoryEntryApplied = afterHistoryEntryApplied;
+    }
+
+    void setNode(RequestTreeNode node) {
+        this.node = node;
+        refreshNavState();
     }
 
     void refreshNavState() {

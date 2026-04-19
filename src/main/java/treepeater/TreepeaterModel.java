@@ -58,7 +58,21 @@ public class TreepeaterModel implements TreepeaterNodeListener {
     public void addTab(RequestTreeNode node) {
         this.activeNode = node;
 
-        if (this.tabs.contains(node)) {
+        int idxSameId = -1;
+        for (int i = 0; i < this.tabs.size(); i++) {
+            if (this.tabs.get(i).getId() == node.getId()) {
+                idxSameId = i;
+                break;
+            }
+        }
+        if (idxSameId >= 0) {
+            RequestTreeNode existing = this.tabs.get(idxSameId);
+            if (existing != node) {
+                this.tabs.set(idxSameId, node);
+                this.listeners.forEach(l -> l.onTabNodeReplaced(existing, node));
+            }
+            this.listeners.forEach(l -> l.onOpenTab(node));
+        } else if (this.tabs.contains(node)) {
             this.listeners.forEach(l -> l.onOpenTab(node));
         } else {
             this.tabs.add(node);

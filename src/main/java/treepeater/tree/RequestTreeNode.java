@@ -34,11 +34,18 @@ public class RequestTreeNode extends TreepeaterNode {
     }
 
     public RequestTreeNode(int id, Status status, String name, HttpRequest request, HttpResponse response, HashSet<TreepeaterNodeListener> l, String notes) {
+        this(id, status, name, request, response, null, l, notes);
+    }
+
+    /**
+     * Used when reconstructing a node from drag-and-drop transfer data; preserves {@code history} when non-null.
+     */
+    public RequestTreeNode(int id, Status status, String name, HttpRequest request, HttpResponse response, RequestHistory history, HashSet<TreepeaterNodeListener> l, String notes) {
         super(id, status, name, l);
         this.request = request;
         this.response = response;
         this.notes = notes != null ? notes : "";
-        this.history = new RequestHistory();
+        this.history = history != null ? history : new RequestHistory();
     }
 
     public RequestTreeNode(RequestTreeNode copy) {

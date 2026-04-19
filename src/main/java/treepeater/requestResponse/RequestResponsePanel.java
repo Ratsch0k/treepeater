@@ -258,6 +258,16 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
         RequestResponseHotkeyInstaller.install(this, this.hotkeyHandler, this.hotkeyActions, this.hotkeyHandlerRegistered);
     }
 
+    /**
+     * After drag-and-drop the tree holds a new {@link RequestTreeNode} instance with the same id; repoint this panel
+     * so edits and history stay on the node that is actually in the tree.
+     */
+    public void retargetToNode(RequestTreeNode n) {
+        this.node = n;
+        this.historyNavigator.setNode(n);
+        this.sideToolbar.retargetToNode(n);
+    }
+
     @Override
     public void updateUI() {
         super.updateUI();

@@ -178,7 +178,7 @@ public class TreeTransferHandler extends TransferHandler {
             if (transferable.isFolder) {
                 node = new FolderTreeNode(transferable.id, transferable.status, transferable.name);
             } else {
-                node = new RequestTreeNode(transferable.id, transferable.status, transferable.name, transferable.request, transferable.response, transferable.listener, transferable.notes);
+                node = new RequestTreeNode(transferable.id, transferable.status, transferable.name, transferable.request, transferable.response, transferable.history, transferable.listener, transferable.notes);
             }
             model.insertNodeInto(node, parent, index++);
         }
@@ -207,10 +207,10 @@ public class TreeTransferHandler extends TransferHandler {
             for (TreepeaterNode treeNode : nodes) {
                 boolean isFolder = treeNode instanceof FolderTreeNode;
                 if (isFolder) {
-                    transferables.add(new RequestTreeNodeTransferable(true, treeNode.getId(), treeNode.getStatus(), treeNode.getName(), null, null, null, treeNode.getListeners()));
+                    transferables.add(new RequestTreeNodeTransferable(true, treeNode.getId(), treeNode.getStatus(), treeNode.getName(), null, null, null, treeNode.getListeners(), null));
                 } else {
                     RequestTreeNode reqNode = (RequestTreeNode) treeNode;
-                    transferables.add(new RequestTreeNodeTransferable(false, reqNode.getId(), reqNode.getStatus(), reqNode.getName(), reqNode.getRequest(), reqNode.getResponse(), reqNode.getNotes(), reqNode.getListeners()));
+                    transferables.add(new RequestTreeNodeTransferable(false, reqNode.getId(), reqNode.getStatus(), reqNode.getName(), reqNode.getRequest(), reqNode.getResponse(), reqNode.getNotes(), reqNode.getListeners(), reqNode.getHistory()));
                 }
             }
 

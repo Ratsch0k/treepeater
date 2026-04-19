@@ -1,5 +1,6 @@
 package treepeater;
 import java.awt.BorderLayout;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.event.ActionEvent;
@@ -109,6 +110,11 @@ public class TreepeaterUI extends JSplitPane {
             public void onNewTab(RequestTreeNode node) {
                 TreepeaterUI.this.addTab(node);
             }
+
+            @Override
+            public void onTabNodeReplaced(RequestTreeNode staleNode, RequestTreeNode currentNode) {
+                TreepeaterUI.this.retargetTab(staleNode, currentNode);
+            }
         });
     }
 
@@ -122,6 +128,23 @@ public class TreepeaterUI extends JSplitPane {
         this.requestResponseTabbedPane.setSelectedComponent(panel);
     }
 
+    private void retargetTab(RequestTreeNode staleNode, RequestTreeNode currentNode) {
+        RequestResponsePanel panel = this.tabMap.remove(staleNode);
+        if (panel == null) {
+            return;
+        }
+        this.tabMap.put(currentNode, panel);
+        panel.retargetToNode(currentNode);
+        int ix = this.requestResponseTabbedPane.indexOfComponent(panel);
+        if (ix >= 0) {
+            this.requestResponseTabbedPane.setTitleAt(ix, currentNode.getName());
+            Component tc = this.requestResponseTabbedPane.getTabComponentAt(ix);
+            if (tc instanceof RequestResponseTab tab) {
+                tab.retargetToNode(currentNode);
+            }
+        }
+    }
+
     private void addTab(RequestTreeNode node) {
         RequestResponsePanel panel = new RequestResponsePanel(
                 this.model,
@@ -132,7 +155,12 @@ public class TreepeaterUI extends JSplitPane {
         this.requestResponseTabbedPane.add(node.getName(), panel);
 
         RequestResponseTab tab = new RequestResponseTab(node);
-        tab.addActionListener(e -> this.model.removeTab(index));
+        tab.addActionListener(e -> {
+            int i = this.requestResponseTabbedPane.indexOfComponent(panel);
+            if (i >= 0) {
+                this.model.removeTab(i);
+            }
+        });
         this.requestResponseTabbedPane.setTabComponentAt(index, tab);
         this.requestResponseTabbedPane.setSelectedIndex(index);
         tabMap.put(node, panel);

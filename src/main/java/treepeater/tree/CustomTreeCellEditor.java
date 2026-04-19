@@ -23,9 +23,38 @@ public class CustomTreeCellEditor extends DefaultTreeCellEditor {
 
     private final CustomTreeCell cell = new CustomTreeCell();
     private ProgrammaticEdit programmaticEdit = ProgrammaticEdit.NONE;
+    private boolean pendingOpenStatusPopup;
+    /**
+     * When true, {@link JTree#startEditingAtPath(TreePath)} may start editing (it calls
+     * {@code isCellEditable(null)}). Drag-enabled trees often skip editing on the first press when
+     * selection changes; the tree uses this one-shot to open the editor from {@code mouseClicked}.
+     */
+    private boolean permitEditStartWithNullMouseEvent;
 
     public CustomTreeCellEditor(JTree tree, DefaultTreeCellRenderer renderer) {
         super(tree, renderer);
+    }
+
+    /** Bind the shared editor cell to {@code node} so combo / close hit widths match this row. */
+    public void prepareHitTest(TreepeaterNode node) {
+        this.cell.setNode(node);
+    }
+
+    public CustomTreeCell getEditingPanel() {
+        return this.cell;
+    }
+
+    /** Next {@link #getTreeCellEditorComponent} after a user combo click will open the status popup. */
+    public void armOpenStatusPopupOnNextShow() {
+        this.pendingOpenStatusPopup = true;
+    }
+
+    /**
+     * Allow the next {@code isCellEditable(null)} (from {@link JTree#startEditingAtPath(TreePath)})
+     * to return true. Caller must reset to false after {@code startEditingAtPath}.
+     */
+    public void setPermitEditStartWithNullMouseEvent(boolean permit) {
+        this.permitEditStartWithNullMouseEvent = permit;
     }
 
     /**
@@ -42,6 +71,7 @@ public class CustomTreeCellEditor extends DefaultTreeCellEditor {
 
     @Override
     public Component getTreeCellEditorComponent(JTree tree, Object value, boolean isSelected, boolean expanded, boolean leaf, int row) {
+        this.lastRow = row;
         TreepeaterNode node = (TreepeaterNode) value;
         this.cell.setNode(node);
 
@@ -54,14 +84,20 @@ public class CustomTreeCellEditor extends DefaultTreeCellEditor {
         } else if (intent == ProgrammaticEdit.STATUS) {
             this.cell.showLabel();
             SwingUtilities.invokeLater(this.cell::openStatusPopup);
+        } else if (this.pendingOpenStatusPopup) {
+            this.pendingOpenStatusPopup = false;
+            SwingUtilities.invokeLater(this.cell::openStatusPopup);
         }
         return this.cell;
     }
     
     @Override
     public boolean isCellEditable(EventObject event) {
-        if (event == null && this.programmaticEdit != ProgrammaticEdit.NONE) {
-            return true;
+        if (event == null) {
+            if (this.programmaticEdit != ProgrammaticEdit.NONE) {
+                return true;
+            }
+            return this.permitEditStartWithNullMouseEvent;
         }
 
         if (!(event instanceof MouseEvent)) {
@@ -86,6 +122,9 @@ public class CustomTreeCellEditor extends DefaultTreeCellEditor {
             return false;
         }
 
+        this.pendingOpenStatusPopup = false;
+        this.cell.setNode((TreepeaterNode) path.getLastPathComponent());
+
         int relativeX = mouseEvent.getX() - bounds.x;
         if (relativeX >= bounds.width - this.cell.getCloseReservedWidth()) {
             return false;
@@ -101,14 +140,12 @@ public class CustomTreeCellEditor extends DefaultTreeCellEditor {
         }
 
         if (isInButton || mouseEvent.getClickCount() == 2) {
+            if (isInButton) {
+                this.pendingOpenStatusPopup = true;
+            }
             return true;
-        }
-
-        if (isInButton) {
-            SwingUtilities.invokeLater(this.cell::openStatusPopup);
         }
 
         return false;
     }
 }
-

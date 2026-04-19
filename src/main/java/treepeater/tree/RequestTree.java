@@ -65,13 +65,10 @@ public class RequestTree extends JTree {
                     return;
                 }
 
-                RequestTree.this.startEditingAtPath(path);
-
-                CustomTreeCell cell = (CustomTreeCell) RequestTree.this.getCellEditor().getTreeCellEditorComponent(RequestTree.this, lastComponent, false, false, false, 0);
-
-                RequestTree.this.startEditingAtPath(path);
-
                 TreepeaterNode node = (TreepeaterNode) lastComponent;
+                CustomTreeCellEditor editor = (CustomTreeCellEditor) RequestTree.this.getCellEditor();
+                editor.prepareHitTest(node);
+                CustomTreeCell cell = editor.getEditingPanel();
 
                 Rectangle bounds = RequestTree.this.getPathBounds(path);
 
@@ -81,9 +78,17 @@ public class RequestTree extends JTree {
                 boolean isInButton = relativeX <= (buttonWidth + 4);
 
                 if (isInButton) {
-                    SwingUtilities.invokeLater(cell::openStatusPopup);
+                    editor.armOpenStatusPopupOnNextShow();
+                    editor.setPermitEditStartWithNullMouseEvent(true);
+                    try {
+                        RequestTree.this.startEditingAtPath(path);
+                    } finally {
+                        editor.setPermitEditStartWithNullMouseEvent(false);
+                    }
                     return;
                 }
+
+                RequestTree.this.startEditingAtPath(path);
 
                 boolean isInCloseButton = relativeX >= bounds.getWidth() - cell.getCloseReservedWidth();
                 if (isInCloseButton) {

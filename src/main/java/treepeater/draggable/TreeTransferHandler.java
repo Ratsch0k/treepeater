@@ -1,9 +1,10 @@
 package treepeater.draggable;
 
 /**
- * Edited from https://coderanch.com/t/346509/java/JTree-drag-drop-tree-Java
- * by Craig Wood and mentioned on
- * https://stackoverflow.com/questions/4588109/drag-and-drop-nodes-in-jtree
+ * Originally derived from https://coderanch.com/t/346509/java/JTree-drag-drop-tree-Java by Craig Wood
+ * (referenced in https://stackoverflow.com/questions/4588109/drag-and-drop-nodes-in-jtree), but the
+ * transfer mechanism has since been replaced with a direct in-JVM node-reference handoff so MOVE drops
+ * preserve the original {@link TreepeaterNode} instance.
  */
 
 import java.awt.datatransfer.*;
@@ -14,33 +15,41 @@ import javax.swing.tree.*;
 
 import treepeater.Treepeater;
 import treepeater.tree.FolderTreeNode;
-import treepeater.tree.RequestTree;
 import treepeater.tree.RequestTreeNode;
 import treepeater.tree.TreepeaterNode;
 
 
 public class TreeTransferHandler extends TransferHandler {
-    DataFlavor nodesFlavor;
-    DataFlavor[] flavors = new DataFlavor[1];
-    TreepeaterNode[] nodesToRemove;
+    private final DataFlavor nodesFlavor;
+    private final DataFlavor[] flavors = new DataFlavor[1];
+    private final DefaultTreeModel model;
 
-    public TreeTransferHandler() {
-        nodesFlavor = new DataFlavor(RequestTreeNodeTransferable.class, "RequestTreeNodeTransferable");
+    public TreeTransferHandler(DefaultTreeModel model) {
+        this.model = model;
+        try {
+            String mimeType = DataFlavor.javaJVMLocalObjectMimeType
+                    + ";class=\"" + TreepeaterNode[].class.getName() + "\"";
+            // Burp loads extensions with their own classloader; the default DataFlavor constructor
+            // resolves the class name via the system/context classloader, which can't see extension
+            // classes. Pass our loader explicitly.
+            nodesFlavor = new DataFlavor(mimeType, "TreepeaterNodes", TreepeaterNode.class.getClassLoader());
+        } catch (ClassNotFoundException e) {
+            throw new IllegalStateException("Failed to register DnD flavor for TreepeaterNode[]", e);
+        }
         flavors[0] = nodesFlavor;
     }
 
     public boolean canImport(TransferHandler.TransferSupport support) {
-        if(!support.isDrop()) {
+        if (!support.isDrop()) {
             return false;
         }
         support.setShowDropLocation(true);
-        if(!support.isDataFlavorSupported(nodesFlavor)) {
+        if (!support.isDataFlavorSupported(nodesFlavor)) {
             return false;
         }
 
-        JTree.DropLocation dl =
-                (JTree.DropLocation)support.getDropLocation();
-        JTree tree = (JTree)support.getComponent();
+        JTree.DropLocation dl = (JTree.DropLocation) support.getDropLocation();
+        JTree tree = (JTree) support.getComponent();
 
         TreePath destPath = dl.getPath();
         if (destPath == null) {
@@ -48,7 +57,6 @@ public class TreeTransferHandler extends TransferHandler {
         }
         Object destComponent = destPath.getLastPathComponent();
 
-        // Only allow drops onto FolderTreeNode (or the root, which is also a folder)
         if (!(destComponent instanceof FolderTreeNode)) {
             return false;
         }
@@ -58,13 +66,13 @@ public class TreeTransferHandler extends TransferHandler {
         if (selRows == null) {
             return false;
         }
-        for(int i = 0; i < selRows.length; i++) {
-            if(selRows[i] == dropRow) {
+        for (int i = 0; i < selRows.length; i++) {
+            if (selRows[i] == dropRow) {
                 return false;
             }
             TreepeaterNode treeNode =
-                    (TreepeaterNode)tree.getPathForRow(selRows[i]).getLastPathComponent();
-            for (TreeNode offspring: Collections.list(treeNode.depthFirstEnumeration())) {
+                    (TreepeaterNode) tree.getPathForRow(selRows[i]).getLastPathComponent();
+            for (TreeNode offspring : Collections.list(treeNode.depthFirstEnumeration())) {
                 if (offspring instanceof TreepeaterNode offspringNode) {
                     if (tree.getRowForPath(new TreePath(offspringNode.getPath())) == dropRow) {
                         return false;
@@ -75,67 +83,68 @@ public class TreeTransferHandler extends TransferHandler {
         return true;
     }
 
+    /**
+     * Collects the top-level selected nodes (dropping any node whose ancestor is also selected so a subtree
+     * isn't moved twice) and wraps their original references in the transferable. No deep copies are made
+     * here; {@link #importData(TransferSupport)} decides whether to reuse the originals (MOVE) or deep-copy
+     * them (COPY) based on the drop action.
+     */
     protected Transferable createTransferable(JComponent c) {
         JTree tree = (JTree) c;
         TreePath[] paths = tree.getSelectionPaths();
-        if (paths == null) {
+        if (paths == null || paths.length == 0) {
             return null;
         }
-        List<TreepeaterNode> copies = new ArrayList<>();
-        List<TreepeaterNode> toRemove = new ArrayList<>();
-        TreepeaterNode firstNode =
-                (TreepeaterNode) paths[0].getLastPathComponent();
-        HashSet<TreeNode> doneItems = new LinkedHashSet<>(paths.length);
-        TreepeaterNode copy = copy(firstNode, doneItems, tree);
-        copies.add(copy);
-        toRemove.add(firstNode);
-        for (int i = 1; i < paths.length; i++) {
-            TreepeaterNode next =
-                    (TreepeaterNode) paths[i].getLastPathComponent();
-            if (doneItems.contains(next)) {
-                continue;
+
+        Set<TreepeaterNode> selected = new LinkedHashSet<>();
+        for (TreePath path : paths) {
+            Object last = path.getLastPathComponent();
+            if (last instanceof TreepeaterNode node) {
+                selected.add(node);
             }
-            if (next.getLevel() < firstNode.getLevel()) {
-                break;
-            } else if (next.getLevel() > firstNode.getLevel()) {
-                copy.add(copy(next, doneItems, tree));
-            } else {
-                copies.add(copy(next, doneItems, tree));
-                toRemove.add(next);
-            }
-            doneItems.add(next);
         }
-        TreepeaterNode[] nodes =
-                copies.toArray(new TreepeaterNode[copies.size()]);
-        nodesToRemove =
-                toRemove.toArray(new TreepeaterNode[toRemove.size()]);
-        return new NodesTransferable(nodes);
+
+        List<TreepeaterNode> topLevel = new ArrayList<>();
+        for (TreepeaterNode node : selected) {
+            if (!hasSelectedAncestor(node, selected)) {
+                topLevel.add(node);
+            }
+        }
+
+        if (topLevel.isEmpty()) {
+            return null;
+        }
+
+        return new NodesTransferable(topLevel.toArray(new TreepeaterNode[0]));
     }
 
-    private TreepeaterNode copy(TreepeaterNode node, HashSet<TreeNode> doneItems, JTree tree) {
+    private static boolean hasSelectedAncestor(TreepeaterNode node, Set<TreepeaterNode> selected) {
+        TreeNode ancestor = node.getParent();
+        while (ancestor != null) {
+            if (ancestor instanceof TreepeaterNode tp && selected.contains(tp)) {
+                return true;
+            }
+            ancestor = ancestor.getParent();
+        }
+        return false;
+    }
+
+    private TreepeaterNode deepCopy(TreepeaterNode node) {
         TreepeaterNode copy;
         if (node instanceof FolderTreeNode folderNode) {
             copy = new FolderTreeNode(folderNode);
         } else {
             copy = new RequestTreeNode((RequestTreeNode) node);
         }
-        doneItems.add(node);
         for (int i = 0; i < node.getChildCount(); i++) {
-            copy.add(copy((TreepeaterNode) node.getChildAt(i), doneItems, tree));
+            copy.add(deepCopy((TreepeaterNode) node.getChildAt(i)));
         }
-        int row = tree.getRowForPath(new TreePath(copy.getPath()));
-        tree.expandRow(row);
         return copy;
     }
 
     protected void exportDone(JComponent source, Transferable data, int action) {
-        if((action & MOVE) == MOVE) {
-            JTree tree = (JTree)source;
-            DefaultTreeModel model = (DefaultTreeModel)tree.getModel();
-            for(int i = 0; i < nodesToRemove.length; i++) {
-                model.removeNodeFromParent(nodesToRemove[i]);
-            }
-        }
+        // Intentionally empty: MOVE detaches the source in importData via removeNodeFromParent, and COPY
+        // never removes the source. This override exists solely to document that.
     }
 
     public int getSourceActions(JComponent c) {
@@ -143,44 +152,54 @@ public class TreeTransferHandler extends TransferHandler {
     }
 
     public boolean importData(TransferHandler.TransferSupport support) {
-        if(!canImport(support)) {
+        if (!canImport(support)) {
             return false;
         }
 
-        RequestTreeNodeTransferable[] nodes = null;
+        TreepeaterNode[] nodes;
         try {
             Transferable t = support.getTransferable();
-            nodes = (RequestTreeNodeTransferable[])t.getTransferData(nodesFlavor);
-            Treepeater.api.logging().logToOutput("ImportData -> nodes: " + nodes);
-        } catch(UnsupportedFlavorException ufe) {
+            nodes = (TreepeaterNode[]) t.getTransferData(nodesFlavor);
+        } catch (UnsupportedFlavorException ufe) {
             Treepeater.api.logging().logToError("UnsupportedFlavor: " + ufe);
-        } catch(java.io.IOException ioe) {
+            return false;
+        } catch (java.io.IOException ioe) {
             Treepeater.api.logging().logToError("I/O error: " + ioe);
+            return false;
         } catch (Exception e) {
             Treepeater.api.logging().logToError(e);
+            return false;
         }
 
-        JTree.DropLocation dl =
-                (JTree.DropLocation)support.getDropLocation();
+        if (nodes == null || nodes.length == 0) {
+            return false;
+        }
+
+        JTree.DropLocation dl = (JTree.DropLocation) support.getDropLocation();
         int childIndex = dl.getChildIndex();
         TreePath dest = dl.getPath();
-        TreepeaterNode parent =
-                (TreepeaterNode)dest.getLastPathComponent();
-        RequestTree tree = (RequestTree)support.getComponent();
-        DefaultTreeModel model = (DefaultTreeModel)tree.getModel();
-        int index = childIndex;
-        if(childIndex == -1) {
-            index = parent.getChildCount();
-        }
-        for(int i = 0; i < nodes.length; i++) {
-            RequestTreeNodeTransferable transferable = nodes[i];
-            TreepeaterNode node;
-            if (transferable.isFolder) {
-                node = new FolderTreeNode(transferable.id, transferable.status, transferable.name);
+        TreepeaterNode parent = (TreepeaterNode) dest.getLastPathComponent();
+        int insertIndex = childIndex == -1 ? parent.getChildCount() : childIndex;
+
+        boolean isMove = (support.getDropAction() & MOVE) == MOVE;
+
+        for (TreepeaterNode node : nodes) {
+            TreepeaterNode effective;
+            if (isMove) {
+                TreepeaterNode oldParent = (TreepeaterNode) node.getParent();
+                int oldIndex = oldParent != null ? oldParent.getIndex(node) : -1;
+                if (oldParent != null) {
+                    this.model.removeNodeFromParent(node);
+                    if (oldParent == parent && oldIndex < insertIndex) {
+                        insertIndex--;
+                    }
+                }
+                effective = node;
             } else {
-                node = new RequestTreeNode(transferable.id, transferable.status, transferable.name, transferable.request, transferable.response, transferable.history, transferable.listener, transferable.notes);
+                effective = deepCopy(node);
             }
-            model.insertNodeInto(node, parent, index++);
+            this.model.insertNodeInto(effective, parent, insertIndex);
+            insertIndex++;
         }
         return true;
     }
@@ -189,33 +208,22 @@ public class TreeTransferHandler extends TransferHandler {
         return getClass().getName();
     }
 
+    /**
+     * Carries direct JVM references to the selected nodes. Only meaningful within the current JVM —
+     * cross-process DnD has never been supported.
+     */
     public class NodesTransferable implements Transferable {
-        TreepeaterNode[] nodes;
+        private final TreepeaterNode[] nodes;
 
         public NodesTransferable(TreepeaterNode[] nodes) {
             this.nodes = nodes;
         }
 
-        public Object getTransferData(DataFlavor flavor)
-                throws UnsupportedFlavorException {
-                
-            if(!isDataFlavorSupported(flavor))
+        public Object getTransferData(DataFlavor flavor) throws UnsupportedFlavorException {
+            if (!isDataFlavorSupported(flavor)) {
                 throw new UnsupportedFlavorException(flavor);
-
-            ArrayList<RequestTreeNodeTransferable> transferables = new ArrayList<>();
-            
-            for (TreepeaterNode treeNode : nodes) {
-                boolean isFolder = treeNode instanceof FolderTreeNode;
-                if (isFolder) {
-                    transferables.add(new RequestTreeNodeTransferable(true, treeNode.getId(), treeNode.getStatus(), treeNode.getName(), null, null, null, treeNode.getListeners(), null));
-                } else {
-                    RequestTreeNode reqNode = (RequestTreeNode) treeNode;
-                    transferables.add(new RequestTreeNodeTransferable(false, reqNode.getId(), reqNode.getStatus(), reqNode.getName(), reqNode.getRequest(), reqNode.getResponse(), reqNode.getNotes(), reqNode.getListeners(), reqNode.getHistory()));
-                }
             }
-
-            RequestTreeNodeTransferable[] transferableArray = transferables.toArray(new RequestTreeNodeTransferable[0]);
-            return transferableArray;
+            return this.nodes;
         }
 
         public DataFlavor[] getTransferDataFlavors() {

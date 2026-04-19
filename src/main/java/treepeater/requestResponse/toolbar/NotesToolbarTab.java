@@ -18,24 +18,7 @@ public class NotesToolbarTab {
     private final ToolbarIconButton button;
     private final JPanel content;
     private final JTextArea notesArea;
-    private RequestTreeNode notesTarget;
-
-    private final DocumentListener notesDocumentListener = new DocumentListener() {
-        @Override
-        public void insertUpdate(DocumentEvent e) {
-            syncNotesToTarget();
-        }
-
-        @Override
-        public void removeUpdate(DocumentEvent e) {
-            syncNotesToTarget();
-        }
-
-        @Override
-        public void changedUpdate(DocumentEvent e) {
-            syncNotesToTarget();
-        }
-    };
+    private final RequestTreeNode notesTarget;
 
     public NotesToolbarTab(RequestTreeNode node) {
         this.button = new ToolbarIconButton(new NotesIcon());
@@ -46,20 +29,29 @@ public class NotesToolbarTab {
         this.notesArea.setWrapStyleWord(true);
 
         this.content.add(this.buildContent(), BorderLayout.CENTER);
-        this.retargetNotesTarget(node);
+
+        this.notesTarget = node;
+        this.notesArea.setText(node.getNotes());
+        this.notesArea.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                syncNotesToTarget();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                syncNotesToTarget();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                syncNotesToTarget();
+            }
+        });
     }
 
     private void syncNotesToTarget() {
-        if (this.notesTarget != null) {
-            this.notesTarget.setNotes(this.notesArea.getText());
-        }
-    }
-
-    public void retargetNotesTarget(RequestTreeNode n) {
-        this.notesArea.getDocument().removeDocumentListener(this.notesDocumentListener);
-        this.notesTarget = n;
-        this.notesArea.setText(n.getNotes());
-        this.notesArea.getDocument().addDocumentListener(this.notesDocumentListener);
+        this.notesTarget.setNotes(this.notesArea.getText());
     }
 
     public JButton getButton() {

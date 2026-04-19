@@ -22,28 +22,10 @@ public class RequestResponseTab extends JPanel {
 
     public HashSet<ActionListener> listeners;
 
-    private RequestTreeNode nameSourceNode;
-    private final TreepeaterNodeListener nameChangeListener = new TreepeaterNodeListener() {
-
-        @Override
-        public void onSelect(TreepeaterNode node) {
-        }
-
-        @Override
-        public void onNameChange(String newName) {
-            RequestResponseTab.this.label.setText(newName);
-            RequestResponseTab.this.label.repaint();
-        }
-
-        @Override
-        public void onDelete(TreepeaterNode node) {
-        }
-    };
-    
     public RequestResponseTab(RequestTreeNode node) {
         this.setLayout(new FlowLayout());
 
-        this.label = new JLabel();
+        this.label = new JLabel(node.getName());
         this.add(this.label);
         this.listeners = new HashSet<>();
 
@@ -54,7 +36,7 @@ public class RequestResponseTab extends JPanel {
             public void actionPerformed(ActionEvent e) {
                 RequestResponseTab.this.listeners.forEach(l -> l.actionPerformed(e));
             }
-            
+
         });
         closeButton.setBorderPainted(false);
         closeButton.setContentAreaFilled(false);
@@ -64,20 +46,21 @@ public class RequestResponseTab extends JPanel {
         closeButton.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
         this.add(closeButton);
 
-        bindNameSource(node);
-    }
+        node.addListener(new TreepeaterNodeListener() {
+            @Override
+            public void onSelect(TreepeaterNode n) {
+            }
 
-    private void bindNameSource(RequestTreeNode node) {
-        if (this.nameSourceNode != null) {
-            this.nameSourceNode.removeListener(this.nameChangeListener);
-        }
-        this.nameSourceNode = node;
-        this.label.setText(node.getName());
-        node.addListener(this.nameChangeListener);
-    }
+            @Override
+            public void onNameChange(String newName) {
+                RequestResponseTab.this.label.setText(newName);
+                RequestResponseTab.this.label.repaint();
+            }
 
-    public void retargetToNode(RequestTreeNode node) {
-        bindNameSource(node);
+            @Override
+            public void onDelete(TreepeaterNode n) {
+            }
+        });
     }
 
     @Override

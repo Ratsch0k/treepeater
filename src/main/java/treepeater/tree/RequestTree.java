@@ -40,7 +40,6 @@ public class RequestTree extends JTree {
     public RequestTree() {
         this.setDragEnabled(true);
         this.setDropMode(DropMode.ON_OR_INSERT);
-        this.setTransferHandler(new TreeTransferHandler());
         this.getSelectionModel().setSelectionMode(
                 TreeSelectionModel.SINGLE_TREE_SELECTION);
         this.addMouseListener(new MouseAdapter() {
@@ -107,6 +106,7 @@ public class RequestTree extends JTree {
         this.setUI(ui);
         this.root = new FolderTreeNode(0, StatusRegistry.getDefault(), "Treepeater");
         this.model = new DefaultTreeModel(this.root);
+        this.setTransferHandler(new TreeTransferHandler(this.model));
         this.expandRow(0);
         this.setRootVisible(false);
         this.setShowsRootHandles(true);

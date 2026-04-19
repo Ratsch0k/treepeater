@@ -223,8 +223,4 @@ public class RequestResponseToolbar extends JPanel {
     public JPanel getToolbarPanel() {
         return this.toolbarPanel;
     }
-
-    public void retargetToNode(RequestTreeNode node) {
-        this.notesToolbarTab.retargetNotesTarget(node);
-    }
 }

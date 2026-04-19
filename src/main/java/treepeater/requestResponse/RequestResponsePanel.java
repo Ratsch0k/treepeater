@@ -62,7 +62,7 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
 
     private final TreepeaterModel model;
     private final RequestTree tree;
-    private RequestTreeNode node;
+    private final RequestTreeNode node;
 
     private HttpRequestEditor requestEditor;
     private HttpResponseEditor responseEditor;
@@ -256,16 +256,6 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
         this.hotkeyHandler = new HotkeyHandler();
         this.populateHotkeyActions();
         RequestResponseHotkeyInstaller.install(this, this.hotkeyHandler, this.hotkeyActions, this.hotkeyHandlerRegistered);
-    }
-
-    /**
-     * After drag-and-drop the tree holds a new {@link RequestTreeNode} instance with the same id; repoint this panel
-     * so edits and history stay on the node that is actually in the tree.
-     */
-    public void retargetToNode(RequestTreeNode n) {
-        this.node = n;
-        this.historyNavigator.setNode(n);
-        this.sideToolbar.retargetToNode(n);
     }
 
     @Override

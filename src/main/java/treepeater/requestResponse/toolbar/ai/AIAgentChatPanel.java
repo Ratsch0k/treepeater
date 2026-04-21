@@ -636,19 +636,25 @@ public final class AIAgentChatPanel extends JPanel {
         noBtn.setStyle(StyledButton.Style.DEFAULT);
         okBtn.setStyle(StyledButton.Style.AI);
         AtomicBoolean resolved = new AtomicBoolean(false);
+        Runnable removeButtons =
+                () -> {
+                    if (buttons.getParent() == card) {
+                        card.remove(buttons);
+                        card.revalidate();
+                        card.repaint();
+                    }
+                };
         Runnable resolveNo =
                 () -> {
                     if (resolved.compareAndSet(false, true)) {
-                        noBtn.setEnabled(false);
-                        okBtn.setEnabled(false);
+                        removeButtons.run();
                         onResolved.accept(false);
                     }
                 };
         Runnable resolveOk =
                 () -> {
                     if (resolved.compareAndSet(false, true)) {
-                        noBtn.setEnabled(false);
-                        okBtn.setEnabled(false);
+                        removeButtons.run();
                         onResolved.accept(true);
                     }
                 };

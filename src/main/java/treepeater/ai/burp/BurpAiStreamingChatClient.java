@@ -2,7 +2,6 @@ package treepeater.ai.burp;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Consumer;
 
 import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.ai.chat.Message;
@@ -11,9 +10,10 @@ import burp.api.montoya.ai.chat.PromptResponse;
 import treepeater.ai.ChatMessage;
 import treepeater.ai.ChatRole;
 import treepeater.ai.ChatStreamMessage;
+import treepeater.ai.ChatStreamSession;
+import treepeater.ai.ChatToolCall;
 import treepeater.ai.ChatToolDefinition;
 import treepeater.ai.ChatTooling;
-import treepeater.ai.HttpTargetTools;
 import treepeater.ai.StreamingChatClient;
 
 /**
@@ -37,7 +37,7 @@ public class BurpAiStreamingChatClient implements StreamingChatClient {
 
     @Override
     public List<ChatMessage> streamChat(
-            List<ChatMessage> messages, ChatTooling tooling, Consumer<ChatStreamMessage> onMessage) throws Exception {
+            List<ChatMessage> messages, ChatTooling tooling, ChatStreamSession session) throws Exception {
         if (!this.api.ai().isEnabled()) {
             throw new IllegalStateException(
                     "Burp AI is not available. Enable AI for this extension under Extensions, "
@@ -46,7 +46,7 @@ public class BurpAiStreamingChatClient implements StreamingChatClient {
         List<ChatMessage> toSend = messages;
         if (tooling != null && tooling.isActive()) {
             toSend = new ArrayList<>(messages.size() + 1);
-            toSend.add(new ChatMessage(ChatRole.SYSTEM, buildToolInject(tooling, onMessage)));
+            toSend.add(new ChatMessage(ChatRole.SYSTEM, buildToolInject(tooling, session)));
             toSend.addAll(messages);
         }
         Message[] burpMessages = new Message[toSend.size()];
@@ -56,7 +56,7 @@ public class BurpAiStreamingChatClient implements StreamingChatClient {
         PromptResponse response = this.api.ai().prompt().execute(burpMessages);
         String text = response.content();
         if (text != null && !text.isEmpty()) {
-            onMessage.accept(new ChatStreamMessage.AssistantDelta(text));
+            session.emit(new ChatStreamMessage.AssistantDelta(text));
         }
         List<ChatMessage> history = new ArrayList<>(messages.size() + 1);
         history.addAll(messages);
@@ -64,18 +64,12 @@ public class BurpAiStreamingChatClient implements StreamingChatClient {
         return history;
     }
 
-    private static String buildToolInject(ChatTooling tooling, Consumer<ChatStreamMessage> onMessage)
-            throws Exception {
+    private static String buildToolInject(ChatTooling tooling, ChatStreamSession session) throws Exception {
         StringBuilder sb = new StringBuilder();
         sb.append("Treepeater tool context (Burp AI does not expose native tool calls; results are pre-filled):\n");
         for (ChatToolDefinition def : tooling.tools()) {
             sb.append("\n--- ").append(def.name()).append(" ---\n");
-            onMessage.accept(
-                    new ChatStreamMessage.ToolUsage(
-                            def.name(),
-                            "{}",
-                            HttpTargetTools.humanReadableUsage(def.name(), "{}", tooling.currentHistoryIndexForToolStatus())));
-            sb.append(tooling.executor().invoke(def.name(), "{}"));
+            sb.append(tooling.executeWithApproval(new ChatToolCall("", def.name(), "{}"), session));
             sb.append('\n');
         }
         return sb.toString();

@@ -12,15 +12,22 @@ public interface StreamingChatClient {
      */
     default List<ChatMessage> streamChat(List<ChatMessage> messages, Consumer<ChatStreamMessage> onMessage)
             throws Exception {
-        return streamChat(messages, ChatTooling.none(), onMessage);
+        ChatStreamSession session = new ChatStreamSession(onMessage);
+        try {
+            return streamChat(messages, ChatTooling.none(), session);
+        } finally {
+            session.close();
+        }
     }
 
     /**
-     * Runs a streaming chat request. Implementations may invoke {@code onMessage} on the calling thread
-     * (typically a background thread); the listener should marshal UI work to the EDT as needed.
+     * Runs a streaming chat request. The implementation may call {@link ChatStreamSession#emit} from any thread
+     * (listeners should marshal UI work to the EDT as needed) and may call {@link ChatStreamSession#awaitReply} to
+     * wait for user-originated messages (e.g. {@link ChatStreamMessage.ToolApprovalResponse}).
      * <p>
      * When {@link ChatTooling} is inactive, implementations behave like plain text chat (assistant deltas only).
+     * With active tooling, a {@link ChatStreamMessage.ToolApprovalRequest} is emitted before each tool execution.
      */
-    List<ChatMessage> streamChat(
-            List<ChatMessage> messages, ChatTooling tooling, Consumer<ChatStreamMessage> onMessage) throws Exception;
+    List<ChatMessage> streamChat(List<ChatMessage> messages, ChatTooling tooling, ChatStreamSession session)
+            throws Exception;
 }

@@ -2,7 +2,6 @@ package treepeater.ai.anthropic;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Consumer;
 
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
@@ -25,10 +24,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import treepeater.ai.ChatMessage;
 import treepeater.ai.ChatRole;
 import treepeater.ai.ChatStreamMessage;
+import treepeater.ai.ChatStreamSession;
 import treepeater.ai.ChatToolCall;
 import treepeater.ai.ChatToolDefinition;
 import treepeater.ai.ChatTooling;
-import treepeater.ai.HttpTargetTools;
 import treepeater.ai.StreamingChatClient;
 
 /**
@@ -45,39 +44,31 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
 
     @Override
     public List<ChatMessage> streamChat(
-            List<ChatMessage> messages, ChatTooling tooling, Consumer<ChatStreamMessage> onMessage) throws Exception {
+            List<ChatMessage> messages, ChatTooling tooling, ChatStreamSession session) throws Exception {
         if (tooling == null || !tooling.isActive()) {
-            return streamOncePlain(messages, onMessage);
+            return streamOncePlain(messages, session);
         }
         List<ChatMessage> work = new ArrayList<>(messages);
         int maxRounds = 16;
         for (int round = 0; round < maxRounds; round++) {
-            RoundResult rr = streamOneAssistantTurn(work, onMessage, tooling);
+            RoundResult rr = streamOneAssistantTurn(work, session, tooling);
             work.add(rr.assistant());
             if (!rr.hadToolCalls()) {
                 return work;
             }
             for (ChatToolCall tc : rr.assistant().assistantToolCalls()) {
-                String argsJson = tc.argumentsJson() != null ? tc.argumentsJson() : "";
-                onMessage.accept(
-                        new ChatStreamMessage.ToolUsage(
-                                tc.name() != null ? tc.name() : "",
-                                argsJson,
-                                HttpTargetTools.humanReadableUsage(
-                                        tc.name(), argsJson, tooling.currentHistoryIndexForToolStatus())));
-                String result = tooling.executor().invoke(tc.name(), argsJson);
+                String result = tooling.executeWithApproval(tc, session);
                 work.add(new ChatMessage(ChatRole.TOOL, result, List.of(), tc.id()));
             }
         }
         return work;
     }
 
-    private List<ChatMessage> streamOncePlain(List<ChatMessage> messages, Consumer<ChatStreamMessage> onMessage)
-            throws Exception {
+    private List<ChatMessage> streamOncePlain(List<ChatMessage> messages, ChatStreamSession session) throws Exception {
         MessageCreateParams.Builder paramsBuilder = baseBuilder(messages, ChatTooling.none());
         MessageCreateParams params = paramsBuilder.build();
         StringBuilder assistantAccum = new StringBuilder();
-        runTextOnlyStream(params, assistantAccum, onMessage);
+        runTextOnlyStream(params, assistantAccum, session);
         List<ChatMessage> history = new ArrayList<>(messages.size() + 1);
         history.addAll(messages);
         history.add(new ChatMessage(ChatRole.ASSISTANT, assistantAccum.toString()));
@@ -85,7 +76,7 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
     }
 
     private RoundResult streamOneAssistantTurn(
-            List<ChatMessage> messages, Consumer<ChatStreamMessage> onMessage, ChatTooling tooling) throws Exception {
+            List<ChatMessage> messages, ChatStreamSession session, ChatTooling tooling) throws Exception {
         MessageCreateParams.Builder paramsBuilder = baseBuilder(messages, tooling);
         MessageCreateParams params = paramsBuilder.build();
 
@@ -119,7 +110,7 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
                                             String piece = delta.asText().text();
                                             if (piece != null && !piece.isEmpty()) {
                                                 textOut.append(piece);
-                                                onMessage.accept(new ChatStreamMessage.AssistantDelta(piece));
+                                                session.emit(new ChatStreamMessage.AssistantDelta(piece));
                                             }
                                         } else if (st.phase == StreamPhase.TOOL_INPUT && delta.isInputJson()) {
                                             String part = delta.asInputJson().partialJson();
@@ -149,8 +140,7 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
     }
 
     private void runTextOnlyStream(
-            MessageCreateParams params, StringBuilder assistantAccum, Consumer<ChatStreamMessage> onMessage)
-            throws Exception {
+            MessageCreateParams params, StringBuilder assistantAccum, ChatStreamSession session) throws Exception {
         AnthropicClient client = AnthropicOkHttpClient.builder().apiKey(this.config.apiKey()).build();
         try {
             try (StreamResponse<RawMessageStreamEvent> stream = client.messages().createStreaming(params)) {
@@ -168,7 +158,7 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
                                     String piece = delta.asText().text();
                                     if (piece != null && !piece.isEmpty()) {
                                         assistantAccum.append(piece);
-                                        onMessage.accept(new ChatStreamMessage.AssistantDelta(piece));
+                                        session.emit(new ChatStreamMessage.AssistantDelta(piece));
                                     }
                                 });
             }

@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,10 +23,10 @@ import io.github.ollama4j.utils.Utils;
 import treepeater.ai.ChatMessage;
 import treepeater.ai.ChatRole;
 import treepeater.ai.ChatStreamMessage;
+import treepeater.ai.ChatStreamSession;
 import treepeater.ai.ChatToolCall;
 import treepeater.ai.ChatToolDefinition;
 import treepeater.ai.ChatTooling;
-import treepeater.ai.HttpTargetTools;
 import treepeater.ai.StreamingChatClient;
 
 /**
@@ -53,22 +52,22 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
 
     @Override
     public List<ChatMessage> streamChat(
-            List<ChatMessage> messages, ChatTooling tooling, Consumer<ChatStreamMessage> onMessage) throws Exception {
+            List<ChatMessage> messages, ChatTooling tooling, ChatStreamSession session) throws Exception {
         if (tooling == null || !tooling.isActive()) {
-            return streamPlain(messages, onMessage, false);
+            return streamPlain(messages, session, false);
         }
         try {
             for (ChatToolDefinition def : tooling.tools()) {
-                this.api.registerTool(toOllamaTool(def, tooling, onMessage));
+                this.api.registerTool(toOllamaTool(def, tooling, session));
             }
-            return streamPlain(messages, onMessage, true);
+            return streamPlain(messages, session, true);
         } finally {
             this.api.deregisterTools();
         }
     }
 
     private List<ChatMessage> streamPlain(
-            List<ChatMessage> messages, Consumer<ChatStreamMessage> onMessage, boolean useTools) throws Exception {
+            List<ChatMessage> messages, ChatStreamSession session, boolean useTools) throws Exception {
         List<OllamaChatMessage> ollamaMessages = new ArrayList<>(messages.size());
         for (ChatMessage m : messages) {
             ollamaMessages.add(toOllama(m));
@@ -92,7 +91,7 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
                     }
                     String delta = msg.getResponse();
                     if (delta != null && !delta.isEmpty()) {
-                        onMessage.accept(new ChatStreamMessage.AssistantDelta(delta));
+                        session.emit(new ChatStreamMessage.AssistantDelta(delta));
                     }
                 };
 
@@ -145,7 +144,7 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
     }
 
     private static Tools.Tool toOllamaTool(
-            ChatToolDefinition def, ChatTooling tooling, Consumer<ChatStreamMessage> onMessage) {
+            ChatToolDefinition def, ChatTooling tooling, ChatStreamSession session) {
         Tools.Parameters parameters = new Tools.Parameters();
         parameters.setProperties(new HashMap<>());
 
@@ -160,13 +159,7 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
                 args -> {
                     try {
                         String argsJson = JSON.writeValueAsString(args);
-                        onMessage.accept(
-                                new ChatStreamMessage.ToolUsage(
-                                        def.name(),
-                                        argsJson,
-                                        HttpTargetTools.humanReadableUsage(
-                                                def.name(), argsJson, tooling.currentHistoryIndexForToolStatus())));
-                        return tooling.executor().invoke(def.name(), argsJson);
+                        return tooling.executeWithApproval(new ChatToolCall("", def.name(), argsJson), session);
                     } catch (Exception e) {
                         throw new RuntimeException(e);
                     }

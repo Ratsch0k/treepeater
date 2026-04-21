@@ -104,7 +104,7 @@ public class AIToolbarTab implements AIChatHost {
         return new OllamaStreamingChatClient(new OllamaClientConfig(baseUrl, model));
     }
 
-    /** Built-in HTTP target tools; stream UI uses {@link treepeater.ai.ChatStreamMessage.ToolUsage} from the client. */
+    /** Built-in HTTP target tools; tool runs are approved in the agent chat panel before execution. */
     @Override
     public ChatTooling chatTooling() {
         if (this.agentToolContextSupplier == null) {

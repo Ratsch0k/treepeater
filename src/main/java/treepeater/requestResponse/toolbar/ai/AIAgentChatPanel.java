@@ -19,7 +19,9 @@ import java.awt.event.KeyEvent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Vector;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 import javax.swing.AbstractAction;
 import javax.swing.ActionMap;
@@ -57,6 +59,8 @@ import treepeater.ai.ChatErrors;
 import treepeater.ai.ChatMessage;
 import treepeater.ai.ChatRole;
 import treepeater.ai.ChatStreamMessage;
+import treepeater.ai.ChatStreamSession;
+import treepeater.ai.ChatTooling;
 import treepeater.components.RoundedPanel;
 import treepeater.components.StyledButton;
 import treepeater.settings.TreepeaterSettings;
@@ -85,6 +89,10 @@ public final class AIAgentChatPanel extends JPanel {
     private final List<AssistantStrip> renderedStrips = new ArrayList<>();
     private final AtomicReference<SwingWorker<List<ChatMessage>, Void>> activeChatWorker =
             new AtomicReference<>();
+
+    private final AtomicReference<AssistantStrip> transcriptActiveAssistantStrip = new AtomicReference<>();
+
+    private final AtomicReference<ChatStreamSession> activeSession = new AtomicReference<>();
 
     public AIAgentChatPanel(AIChatHost host) {
         super(new BorderLayout());
@@ -327,82 +335,33 @@ public final class AIAgentChatPanel extends JPanel {
         this.sendButton.setEnabled(false);
         this.modelCombo.setEnabled(false);
 
-        final AtomicReference<AssistantStrip> activeAssistantStrip = new AtomicReference<>();
+        ChatTooling requestTooling = this.host.chatTooling();
+
         AssistantStrip firstStrip = createPlainAssistantStrip();
-        activeAssistantStrip.set(firstStrip);
+        this.transcriptActiveAssistantStrip.set(firstStrip);
         appendTranscriptRow(firstStrip.root);
+
+        AtomicReference<ChatStreamSession> sessionRef = new AtomicReference<>();
+        Consumer<ChatStreamMessage> outbound =
+                m -> SwingUtilities.invokeLater(() -> handleStreamMessageOnEdt(m, sessionRef.get()));
+        ChatStreamSession session = new ChatStreamSession(outbound);
+        sessionRef.set(session);
+        this.activeSession.set(session);
 
         SwingWorker<List<ChatMessage>, Void> worker = new SwingWorker<>() {
             private final List<ChatMessage> requestMessages = messages;
 
             @Override
             protected List<ChatMessage> doInBackground() throws Exception {
-                return AIAgentChatPanel.this
-                        .host
-                        .clientForSelectedModel(AIAgentChatPanel.this.modelCombo)
-                        .streamChat(
-                                this.requestMessages,
-                                AIAgentChatPanel.this.host.chatTooling(),
-                                m -> {
-                                    SwingWorker<List<ChatMessage>, Void> w = AIAgentChatPanel.this.activeChatWorker.get();
-                                    if (w == null || w.isCancelled()) {
-                                        return;
-                                    }
-                                    switch (m) {
-                                        case ChatStreamMessage.AssistantDelta ad -> {
-                                            if (ad.text().isEmpty()) {
-                                                return;
-                                            }
-                                            SwingUtilities.invokeLater(
-                                                    () -> {
-                                                        SwingWorker<List<ChatMessage>, Void> w2 =
-                                                                AIAgentChatPanel.this.activeChatWorker.get();
-                                                        if (w2 == null || w2.isCancelled()) {
-                                                            return;
-                                                        }
-                                                        AssistantStrip strip = activeAssistantStrip.get();
-                                                        if (strip == null) {
-                                                            return;
-                                                        }
-                                                        removeAssistantWaitingIndicator(strip);
-                                                        ensureAssistantBody(strip);
-                                                        appendAssistantReplyDelta(strip, ad.text());
-                                                    });
-                                        }
-                                        case ChatStreamMessage.ToolUsage tu -> {
-                                            try {
-                                                AIAgentChatPanel.this.host.runOnEdtAndWait(
-                                                        () -> {
-                                                            SwingWorker<List<ChatMessage>, Void> w2 =
-                                                                    AIAgentChatPanel.this.activeChatWorker.get();
-                                                            if (w2 == null || w2.isCancelled()) {
-                                                                return;
-                                                            }
-                                                            AssistantStrip strip = activeAssistantStrip.get();
-                                                            if (strip == null) {
-                                                                return;
-                                                            }
-                                                            removeAssistantWaitingIndicator(strip);
-                                                            flushMarkdownRender(strip);
-                                                            if (strip.body == null) {
-                                                                removeAssistantStripRowFromTranscript(strip.root);
-                                                            }
-                                                            RoundedPanel toolCard =
-                                                                    buildToolUsageBorderPanel(tu.humanDescription());
-                                                            appendTranscriptRow(toolCard);
-                                                            AssistantStrip nextStrip = createPlainAssistantStrip();
-                                                            activeAssistantStrip.set(nextStrip);
-                                                            appendTranscriptRow(nextStrip.root);
-                                                            AIAgentChatPanel.this.transcriptList.revalidate();
-                                                            AIAgentChatPanel.this.transcriptList.repaint();
-                                                            scrollTranscriptToBottom();
-                                                        });
-                                            } catch (Exception e) {
-                                                throw new RuntimeException(e);
-                                            }
-                                        }
-                                    }
-                                });
+                try {
+                    return AIAgentChatPanel.this
+                            .host
+                            .clientForSelectedModel(AIAgentChatPanel.this.modelCombo)
+                            .streamChat(this.requestMessages, requestTooling, session);
+                } finally {
+                    session.close();
+                    AIAgentChatPanel.this.activeSession.compareAndSet(session, null);
+                }
             }
 
             @Override
@@ -418,11 +377,12 @@ public final class AIAgentChatPanel extends JPanel {
                     AIAgentChatPanel.this.host.logError(ex);
                     AIAgentChatPanel.this.addMessageBubble("Error", ChatErrors.formatUserMessage(ex));
                 } finally {
-                    AssistantStrip last = activeAssistantStrip.get();
+                    AssistantStrip last = AIAgentChatPanel.this.transcriptActiveAssistantStrip.get();
                     if (last != null) {
                         removeAssistantWaitingIndicator(last);
                         flushMarkdownRender(last);
                     }
+                    AIAgentChatPanel.this.transcriptActiveAssistantStrip.set(null);
                     AIAgentChatPanel.this.sendButton.setEnabled(true);
                     AIAgentChatPanel.this.modelCombo.setEnabled(true);
                     if (AIAgentChatPanel.this.activeChatWorker.get() == this) {
@@ -438,9 +398,66 @@ public final class AIAgentChatPanel extends JPanel {
 
     /** Stops any in-flight chat request; call before removing this panel from its tab. */
     void cancelInFlightChat() {
+        ChatStreamSession session = this.activeSession.get();
+        if (session != null) {
+            session.close();
+        }
         SwingWorker<List<ChatMessage>, Void> w = this.activeChatWorker.get();
         if (w != null && !w.isDone()) {
             w.cancel(true);
+        }
+    }
+
+    /** EDT-side dispatch for outbound stream messages; translates {@link ChatStreamMessage} into UI updates. */
+    private void handleStreamMessageOnEdt(ChatStreamMessage m, ChatStreamSession session) {
+        SwingWorker<List<ChatMessage>, Void> w = this.activeChatWorker.get();
+        if (w == null || w.isCancelled()) {
+            if (m instanceof ChatStreamMessage.ToolApprovalRequest req && session != null) {
+                session.postReply(new ChatStreamMessage.ToolApprovalResponse(req.toolCallId(), false));
+            }
+            return;
+        }
+        if (m instanceof ChatStreamMessage.AssistantDelta ad) {
+            if (ad.text().isEmpty()) {
+                return;
+            }
+            AssistantStrip strip = this.transcriptActiveAssistantStrip.get();
+            if (strip == null) {
+                return;
+            }
+            removeAssistantWaitingIndicator(strip);
+            ensureAssistantBody(strip);
+            appendAssistantReplyDelta(strip, ad.text());
+            return;
+        }
+        if (m instanceof ChatStreamMessage.ToolApprovalRequest req) {
+            if (session == null) {
+                return;
+            }
+            AssistantStrip strip = this.transcriptActiveAssistantStrip.get();
+            if (strip == null) {
+                session.postReply(new ChatStreamMessage.ToolApprovalResponse(req.toolCallId(), false));
+                return;
+            }
+            removeAssistantWaitingIndicator(strip);
+            flushMarkdownRender(strip);
+            if (strip.body == null) {
+                removeAssistantStripRowFromTranscript(strip.root);
+            }
+            RoundedPanel toolCard =
+                    buildToolApprovalCard(
+                            req.humanDescription(),
+                            approved ->
+                                    session.postReply(
+                                            new ChatStreamMessage.ToolApprovalResponse(
+                                                    req.toolCallId(), approved)));
+            appendTranscriptRow(toolCard);
+            AssistantStrip nextStrip = createPlainAssistantStrip();
+            this.transcriptActiveAssistantStrip.set(nextStrip);
+            appendTranscriptRow(nextStrip.root);
+            this.transcriptList.revalidate();
+            this.transcriptList.repaint();
+            scrollTranscriptToBottom();
         }
     }
 
@@ -573,8 +590,8 @@ public final class AIAgentChatPanel extends JPanel {
         parent.repaint();
     }
 
-    /** One-line status only, e.g. {@code Getting target}. */
-    private RoundedPanel buildToolUsageBorderPanel(String statusLine) {
+    /** Status line plus No / OK controls; {@code onResolved} receives {@code true} for OK and {@code false} for No. */
+    private RoundedPanel buildToolApprovalCard(String statusLine, Consumer<Boolean> onResolved) {
         String line = statusLine != null ? statusLine.trim() : "";
         if (line.isEmpty()) {
             line = "Working…";
@@ -599,6 +616,35 @@ public final class AIAgentChatPanel extends JPanel {
             label.setForeground(muted);
         }
         card.add(label, BorderLayout.CENTER);
+
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        buttons.setOpaque(false);
+        StyledButton noBtn = new StyledButton("No");
+        StyledButton okBtn = new StyledButton("OK");
+        noBtn.setStyle(StyledButton.Style.DEFAULT);
+        okBtn.setStyle(StyledButton.Style.AI);
+        AtomicBoolean resolved = new AtomicBoolean(false);
+        Runnable resolveNo =
+                () -> {
+                    if (resolved.compareAndSet(false, true)) {
+                        noBtn.setEnabled(false);
+                        okBtn.setEnabled(false);
+                        onResolved.accept(false);
+                    }
+                };
+        Runnable resolveOk =
+                () -> {
+                    if (resolved.compareAndSet(false, true)) {
+                        noBtn.setEnabled(false);
+                        okBtn.setEnabled(false);
+                        onResolved.accept(true);
+                    }
+                };
+        noBtn.addActionListener(e -> resolveNo.run());
+        okBtn.addActionListener(e -> resolveOk.run());
+        buttons.add(noBtn);
+        buttons.add(okBtn);
+        card.add(buttons, BorderLayout.SOUTH);
         return card;
     }
 

@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
-import java.util.function.Consumer;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -29,10 +28,10 @@ import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
 import treepeater.ai.ChatMessage;
 import treepeater.ai.ChatRole;
 import treepeater.ai.ChatStreamMessage;
+import treepeater.ai.ChatStreamSession;
 import treepeater.ai.ChatToolCall;
 import treepeater.ai.ChatToolDefinition;
 import treepeater.ai.ChatTooling;
-import treepeater.ai.HttpTargetTools;
 import treepeater.ai.StreamingChatClient;
 
 /**
@@ -50,38 +49,30 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
 
     @Override
     public List<ChatMessage> streamChat(
-            List<ChatMessage> messages, ChatTooling tooling, Consumer<ChatStreamMessage> onMessage) throws Exception {
+            List<ChatMessage> messages, ChatTooling tooling, ChatStreamSession session) throws Exception {
         if (tooling == null || !tooling.isActive()) {
-            return streamOncePlain(messages, onMessage);
+            return streamOncePlain(messages, session);
         }
         List<ChatMessage> work = new ArrayList<>(messages);
         int maxRounds = 16;
         for (int round = 0; round < maxRounds; round++) {
-            RoundResult rr = streamOneAssistantTurn(work, onMessage, tooling);
+            RoundResult rr = streamOneAssistantTurn(work, session, tooling);
             work.add(rr.assistant());
             if (!rr.hadToolCalls()) {
                 return work;
             }
             for (ChatToolCall tc : rr.assistant().assistantToolCalls()) {
-                String argsJson = tc.argumentsJson() != null ? tc.argumentsJson() : "";
-                onMessage.accept(
-                        new ChatStreamMessage.ToolUsage(
-                                tc.name() != null ? tc.name() : "",
-                                argsJson,
-                                HttpTargetTools.humanReadableUsage(
-                                        tc.name(), argsJson, tooling.currentHistoryIndexForToolStatus())));
-                String result = tooling.executor().invoke(tc.name(), argsJson);
+                String result = tooling.executeWithApproval(tc, session);
                 work.add(new ChatMessage(ChatRole.TOOL, result, List.of(), tc.id()));
             }
         }
         return work;
     }
 
-    private List<ChatMessage> streamOncePlain(List<ChatMessage> messages, Consumer<ChatStreamMessage> onMessage)
-            throws Exception {
+    private List<ChatMessage> streamOncePlain(List<ChatMessage> messages, ChatStreamSession session) throws Exception {
         ChatCompletionCreateParams params = buildParams(messages, ChatTooling.none(), false);
         StringBuilder assistantAccum = new StringBuilder();
-        runTextStream(params, assistantAccum, onMessage);
+        runTextStream(params, assistantAccum, session);
         List<ChatMessage> history = new ArrayList<>(messages.size() + 1);
         history.addAll(messages);
         history.add(new ChatMessage(ChatRole.ASSISTANT, assistantAccum.toString()));
@@ -89,7 +80,7 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
     }
 
     private RoundResult streamOneAssistantTurn(
-            List<ChatMessage> messages, Consumer<ChatStreamMessage> onMessage, ChatTooling tooling) throws Exception {
+            List<ChatMessage> messages, ChatStreamSession session, ChatTooling tooling) throws Exception {
         ChatCompletionCreateParams params = buildParams(messages, tooling, true);
         StringBuilder textOut = new StringBuilder();
         Map<Long, ToolStreamAccumulator> toolAcc = new TreeMap<>();
@@ -110,7 +101,7 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
                                                 piece -> {
                                                     if (!piece.isEmpty()) {
                                                         textOut.append(piece);
-                                                        onMessage.accept(new ChatStreamMessage.AssistantDelta(piece));
+                                                        session.emit(new ChatStreamMessage.AssistantDelta(piece));
                                                     }
                                                 });
                                 delta.toolCalls()
@@ -154,7 +145,7 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
     }
 
     private void runTextStream(
-            ChatCompletionCreateParams params, StringBuilder assistantAccum, Consumer<ChatStreamMessage> onMessage)
+            ChatCompletionCreateParams params, StringBuilder assistantAccum, ChatStreamSession session)
             throws Exception {
         OpenAIClient client = newClient();
         try (StreamResponse<ChatCompletionChunk> stream = client.chat().completions().createStreaming(params)) {
@@ -172,7 +163,7 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
                                                 piece -> {
                                                     if (!piece.isEmpty()) {
                                                         assistantAccum.append(piece);
-                                                        onMessage.accept(new ChatStreamMessage.AssistantDelta(piece));
+                                                        session.emit(new ChatStreamMessage.AssistantDelta(piece));
                                                     }
                                                 });
                             });

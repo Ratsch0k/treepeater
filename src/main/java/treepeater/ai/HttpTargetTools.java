@@ -1233,6 +1233,11 @@ public final class HttpTargetTools {
         }
     }
 
+    /** JSON tool result when the user declines to run a tool. */
+    public static String permissionDeniedResult() {
+        return errorJson("permission denied");
+    }
+
     /**
      * Single-line status for the UI when a tool runs, including key arguments so the transcript shows what was invoked.
      *

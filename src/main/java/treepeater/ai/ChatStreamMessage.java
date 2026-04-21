@@ -1,28 +1,40 @@
 package treepeater.ai;
 
 /**
- * Streamed interaction while a chat request is in progress: assistant tokens, tool invocations, etc.
- * Implementations emit these through {@link StreamingChatClient#streamChat(java.util.List, ChatTooling,
- * java.util.function.Consumer)} so the UI can handle all output in one place.
+ * Bidirectional stream item exchanged with a {@link StreamingChatClient} via a {@link ChatStreamSession}:
+ * clients emit outbound variants ({@link AssistantDelta}, {@link ToolApprovalRequest}) and may wait for inbound
+ * variants ({@link ToolApprovalResponse}) posted by the UI in reply.
  */
-public sealed interface ChatStreamMessage permits ChatStreamMessage.AssistantDelta, ChatStreamMessage.ToolUsage {
+public sealed interface ChatStreamMessage
+        permits ChatStreamMessage.AssistantDelta,
+                ChatStreamMessage.ToolApprovalRequest,
+                ChatStreamMessage.ToolApprovalResponse {
 
-    /** Incremental assistant reply text (same meaning as the former per-token string callback). */
+    /** Incremental assistant reply text. */
     record AssistantDelta(String text) implements ChatStreamMessage {
         public AssistantDelta {
-            text = text == null ? "" : text;
+            text = text != null ? text : "";
         }
     }
 
     /**
-     * Emitted immediately before the tool {@link ChatToolExecutor} runs for this name/arguments pair.
-     * {@code humanDescription} is a short one-line status for the UI (e.g. {@code Getting target}).
+     * The client wants to execute a tool and needs the user's approval. The UI must reply with a matching
+     * {@link ToolApprovalResponse} (same {@code toolCallId}).
      */
-    record ToolUsage(String toolName, String argumentsJson, String humanDescription) implements ChatStreamMessage {
-        public ToolUsage {
-            toolName = toolName == null ? "" : toolName;
-            argumentsJson = argumentsJson == null ? "" : argumentsJson;
-            humanDescription = humanDescription == null ? "" : humanDescription;
+    record ToolApprovalRequest(String toolCallId, String toolName, String argumentsJson, String humanDescription)
+            implements ChatStreamMessage {
+        public ToolApprovalRequest {
+            toolCallId = toolCallId != null ? toolCallId : "";
+            toolName = toolName != null ? toolName : "";
+            argumentsJson = argumentsJson != null ? argumentsJson : "";
+            humanDescription = humanDescription != null ? humanDescription : "";
+        }
+    }
+
+    /** Reply to a {@link ToolApprovalRequest}; {@code approved == false} yields a permission-denied tool result. */
+    record ToolApprovalResponse(String toolCallId, boolean approved) implements ChatStreamMessage {
+        public ToolApprovalResponse {
+            toolCallId = toolCallId != null ? toolCallId : "";
         }
     }
 }

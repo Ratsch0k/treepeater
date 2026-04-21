@@ -18,10 +18,16 @@ public sealed interface ChatStreamMessage
     }
 
     /**
-     * The client wants to execute a tool and needs the user's approval. The UI must reply with a matching
-     * {@link ToolApprovalResponse} (same {@code toolCallId}).
+     * The client is running a tool: always show usage in the UI. When {@code requiresApproval} is {@code true}, the UI
+     * must reply with a matching {@link ToolApprovalResponse} (same {@code toolCallId}) before the run continues.
+     * When {@code false}, the card is informational only (no buttons; no reply).
      */
-    record ToolApprovalRequest(String toolCallId, String toolName, String argumentsJson, String humanDescription)
+    record ToolApprovalRequest(
+            String toolCallId,
+            String toolName,
+            String argumentsJson,
+            String humanDescription,
+            boolean requiresApproval)
             implements ChatStreamMessage {
         public ToolApprovalRequest {
             toolCallId = toolCallId != null ? toolCallId : "";

@@ -262,6 +262,43 @@ public final class HttpTargetTools {
     }
 
     /**
+     * Classifies a built-in tool by sensitivity. Unknown names return {@code null} (treat as requiring approval).
+     */
+    public static ToolActionLevel toolActionLevel(String toolName) {
+        if (toolName == null) {
+            return null;
+        }
+        return switch (toolName) {
+            case GET_CURRENT_HTTP_TARGET,
+                    GET_HTTP_HISTORY_STATE,
+                    GET_HTTP_REQUEST_LINE,
+                    LIST_HTTP_HEADER_NAMES,
+                    GET_HTTP_HEADER,
+                    LIST_HTTP_COOKIES,
+                    GET_HTTP_COOKIE,
+                    READ_HTTP_BODY -> ToolActionLevel.READ_ONLY;
+            case REPLACE_IN_HTTP_REQUEST_BODY,
+                    PATCH_HTTP_REQUEST_BODY_LINES,
+                    SET_HTTP_REQUEST_BODY,
+                    SET_HTTP_REQUEST_HEADER,
+                    REMOVE_HTTP_REQUEST_HEADER,
+                    SET_HTTP_REQUEST_COOKIE,
+                    SET_HTTP_REQUEST_METHOD,
+                    SET_HTTP_REQUEST_URL -> ToolActionLevel.WRITE;
+            case SEND_CURRENT_HTTP_REQUEST -> ToolActionLevel.EXECUTE;
+            default -> null;
+        };
+    }
+
+    /**
+     * Whether the chat UI should ask the user before running this tool. Read-only tools return {@code false};
+     * write, execute, and unknown names return {@code true}.
+     */
+    public static boolean requiresUserApproval(String toolName) {
+        return toolActionLevel(toolName) != ToolActionLevel.READ_ONLY;
+    }
+
+    /**
      * Dispatches built-in tools against a snapshot supplier (typically the live request editor + history).
      */
     public static String execute(String toolName, String argumentsJson, AgentToolContext ctx) {

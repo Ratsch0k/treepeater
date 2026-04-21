@@ -412,7 +412,9 @@ public final class AIAgentChatPanel extends JPanel {
     private void handleStreamMessageOnEdt(ChatStreamMessage m, ChatStreamSession session) {
         SwingWorker<List<ChatMessage>, Void> w = this.activeChatWorker.get();
         if (w == null || w.isCancelled()) {
-            if (m instanceof ChatStreamMessage.ToolApprovalRequest req && session != null) {
+            if (m instanceof ChatStreamMessage.ToolApprovalRequest req
+                    && session != null
+                    && req.requiresApproval()) {
                 session.postReply(new ChatStreamMessage.ToolApprovalResponse(req.toolCallId(), false));
             }
             return;
@@ -436,7 +438,9 @@ public final class AIAgentChatPanel extends JPanel {
             }
             AssistantStrip strip = this.transcriptActiveAssistantStrip.get();
             if (strip == null) {
-                session.postReply(new ChatStreamMessage.ToolApprovalResponse(req.toolCallId(), false));
+                if (req.requiresApproval()) {
+                    session.postReply(new ChatStreamMessage.ToolApprovalResponse(req.toolCallId(), false));
+                }
                 return;
             }
             removeAssistantWaitingIndicator(strip);
@@ -445,12 +449,14 @@ public final class AIAgentChatPanel extends JPanel {
                 removeAssistantStripRowFromTranscript(strip.root);
             }
             RoundedPanel toolCard =
-                    buildToolApprovalCard(
-                            req.humanDescription(),
-                            approved ->
-                                    session.postReply(
-                                            new ChatStreamMessage.ToolApprovalResponse(
-                                                    req.toolCallId(), approved)));
+                    req.requiresApproval()
+                            ? buildToolApprovalCard(
+                                    req.humanDescription(),
+                                    approved ->
+                                            session.postReply(
+                                                    new ChatStreamMessage.ToolApprovalResponse(
+                                                            req.toolCallId(), approved)))
+                            : buildToolUsageCard(req.humanDescription());
             appendTranscriptRow(toolCard);
             AssistantStrip nextStrip = createPlainAssistantStrip();
             this.transcriptActiveAssistantStrip.set(nextStrip);
@@ -590,8 +596,8 @@ public final class AIAgentChatPanel extends JPanel {
         parent.repaint();
     }
 
-    /** Status line plus No / OK controls; {@code onResolved} receives {@code true} for OK and {@code false} for No. */
-    private RoundedPanel buildToolApprovalCard(String statusLine, Consumer<Boolean> onResolved) {
+    /** Tool usage line only (no approval controls). */
+    private RoundedPanel buildToolUsageCard(String statusLine) {
         String line = statusLine != null ? statusLine.trim() : "";
         if (line.isEmpty()) {
             line = "Working…";
@@ -616,6 +622,12 @@ public final class AIAgentChatPanel extends JPanel {
             label.setForeground(muted);
         }
         card.add(label, BorderLayout.CENTER);
+        return card;
+    }
+
+    /** Status line plus Cancel / OK controls; {@code onResolved} receives {@code true} for OK and {@code false} for Cancel. */
+    private RoundedPanel buildToolApprovalCard(String statusLine, Consumer<Boolean> onResolved) {
+        RoundedPanel card = buildToolUsageCard(statusLine);
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         buttons.setOpaque(false);

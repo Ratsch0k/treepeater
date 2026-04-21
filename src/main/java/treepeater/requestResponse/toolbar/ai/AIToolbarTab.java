@@ -118,7 +118,8 @@ public class AIToolbarTab implements AIChatHost {
                 () -> {
                     AgentToolContext c = this.agentToolContextSupplier.get();
                     return c != null ? c.currentHistoryIndex() : Integer.MIN_VALUE;
-                });
+                },
+                HttpTargetTools::requiresUserApproval);
     }
 
     @Override

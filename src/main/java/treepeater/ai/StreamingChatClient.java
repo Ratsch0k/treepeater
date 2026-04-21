@@ -26,7 +26,8 @@ public interface StreamingChatClient {
      * wait for user-originated messages (e.g. {@link ChatStreamMessage.ToolApprovalResponse}).
      * <p>
      * When {@link ChatTooling} is inactive, implementations behave like plain text chat (assistant deltas only).
-     * With active tooling, a {@link ChatStreamMessage.ToolApprovalRequest} is emitted before each tool execution.
+     * With active tooling, a {@link ChatStreamMessage.ToolApprovalRequest} is emitted for each tool (approval may be
+     * required or informational only).
      */
     List<ChatMessage> streamChat(List<ChatMessage> messages, ChatTooling tooling, ChatStreamSession session)
             throws Exception;

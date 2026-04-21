@@ -52,13 +52,18 @@ public record ChatTooling(
         }
         String argsJson = tc.argumentsJson();
         String name = tc.name();
-        String human = HttpTargetTools.humanReadableUsage(name, argsJson, currentHistoryIndexForToolStatus());
+        HttpTargetTools.HumanToolUsage label =
+                HttpTargetTools.humanToolUsage(name, argsJson, currentHistoryIndexForToolStatus());
         ToolRunPolicy policy = this.toolRunPolicy;
         if (!policy.requiresApproval(name)) {
-            session.emit(new ChatStreamMessage.ToolApprovalRequest(tc.id(), name, argsJson, human, false));
+            session.emit(
+                    new ChatStreamMessage.ToolApprovalRequest(
+                            tc.id(), name, argsJson, label.title(), label.detail(), false));
             return this.executor.invoke(name, argsJson);
         }
-        session.emit(new ChatStreamMessage.ToolApprovalRequest(tc.id(), name, argsJson, human, true));
+        session.emit(
+                new ChatStreamMessage.ToolApprovalRequest(
+                        tc.id(), name, argsJson, label.title(), label.detail(), true));
         try {
             while (true) {
                 ChatStreamMessage reply = session.awaitReply();

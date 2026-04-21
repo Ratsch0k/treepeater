@@ -468,12 +468,13 @@ public final class AIAgentChatPanel extends JPanel {
             RoundedPanel toolCard =
                     req.requiresApproval()
                             ? buildToolApprovalCard(
-                                    req.humanDescription(),
+                                    req.humanTitle(),
+                                    req.humanDetail(),
                                     approved ->
                                             session.postReply(
                                                     new ChatStreamMessage.ToolApprovalResponse(
                                                             req.toolCallId(), approved)))
-                            : buildToolUsageCard(req.humanDescription());
+                            : buildToolUsageCard(req.humanTitle(), req.humanDetail());
             appendTranscriptRow(toolCard);
             AssistantStrip nextStrip = createPlainAssistantStrip();
             this.transcriptActiveAssistantStrip.set(nextStrip);
@@ -613,12 +614,16 @@ public final class AIAgentChatPanel extends JPanel {
         parent.repaint();
     }
 
-    /** Tool usage line only (no approval controls). */
-    private RoundedPanel buildToolUsageCard(String statusLine) {
-        String line = statusLine != null ? statusLine.trim() : "";
-        if (line.isEmpty()) {
-            line = "Working…";
+    /**
+     * Tool usage card: {@code title} is the action summary; {@code detail} (when non-blank) describes what will change
+     * (e.g. new header value). Detail is omitted for heavy payloads such as full body replacement.
+     */
+    private RoundedPanel buildToolUsageCard(String title, String detail) {
+        String t = title != null ? title.trim() : "";
+        if (t.isEmpty()) {
+            t = "Working…";
         }
+        String d = detail != null ? detail.trim() : "";
 
         RoundedPanel card = new RoundedPanel();
         card.putClientProperty(TOOL_USAGE_BORDER_MARK, Boolean.TRUE);
@@ -628,23 +633,62 @@ public final class AIAgentChatPanel extends JPanel {
         card.setAlignmentX(Component.LEFT_ALIGNMENT);
         applyToolUsageBorderOnlyTheme(card);
 
-        JLabel label = new JLabel(line);
-        label.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JPanel textCol = new JPanel();
+        textCol.setLayout(new BoxLayout(textCol, BoxLayout.PAGE_AXIS));
+        textCol.setOpaque(false);
+        textCol.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JLabel titleLabel = new JLabel(t);
+        titleLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
         Font lf = UIManager.getFont("Label.font");
-        if (lf != null) {
-            label.setFont(lf.deriveFont(Font.ITALIC));
-        }
         Color muted = UIManager.getColor("Label.disabledForeground");
-        if (muted != null) {
-            label.setForeground(muted);
+        if (lf != null) {
+            titleLabel.setFont(lf.deriveFont(Font.ITALIC));
         }
-        card.add(label, BorderLayout.CENTER);
+        if (muted != null) {
+            titleLabel.setForeground(muted);
+        }
+        textCol.add(titleLabel);
+
+        if (!d.isEmpty()) {
+            textCol.add(Box.createVerticalStrut(4));
+            textCol.add(buildToolCardDetailText(d, lf, muted));
+            textCol.add(Box.createVerticalStrut(4));
+        }
+
+        card.add(textCol, BorderLayout.CENTER);
         return card;
     }
 
+    /** Plain text; wraps at a target width in characters (roughly) so long change summaries do not force a wide card. */
+    private static JComponent buildToolCardDetailText(String text, Font baseFont, Color fg) {
+        JTextArea area = new JTextArea(text);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setEditable(false);
+        area.setFocusable(false);
+        area.setOpaque(false);
+        area.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
+        area.setAlignmentX(Component.LEFT_ALIGNMENT);
+        if (baseFont != null) {
+            area.setFont(baseFont.deriveFont(Font.PLAIN, baseFont.getSize2D() - 1f));
+        }
+        if (fg != null) {
+            area.setForeground(fg);
+        }
+        int columns = 52;
+        if (baseFont != null) {
+            columns = Math.max(36, Math.min(64, (int) (baseFont.getSize2D() * 2.0)));
+        }
+        area.setRows(0);
+        area.setColumns(columns);
+        return area;
+    }
+
     /** Status line plus Cancel / OK controls; {@code onResolved} receives {@code true} for OK and {@code false} for Cancel. */
-    private RoundedPanel buildToolApprovalCard(String statusLine, Consumer<Boolean> onResolved) {
-        RoundedPanel card = buildToolUsageCard(statusLine);
+    private RoundedPanel buildToolApprovalCard(
+            String title, String detail, Consumer<Boolean> onResolved) {
+        RoundedPanel card = buildToolUsageCard(title, detail);
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         buttons.setOpaque(false);

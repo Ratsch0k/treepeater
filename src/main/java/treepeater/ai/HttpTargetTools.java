@@ -83,6 +83,18 @@ public final class HttpTargetTools {
     /** Send the current repeater request and wait for the response; tool result contains only HTTP status_code. */
     public static final String SEND_CURRENT_HTTP_REQUEST = "send_current_http_request";
 
+    /**
+     * Transcript line for a tool: short {@code title} plus optional {@code detail} (what will change, key arguments).
+     * {@code detail} is empty for read-only tools and for {@link #SET_HTTP_REQUEST_BODY} to avoid duplicating a large
+     * body in the chat.
+     */
+    public static record HumanToolUsage(String title, String detail) {
+        public HumanToolUsage {
+            title = title != null ? title : "";
+            detail = detail != null ? detail : "";
+        }
+    }
+
     private static final int DEFAULT_BODY_CHUNK_BYTES = 16_384;
     private static final int MAX_BODY_CHUNK_BYTES = 262_144;
 
@@ -1293,12 +1305,14 @@ public final class HttpTargetTools {
     }
 
     /**
-     * Single-line status for the UI when a tool runs, including key arguments so the transcript shows what was invoked.
+     * Title and optional detail for the tool transcript card. Mutations that change the in-editor request include a
+     * non-empty {@link HumanToolUsage#detail} describing the change, except for {@link #SET_HTTP_REQUEST_BODY} where
+     * the new body is omitted.
      *
      * @param viewerHistoryIndex the tab's current history index, or {@link Integer#MIN_VALUE} if unknown; when equal to
      *     {@code history_index} in the tool args, the "· history #n" suffix is omitted.
      */
-    public static String humanReadableUsage(String toolName, String argumentsJson, int viewerHistoryIndex) {
+    public static HumanToolUsage humanToolUsage(String toolName, String argumentsJson, int viewerHistoryIndex) {
         JsonNode args;
         try {
             args = parseArgs(argumentsJson);
@@ -1316,18 +1330,18 @@ public final class HttpTargetTools {
                         : "request".equals(sideNorm) ? "Request" : "";
         String hist = formatHistoryIndexArg(args, viewerHistoryIndex);
         return switch (toolName) {
-            case GET_CURRENT_HTTP_TARGET -> "Getting current repeater target and send history";
-            case GET_HTTP_HISTORY_STATE -> "Reading send history (indices, prev/next)";
+            case GET_CURRENT_HTTP_TARGET -> new HumanToolUsage("Getting current repeater target and send history", "");
+            case GET_HTTP_HISTORY_STATE -> new HumanToolUsage("Reading send history (indices, prev/next)", "");
             case GET_HTTP_REQUEST_LINE -> {
                 String base = "Getting request line (method, URL, path, version)";
-                yield hist.isEmpty() ? base : base + hist;
+                yield new HumanToolUsage(hist.isEmpty() ? base : base + hist, "");
             }
             case LIST_HTTP_HEADER_NAMES -> {
                 String base =
                         sideLabel.isEmpty()
                                 ? "Listing header names"
                                 : "Listing " + sideLabel.toLowerCase() + " header names";
-                yield hist.isEmpty() ? base : base + hist;
+                yield new HumanToolUsage(hist.isEmpty() ? base : base + hist, "");
             }
             case GET_HTTP_HEADER -> {
                 String n = truncateForStatus(argTextAny(args, "name", "header_name", "headerName"), 56);
@@ -1335,14 +1349,14 @@ public final class HttpTargetTools {
                 if (!n.isEmpty()) {
                     head += " \"" + n + "\"";
                 }
-                yield hist.isEmpty() ? head : head + hist;
+                yield new HumanToolUsage(hist.isEmpty() ? head : head + hist, "");
             }
             case LIST_HTTP_COOKIES -> {
                 String base =
                         sideLabel.isEmpty()
                                 ? "Listing cookie names"
                                 : "Listing " + sideLabel.toLowerCase() + " cookie names";
-                yield hist.isEmpty() ? base : base + hist;
+                yield new HumanToolUsage(hist.isEmpty() ? base : base + hist, "");
             }
             case GET_HTTP_COOKIE -> {
                 String n = truncateForStatus(argTextAny(args, "name", "cookie_name", "cookieName"), 56);
@@ -1350,7 +1364,7 @@ public final class HttpTargetTools {
                 if (!n.isEmpty()) {
                     head += " \"" + n + "\"";
                 }
-                yield hist.isEmpty() ? head : head + hist;
+                yield new HumanToolUsage(hist.isEmpty() ? head : head + hist, "");
             }
             case READ_HTTP_BODY -> {
                 String head =
@@ -1362,50 +1376,119 @@ public final class HttpTargetTools {
                 int offset = readOffsetArg(args);
                 int maxBytes = readMaxBytesArg(args);
                 b.append(" · offset ").append(offset).append(", max ").append(maxBytes).append(" B");
-                yield b.toString();
+                yield new HumanToolUsage(b.toString(), "");
             }
             case REPLACE_IN_HTTP_REQUEST_BODY -> {
-                String oldT = truncateForStatus(argTextAny(args, "old_text", "oldText"), 40);
-                String head = "Replacing text in request body";
-                if (!oldT.isEmpty()) {
-                    head += " (\"" + oldT + "\")";
+                String oldT = argTextAny(args, "old_text", "oldText");
+                String newT = "";
+                JsonNode newNode = argFirst(args, "new_text", "newText");
+                if (newNode != null && !newNode.isNull()) {
+                    newT = newNode.asText();
                 }
-                yield head;
+                boolean replaceAll = args.has("replace_all") && args.get("replace_all").asBoolean(false);
+                int maxRep = 1;
+                if (!replaceAll) {
+                    JsonNode m = argFirst(args, "max_replacements", "maxReplacements");
+                    if (m != null) {
+                        maxRep = jsonToInt(m);
+                    }
+                }
+                StringBuilder d = new StringBuilder();
+                d.append("Find ")
+                        .append(quotedSnippet(oldT, 72))
+                        .append(" → replace with ")
+                        .append(quotedSnippet(newT, 72));
+                if (replaceAll) {
+                    d.append(" · all occurrences");
+                } else if (maxRep > 1) {
+                    d.append(" · up to ").append(maxRep).append(" time(s)");
+                }
+                yield new HumanToolUsage("Replace text in request body", d.toString());
             }
             case PATCH_HTTP_REQUEST_BODY_LINES -> {
                 int sl = jsonToInt(argFirst(args, "start_line", "startLine"));
                 int el = jsonToInt(argFirst(args, "end_line", "endLine"));
-                yield "Patching request body lines " + sl + "–" + el;
+                JsonNode contentNode = argFirst(args, "content");
+                String content = contentNode != null && !contentNode.isNull() ? contentNode.asText() : "";
+                String preview = singleLinePreview(content, 200);
+                String det =
+                        "Lines " + sl + "–" + el
+                                + (preview.isEmpty() ? "" : " · new text: " + preview);
+                yield new HumanToolUsage("Patch request body line range", det);
             }
-            case SET_HTTP_REQUEST_BODY -> "Setting full request body";
+            case SET_HTTP_REQUEST_BODY -> new HumanToolUsage("Setting full request body", "");
             case SET_HTTP_REQUEST_HEADER -> {
-                String hn = truncateForStatus(argTextAny(args, "name", "header_name", "headerName"), 48);
-                yield hn.isEmpty() ? "Setting request header" : "Setting request header \"" + hn + "\"";
+                String hn = argTextAny(args, "name", "header_name", "headerName");
+                String value = "";
+                if (args.has("value") && !args.get("value").isNull()) {
+                    value = args.get("value").asText();
+                }
+                String det =
+                        hn.isEmpty()
+                                ? (value.isEmpty() ? "(name required)" : "(name required) value: " + truncateForStatus(value, 200))
+                                : truncateForStatus(hn + ": " + value, 220);
+                yield new HumanToolUsage("Set request header", det);
             }
             case REMOVE_HTTP_REQUEST_HEADER -> {
-                String hn = truncateForStatus(argTextAny(args, "name", "header_name", "headerName"), 48);
-                yield hn.isEmpty() ? "Removing request header" : "Removing request header \"" + hn + "\"";
+                String hn = truncateForStatus(argTextAny(args, "name", "header_name", "headerName"), 80);
+                yield new HumanToolUsage(
+                        "Remove request header",
+                        hn.isEmpty() ? "(name not set)" : "Remove all \"" + hn + "\" headers");
             }
             case SET_HTTP_REQUEST_COOKIE -> {
-                String cn = truncateForStatus(argTextAny(args, "name", "cookie_name", "cookieName"), 40);
+                String cn = argTextAny(args, "name", "cookie_name", "cookieName");
                 boolean rem = args.has("remove") && args.get("remove").asBoolean(false);
-                String head = rem ? "Removing cookie" : "Setting cookie";
-                if (!cn.isEmpty()) {
-                    head += " \"" + cn + "\"";
+                String value = "";
+                if (!rem) {
+                    JsonNode vn = argFirst(args, "value", "cookie_value", "cookieValue");
+                    if (vn != null && !vn.isNull()) {
+                        value = vn.asText();
+                    }
                 }
-                yield head;
+                String t = rem ? "Remove cookie" : "Set cookie";
+                String det =
+                        rem
+                                ? (cn.isEmpty()
+                                        ? "Remove by name (name missing in tool args)"
+                                        : "Remove \"" + truncateForStatus(cn, 80) + "\" from Cookie")
+                                : (cn.isEmpty()
+                                        ? (value.isEmpty() ? "Name required" : "Name required · value: " + truncateForStatus(value, 180))
+                                        : truncateForStatus(cn + "=" + value, 220));
+                yield new HumanToolUsage(t, det);
             }
             case SET_HTTP_REQUEST_METHOD -> {
-                String m = truncateForStatus(argTextAny(args, "method", "http_method", "httpMethod"), 24);
-                yield m.isEmpty() ? "Setting request method" : "Setting request method " + m;
+                String m = truncateForStatus(argTextAny(args, "method", "http_method", "httpMethod"), 32);
+                yield new HumanToolUsage(
+                        "Set request method",
+                        m.isEmpty() ? "Method not specified" : "New method: " + m);
             }
             case SET_HTTP_REQUEST_URL -> {
-                String u = truncateForStatus(argTextAny(args, "url", "URL"), 64);
-                yield u.isEmpty() ? "Setting request URL" : "Setting request URL · " + u;
+                String u = argTextAny(args, "url", "URL");
+                String t = "Set request URL";
+                yield new HumanToolUsage(t, u.isEmpty() ? "URL not specified" : truncateForStatus(u, 220));
             }
-            case SEND_CURRENT_HTTP_REQUEST -> "Sending current HTTP request";
-            default -> "Working…";
+            case SEND_CURRENT_HTTP_REQUEST -> new HumanToolUsage(
+                    "Send current HTTP request", "Sends the in-editor request and waits for the response (status only)");
+            default -> new HumanToolUsage("Working…", "");
         };
+    }
+
+    private static String quotedSnippet(String s, int maxTotal) {
+        if (s == null) {
+            s = "";
+        }
+        return "\"" + truncateForStatus(s, Math.max(8, maxTotal - 2)) + "\"";
+    }
+
+    private static String singleLinePreview(String s, int max) {
+        if (s == null || s.isEmpty()) {
+            return "";
+        }
+        String one = s.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ');
+        while (one.contains("  ")) {
+            one = one.replace("  ", " ");
+        }
+        return truncateForStatus(one.trim(), max);
     }
 
     /**

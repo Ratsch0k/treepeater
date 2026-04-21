@@ -26,14 +26,16 @@ public sealed interface ChatStreamMessage
             String toolCallId,
             String toolName,
             String argumentsJson,
-            String humanDescription,
+            String humanTitle,
+            String humanDetail,
             boolean requiresApproval)
             implements ChatStreamMessage {
         public ToolApprovalRequest {
             toolCallId = toolCallId != null ? toolCallId : "";
             toolName = toolName != null ? toolName : "";
             argumentsJson = argumentsJson != null ? argumentsJson : "";
-            humanDescription = humanDescription != null ? humanDescription : "";
+            humanTitle = humanTitle != null ? humanTitle : "";
+            humanDetail = humanDetail != null ? humanDetail : "";
         }
     }
 

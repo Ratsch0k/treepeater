@@ -291,11 +291,28 @@ public final class HttpTargetTools {
     }
 
     /**
-     * Whether the chat UI should ask the user before running this tool. Read-only tools return {@code false};
-     * write, execute, and unknown names return {@code true}.
+     * Whether the chat must collect approval before running this tool. Modes only tighten or relax approval; they do
+     * not block tools outright. Unknown tool names require approval except in {@link AgentMode#AUTONOMOUS}.
+     * <ul>
+     *   <li>{@link AgentMode#ASK}: approval for {@link ToolActionLevel#WRITE} and {@link ToolActionLevel#EXECUTE};
+     *       read-only tools run without prompting.</li>
+     *   <li>{@link AgentMode#HELPER}: approval only for {@link ToolActionLevel#EXECUTE}.</li>
+     *   <li>{@link AgentMode#AUTONOMOUS}: no approval.</li>
+     * </ul>
      */
-    public static boolean requiresUserApproval(String toolName) {
-        return toolActionLevel(toolName) != ToolActionLevel.READ_ONLY;
+    public static boolean requiresUserApprovalInAgentMode(String toolName, AgentMode mode) {
+        if (mode == null) {
+            mode = AgentMode.ASK;
+        }
+        ToolActionLevel level = toolActionLevel(toolName);
+        if (level == null) {
+            return mode != AgentMode.AUTONOMOUS;
+        }
+        return switch (mode) {
+            case ASK -> level != ToolActionLevel.READ_ONLY;
+            case HELPER -> level == ToolActionLevel.EXECUTE;
+            case AUTONOMOUS -> false;
+        };
     }
 
     /**

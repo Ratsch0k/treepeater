@@ -5,6 +5,7 @@ import java.awt.Component;
 import javax.swing.JComboBox;
 
 import treepeater.Treepeater;
+import treepeater.ai.AgentMode;
 import treepeater.ai.AiModelOption;
 import treepeater.ai.ChatTooling;
 import treepeater.ai.StreamingChatClient;
@@ -15,7 +16,7 @@ import treepeater.ai.StreamingChatClient;
 public interface AIChatHost {
     StreamingChatClient clientForSelectedModel(JComboBox<AiModelOption> modelCombo);
 
-    ChatTooling chatTooling();
+    ChatTooling chatTooling(AgentMode mode);
 
     void runOnEdtAndWait(Runnable r) throws Exception;
 

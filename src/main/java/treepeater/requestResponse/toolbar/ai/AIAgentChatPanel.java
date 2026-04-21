@@ -17,6 +17,7 @@ import java.awt.event.ComponentEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Vector;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -52,6 +53,7 @@ import javax.swing.event.HyperlinkEvent;
 import com.formdev.flatlaf.FlatClientProperties;
 
 import treepeater.Treepeater;
+import treepeater.ai.AgentMode;
 import treepeater.ai.AgentSystemPrompt;
 import treepeater.ai.AiModelOption;
 import treepeater.ai.MarkdownRenderer;
@@ -84,6 +86,7 @@ public final class AIAgentChatPanel extends JPanel {
     private JScrollPane inputScroll;
     private RoundedPanel inputPanel;
     private final StyledButton sendButton;
+    private final JComboBox<AgentMode> agentModeCombo;
     private final JComboBox<AiModelOption> modelCombo;
     private final List<ChatMessage> conversation = new ArrayList<>();
     private final List<AssistantStrip> renderedStrips = new ArrayList<>();
@@ -114,6 +117,11 @@ public final class AIAgentChatPanel extends JPanel {
         this.sendButton = new StyledButton("Send");
         this.sendButton.setStyle(StyledButton.Style.AI);
         this.sendButton.setPreferredSize(new Dimension(80, 22));
+
+        this.agentModeCombo =
+                new JComboBox<>(new DefaultComboBoxModel<>(new Vector<>(Arrays.asList(AgentMode.values()))));
+        this.agentModeCombo.setSelectedItem(AgentMode.ASK);
+        this.agentModeCombo.setMaximumRowCount(6);
 
         this.modelCombo =
                 new JComboBox<>(new DefaultComboBoxModel<>(new Vector<>(AiModelOption.defaultChoices())));
@@ -173,10 +181,12 @@ public final class AIAgentChatPanel extends JPanel {
                             }
                         });
 
+        this.agentModeCombo.setPreferredSize(new Dimension(120, this.agentModeCombo.getPreferredSize().height));
         this.modelCombo.setPreferredSize(new Dimension(140, this.modelCombo.getPreferredSize().height));
 
         JPanel sendControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         sendControls.setOpaque(false);
+        sendControls.add(this.agentModeCombo);
         sendControls.add(this.modelCombo);
         sendControls.add(this.sendButton);
 
@@ -333,9 +343,10 @@ public final class AIAgentChatPanel extends JPanel {
         AgentSystemPrompt.prependDefault(messages);
 
         this.sendButton.setEnabled(false);
+        this.agentModeCombo.setEnabled(false);
         this.modelCombo.setEnabled(false);
 
-        ChatTooling requestTooling = this.host.chatTooling();
+        ChatTooling requestTooling = this.host.chatTooling(selectedAgentMode());
 
         AssistantStrip firstStrip = createPlainAssistantStrip();
         this.transcriptActiveAssistantStrip.set(firstStrip);
@@ -384,6 +395,7 @@ public final class AIAgentChatPanel extends JPanel {
                     }
                     AIAgentChatPanel.this.transcriptActiveAssistantStrip.set(null);
                     AIAgentChatPanel.this.sendButton.setEnabled(true);
+                    AIAgentChatPanel.this.agentModeCombo.setEnabled(true);
                     AIAgentChatPanel.this.modelCombo.setEnabled(true);
                     if (AIAgentChatPanel.this.activeChatWorker.get() == this) {
                         AIAgentChatPanel.this.activeChatWorker.set(null);
@@ -394,6 +406,11 @@ public final class AIAgentChatPanel extends JPanel {
 
         this.activeChatWorker.set(worker);
         worker.execute();
+    }
+
+    private AgentMode selectedAgentMode() {
+        Object o = this.agentModeCombo.getSelectedItem();
+        return o instanceof AgentMode ? (AgentMode) o : AgentMode.ASK;
     }
 
     /** Stops any in-flight chat request; call before removing this panel from its tab. */

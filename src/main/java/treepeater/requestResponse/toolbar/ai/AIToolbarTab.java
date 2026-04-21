@@ -18,6 +18,8 @@ import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 
 import treepeater.Treepeater;
+import treepeater.ai.AgentMode;
+import treepeater.ai.AgentModeToolPolicy;
 import treepeater.ai.AgentToolContext;
 import treepeater.ai.AiModelOption;
 import treepeater.ai.ChatToolExecutor;
@@ -104,12 +106,13 @@ public class AIToolbarTab implements AIChatHost {
         return new OllamaStreamingChatClient(new OllamaClientConfig(baseUrl, model));
     }
 
-    /** Built-in HTTP target tools; tool runs are approved in the agent chat panel before execution. */
+    /** Built-in HTTP target tools; approval depends on {@link AgentMode}. */
     @Override
-    public ChatTooling chatTooling() {
+    public ChatTooling chatTooling(AgentMode mode) {
         if (this.agentToolContextSupplier == null) {
             return ChatTooling.none();
         }
+        AgentMode m = mode != null ? mode : AgentMode.ASK;
         ChatToolExecutor exec =
                 (name, argsJson) -> HttpTargetTools.execute(name, argsJson, this.agentToolContextSupplier.get());
         return new ChatTooling(
@@ -119,7 +122,7 @@ public class AIToolbarTab implements AIChatHost {
                     AgentToolContext c = this.agentToolContextSupplier.get();
                     return c != null ? c.currentHistoryIndex() : Integer.MIN_VALUE;
                 },
-                HttpTargetTools::requiresUserApproval);
+                new AgentModeToolPolicy(m));
     }
 
     @Override

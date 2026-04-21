@@ -1,8 +1,8 @@
 package treepeater.ai;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.function.IntSupplier;
-import java.util.function.Predicate;
 
 /**
  * Optional tool declarations plus an executor. When inactive, chat clients behave like plain text chat.
@@ -11,19 +11,19 @@ import java.util.function.Predicate;
  *
  * @param currentHistoryIndexSupplier invoked when formatting tool status lines; returns the tab's current send-history
  *     index, or {@link Integer#MIN_VALUE} if unknown.
- * @param requiresUserApproval if {@code null}, every tool run goes through approval. If non-null, when
- *     {@link Predicate#test(Object)} returns {@code false} for a tool name, the executor runs without waiting for the
- *     user, but a {@link ChatStreamMessage.ToolApprovalRequest} with {@code requiresApproval == false} is still
- *     emitted so the UI can show tool usage. Replace with a policy that reads user settings for future per-session or
- *     in-chat configuration.
+ * @param toolRunPolicy which tools need user approval before execution (never blocks outright).
  */
 public record ChatTooling(
         List<ChatToolDefinition> tools,
         ChatToolExecutor executor,
         IntSupplier currentHistoryIndexSupplier,
-        Predicate<String> requiresUserApproval) {
+        ToolRunPolicy toolRunPolicy) {
+    public ChatTooling {
+        Objects.requireNonNull(toolRunPolicy, "toolRunPolicy");
+    }
+
     public static ChatTooling none() {
-        return new ChatTooling(List.of(), null, () -> Integer.MIN_VALUE, s -> true);
+        return new ChatTooling(List.of(), null, () -> Integer.MIN_VALUE, new AgentModeToolPolicy(AgentMode.ASK));
     }
 
     public boolean isActive() {
@@ -53,7 +53,8 @@ public record ChatTooling(
         String argsJson = tc.argumentsJson();
         String name = tc.name();
         String human = HttpTargetTools.humanReadableUsage(name, argsJson, currentHistoryIndexForToolStatus());
-        if (this.requiresUserApproval != null && !this.requiresUserApproval.test(name)) {
+        ToolRunPolicy policy = this.toolRunPolicy;
+        if (!policy.requiresApproval(name)) {
             session.emit(new ChatStreamMessage.ToolApprovalRequest(tc.id(), name, argsJson, human, false));
             return this.executor.invoke(name, argsJson);
         }

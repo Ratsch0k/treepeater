@@ -617,9 +617,9 @@ public final class AIAgentChatPanel extends JPanel {
         }
         card.add(label, BorderLayout.CENTER);
 
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         buttons.setOpaque(false);
-        StyledButton noBtn = new StyledButton("No");
+        StyledButton noBtn = new StyledButton("Cancel");
         StyledButton okBtn = new StyledButton("OK");
         noBtn.setStyle(StyledButton.Style.DEFAULT);
         okBtn.setStyle(StyledButton.Style.AI);
@@ -643,6 +643,7 @@ public final class AIAgentChatPanel extends JPanel {
         noBtn.addActionListener(e -> resolveNo.run());
         okBtn.addActionListener(e -> resolveOk.run());
         buttons.add(noBtn);
+        buttons.add(Box.createHorizontalStrut(8));
         buttons.add(okBtn);
         card.add(buttons, BorderLayout.SOUTH);
         return card;

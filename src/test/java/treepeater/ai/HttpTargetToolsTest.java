@@ -592,7 +592,7 @@ class HttpTargetToolsTest {
 
     @Test
     void readHttpBody_maxBytesTooLarge_returnsError() throws Exception {
-        final int maxBytes = 262_144;
+        final int maxBytes = 65_536;
 
         byte[] body = "A".repeat(2 * maxBytes).getBytes(StandardCharsets.UTF_8);
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), body);

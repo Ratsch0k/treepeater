@@ -96,7 +96,7 @@ public final class HttpTargetTools {
     }
 
     private static final int DEFAULT_BODY_CHUNK_BYTES = 16_384;
-    private static final int MAX_BODY_CHUNK_BYTES = 262_144;
+    private static final int MAX_BODY_CHUNK_BYTES = 65_536;
 
     private static final String EMPTY_PARAMS_SCHEMA =
             """

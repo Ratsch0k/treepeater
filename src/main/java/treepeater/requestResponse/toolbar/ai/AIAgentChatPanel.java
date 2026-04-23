@@ -77,6 +77,9 @@ public final class AIAgentChatPanel extends JPanel {
     private static final int INPUT_AREA_MIN_ROWS = 1;
     private static final int INPUT_AREA_MAX_ROWS = 14;
 
+    private static final String SEND_BUTTON_LABEL = "Send";
+    private static final String STOP_BUTTON_LABEL = "Stop";
+
     private final AIChatHost host;
 
     private final AITranscriptListPanel transcriptList;
@@ -114,7 +117,7 @@ public final class AIAgentChatPanel extends JPanel {
         this.inputArea.setWrapStyleWord(true);
         this.inputArea.putClientProperty(FlatClientProperties.STYLE, "background: $Colors.ui.background.1;");
 
-        this.sendButton = new StyledButton("Send");
+        this.sendButton = new StyledButton(SEND_BUTTON_LABEL);
         this.sendButton.setStyle(StyledButton.Style.AI);
         this.sendButton.setPreferredSize(new Dimension(80, 22));
 
@@ -128,7 +131,7 @@ public final class AIAgentChatPanel extends JPanel {
         this.modelCombo.setSelectedIndex(0);
         this.modelCombo.setMaximumRowCount(12);
 
-        this.sendButton.addActionListener(e -> AIAgentChatPanel.this.startSend());
+        this.sendButton.addActionListener(e -> AIAgentChatPanel.this.onSendOrStopAction());
 
         InputMap inputMap = this.inputArea.getInputMap(JComponent.WHEN_FOCUSED);
         ActionMap actionMap = this.inputArea.getActionMap();
@@ -342,7 +345,7 @@ public final class AIAgentChatPanel extends JPanel {
         messages.add(new ChatMessage(ChatRole.USER, text));
         AgentSystemPrompt.prependDefault(messages);
 
-        this.sendButton.setEnabled(false);
+        setSendButtonWorking(true);
         this.agentModeCombo.setEnabled(false);
         this.modelCombo.setEnabled(false);
 
@@ -394,7 +397,7 @@ public final class AIAgentChatPanel extends JPanel {
                         flushMarkdownRender(last);
                     }
                     AIAgentChatPanel.this.transcriptActiveAssistantStrip.set(null);
-                    AIAgentChatPanel.this.sendButton.setEnabled(true);
+                    AIAgentChatPanel.this.setSendButtonWorking(false);
                     AIAgentChatPanel.this.agentModeCombo.setEnabled(true);
                     AIAgentChatPanel.this.modelCombo.setEnabled(true);
                     if (AIAgentChatPanel.this.activeChatWorker.get() == this) {
@@ -406,6 +409,23 @@ public final class AIAgentChatPanel extends JPanel {
 
         this.activeChatWorker.set(worker);
         worker.execute();
+    }
+
+    /**
+     * Sends the draft when idle, or stops the in-flight agent request (same as the Stop control) when a run is active.
+     */
+    private void onSendOrStopAction() {
+        SwingWorker<List<ChatMessage>, Void> w = this.activeChatWorker.get();
+        if (w != null && !w.isDone()) {
+            cancelInFlightChat();
+            return;
+        }
+        startSend();
+    }
+
+    private void setSendButtonWorking(boolean working) {
+        this.sendButton.setText(working ? STOP_BUTTON_LABEL : SEND_BUTTON_LABEL);
+        this.sendButton.setEnabled(true);
     }
 
     private AgentMode selectedAgentMode() {

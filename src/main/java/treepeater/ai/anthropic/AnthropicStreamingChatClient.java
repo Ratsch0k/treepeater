@@ -1,6 +1,7 @@
 package treepeater.ai.anthropic;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 
 import com.anthropic.client.AnthropicClient;
@@ -49,14 +50,22 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
             return streamOncePlain(messages, session);
         }
         List<ChatMessage> work = new ArrayList<>(messages);
-        int maxRounds = 16;
-        for (int round = 0; round < maxRounds; round++) {
+        for (int round = 0; round < StreamingChatClient.MAX_AGENT_TOOL_ROUNDS; round++) {
+            if (session.isClosed() || Thread.currentThread().isInterrupted()) {
+                return work;
+            }
             RoundResult rr = streamOneAssistantTurn(work, session, tooling);
             work.add(rr.assistant());
+            if (session.isClosed() || Thread.currentThread().isInterrupted()) {
+                return work;
+            }
             if (!rr.hadToolCalls()) {
                 return work;
             }
             for (ChatToolCall tc : rr.assistant().assistantToolCalls()) {
+                if (session.isClosed() || Thread.currentThread().isInterrupted()) {
+                    return work;
+                }
                 String result = tooling.executeWithApproval(tc, session);
                 work.add(new ChatMessage(ChatRole.TOOL, result, List.of(), tc.id()));
             }
@@ -87,48 +96,50 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
         AnthropicClient client = AnthropicOkHttpClient.builder().apiKey(this.config.apiKey()).build();
         try {
             try (StreamResponse<RawMessageStreamEvent> stream = client.messages().createStreaming(params)) {
-                stream.stream()
-                        .forEach(
-                                event -> {
-                                    if (event.isContentBlockStart()) {
-                                        RawContentBlockStartEvent start = event.asContentBlockStart();
-                                        RawContentBlockStartEvent.ContentBlock block = start.contentBlock();
-                                        if (block.isText()) {
-                                            st.phase = StreamPhase.TEXT;
-                                        } else if (block.isToolUse()) {
-                                            st.phase = StreamPhase.TOOL_INPUT;
-                                            st.toolJsonIn.setLength(0);
-                                            st.curToolId = block.asToolUse().id();
-                                            st.curToolName = block.asToolUse().name();
-                                        } else {
-                                            st.phase = StreamPhase.SKIP;
-                                        }
-                                    } else if (event.isContentBlockDelta()) {
-                                        RawContentBlockDeltaEvent blockDelta = event.asContentBlockDelta();
-                                        RawContentBlockDelta delta = blockDelta.delta();
-                                        if (st.phase == StreamPhase.TEXT && delta.isText()) {
-                                            String piece = delta.asText().text();
-                                            if (piece != null && !piece.isEmpty()) {
-                                                textOut.append(piece);
-                                                session.emit(new ChatStreamMessage.AssistantDelta(piece));
-                                            }
-                                        } else if (st.phase == StreamPhase.TOOL_INPUT && delta.isInputJson()) {
-                                            String part = delta.asInputJson().partialJson();
-                                            if (part != null && !part.isEmpty()) {
-                                                st.toolJsonIn.append(part);
-                                            }
-                                        }
-                                    } else if (event.isContentBlockStop()) {
-                                        if (st.phase == StreamPhase.TOOL_INPUT) {
-                                            toolCalls.add(
-                                                    new ChatToolCall(
-                                                            st.curToolId,
-                                                            st.curToolName,
-                                                            st.toolJsonIn.toString()));
-                                        }
-                                        st.phase = StreamPhase.SKIP;
-                                    }
-                                });
+                Iterator<RawMessageStreamEvent> it = stream.stream().iterator();
+                while (it.hasNext()
+                        && !session.isClosed()
+                        && !Thread.currentThread().isInterrupted()) {
+                    RawMessageStreamEvent event = it.next();
+                    if (event.isContentBlockStart()) {
+                        RawContentBlockStartEvent start = event.asContentBlockStart();
+                        RawContentBlockStartEvent.ContentBlock block = start.contentBlock();
+                        if (block.isText()) {
+                            st.phase = StreamPhase.TEXT;
+                        } else if (block.isToolUse()) {
+                            st.phase = StreamPhase.TOOL_INPUT;
+                            st.toolJsonIn.setLength(0);
+                            st.curToolId = block.asToolUse().id();
+                            st.curToolName = block.asToolUse().name();
+                        } else {
+                            st.phase = StreamPhase.SKIP;
+                        }
+                    } else if (event.isContentBlockDelta()) {
+                        RawContentBlockDeltaEvent blockDelta = event.asContentBlockDelta();
+                        RawContentBlockDelta delta = blockDelta.delta();
+                        if (st.phase == StreamPhase.TEXT && delta.isText()) {
+                            String piece = delta.asText().text();
+                            if (piece != null && !piece.isEmpty()) {
+                                textOut.append(piece);
+                                session.emit(new ChatStreamMessage.AssistantDelta(piece));
+                            }
+                        } else if (st.phase == StreamPhase.TOOL_INPUT && delta.isInputJson()) {
+                            String part = delta.asInputJson().partialJson();
+                            if (part != null && !part.isEmpty()) {
+                                st.toolJsonIn.append(part);
+                            }
+                        }
+                    } else if (event.isContentBlockStop()) {
+                        if (st.phase == StreamPhase.TOOL_INPUT) {
+                            toolCalls.add(
+                                    new ChatToolCall(
+                                            st.curToolId,
+                                            st.curToolName,
+                                            st.toolJsonIn.toString()));
+                        }
+                        st.phase = StreamPhase.SKIP;
+                    }
+                }
             }
         } finally {
             client.close();
@@ -144,23 +155,25 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
         AnthropicClient client = AnthropicOkHttpClient.builder().apiKey(this.config.apiKey()).build();
         try {
             try (StreamResponse<RawMessageStreamEvent> stream = client.messages().createStreaming(params)) {
-                stream.stream()
-                        .forEach(
-                                event -> {
-                                    if (!event.isContentBlockDelta()) {
-                                        return;
-                                    }
-                                    RawContentBlockDeltaEvent blockDelta = event.asContentBlockDelta();
-                                    RawContentBlockDelta delta = blockDelta.delta();
-                                    if (!delta.isText()) {
-                                        return;
-                                    }
-                                    String piece = delta.asText().text();
-                                    if (piece != null && !piece.isEmpty()) {
-                                        assistantAccum.append(piece);
-                                        session.emit(new ChatStreamMessage.AssistantDelta(piece));
-                                    }
-                                });
+                Iterator<RawMessageStreamEvent> it = stream.stream().iterator();
+                while (it.hasNext()
+                        && !session.isClosed()
+                        && !Thread.currentThread().isInterrupted()) {
+                    RawMessageStreamEvent event = it.next();
+                    if (!event.isContentBlockDelta()) {
+                        continue;
+                    }
+                    RawContentBlockDeltaEvent blockDelta = event.asContentBlockDelta();
+                    RawContentBlockDelta delta = blockDelta.delta();
+                    if (!delta.isText()) {
+                        continue;
+                    }
+                    String piece = delta.asText().text();
+                    if (piece != null && !piece.isEmpty()) {
+                        assistantAccum.append(piece);
+                        session.emit(new ChatStreamMessage.AssistantDelta(piece));
+                    }
+                }
             }
         } finally {
             client.close();

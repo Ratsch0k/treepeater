@@ -1,6 +1,7 @@
 package treepeater.ai.openai;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -54,14 +55,22 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
             return streamOncePlain(messages, session);
         }
         List<ChatMessage> work = new ArrayList<>(messages);
-        int maxRounds = 16;
-        for (int round = 0; round < maxRounds; round++) {
+        for (int round = 0; round < StreamingChatClient.MAX_AGENT_TOOL_ROUNDS; round++) {
+            if (session.isClosed() || Thread.currentThread().isInterrupted()) {
+                return work;
+            }
             RoundResult rr = streamOneAssistantTurn(work, session, tooling);
             work.add(rr.assistant());
+            if (session.isClosed() || Thread.currentThread().isInterrupted()) {
+                return work;
+            }
             if (!rr.hadToolCalls()) {
                 return work;
             }
             for (ChatToolCall tc : rr.assistant().assistantToolCalls()) {
+                if (session.isClosed() || Thread.currentThread().isInterrupted()) {
+                    return work;
+                }
                 String result = tooling.executeWithApproval(tc, session);
                 work.add(new ChatMessage(ChatRole.TOOL, result, List.of(), tc.id()));
             }
@@ -87,42 +96,42 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
 
         OpenAIClient client = newClient();
         try (StreamResponse<ChatCompletionChunk> stream = client.chat().completions().createStreaming(params)) {
-            stream.stream()
-                    .forEach(
-                            chunk -> {
-                                List<ChatCompletionChunk.Choice> choices = chunk.choices();
-                                if (choices == null || choices.isEmpty()) {
-                                    return;
-                                }
-                                ChatCompletionChunk.Choice choice = choices.getFirst();
-                                var delta = choice.delta();
-                                delta.content()
-                                        .ifPresent(
-                                                piece -> {
-                                                    if (!piece.isEmpty()) {
-                                                        textOut.append(piece);
-                                                        session.emit(new ChatStreamMessage.AssistantDelta(piece));
-                                                    }
-                                                });
-                                delta.toolCalls()
-                                        .ifPresent(
-                                                tcs -> {
-                                                    for (ChatCompletionChunk.Choice.Delta.ToolCall tc : tcs) {
-                                                        long idx = tc.index();
-                                                        ToolStreamAccumulator acc =
-                                                                toolAcc.computeIfAbsent(
-                                                                        idx, k -> new ToolStreamAccumulator());
-                                                        tc.id().ifPresent(id -> acc.id = id);
-                                                        tc.function()
-                                                                .ifPresent(
-                                                                        fn -> {
-                                                                            fn.name().ifPresent(n -> acc.name = n);
-                                                                            fn.arguments()
-                                                                                    .ifPresent(a -> acc.args.append(a));
-                                                                        });
-                                                    }
-                                                });
-                            });
+            Iterator<ChatCompletionChunk> it = stream.stream().iterator();
+            while (it.hasNext()
+                    && !session.isClosed()
+                    && !Thread.currentThread().isInterrupted()) {
+                ChatCompletionChunk chunk = it.next();
+                List<ChatCompletionChunk.Choice> choices = chunk.choices();
+                if (choices == null || choices.isEmpty()) {
+                    continue;
+                }
+                ChatCompletionChunk.Choice choice = choices.getFirst();
+                var delta = choice.delta();
+                delta.content()
+                        .ifPresent(
+                                piece -> {
+                                    if (!piece.isEmpty()) {
+                                        textOut.append(piece);
+                                        session.emit(new ChatStreamMessage.AssistantDelta(piece));
+                                    }
+                                });
+                delta.toolCalls()
+                        .ifPresent(
+                                tcs -> {
+                                    for (ChatCompletionChunk.Choice.Delta.ToolCall tc : tcs) {
+                                        long idx = tc.index();
+                                        ToolStreamAccumulator acc =
+                                                toolAcc.computeIfAbsent(idx, k -> new ToolStreamAccumulator());
+                                        tc.id().ifPresent(id -> acc.id = id);
+                                        tc.function()
+                                                .ifPresent(
+                                                        fn -> {
+                                                            fn.name().ifPresent(n -> acc.name = n);
+                                                            fn.arguments().ifPresent(a -> acc.args.append(a));
+                                                        });
+                                    }
+                                });
+            }
         } finally {
             client.close();
         }
@@ -149,24 +158,26 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
             throws Exception {
         OpenAIClient client = newClient();
         try (StreamResponse<ChatCompletionChunk> stream = client.chat().completions().createStreaming(params)) {
-            stream.stream()
-                    .forEach(
-                            chunk -> {
-                                List<ChatCompletionChunk.Choice> choices = chunk.choices();
-                                if (choices == null || choices.isEmpty()) {
-                                    return;
-                                }
-                                choices.getFirst()
-                                        .delta()
-                                        .content()
-                                        .ifPresent(
-                                                piece -> {
-                                                    if (!piece.isEmpty()) {
-                                                        assistantAccum.append(piece);
-                                                        session.emit(new ChatStreamMessage.AssistantDelta(piece));
-                                                    }
-                                                });
-                            });
+            Iterator<ChatCompletionChunk> it = stream.stream().iterator();
+            while (it.hasNext()
+                    && !session.isClosed()
+                    && !Thread.currentThread().isInterrupted()) {
+                ChatCompletionChunk chunk = it.next();
+                List<ChatCompletionChunk.Choice> choices = chunk.choices();
+                if (choices == null || choices.isEmpty()) {
+                    continue;
+                }
+                choices.getFirst()
+                        .delta()
+                        .content()
+                        .ifPresent(
+                                piece -> {
+                                    if (!piece.isEmpty()) {
+                                        assistantAccum.append(piece);
+                                        session.emit(new ChatStreamMessage.AssistantDelta(piece));
+                                    }
+                                });
+            }
         } finally {
             client.close();
         }

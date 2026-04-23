@@ -47,7 +47,7 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
     public OllamaStreamingChatClient(OllamaClientConfig config) {
         this.config = config;
         this.api = new Ollama(config.baseUrl());
-        this.api.setMaxChatToolCallRetries(16);
+        this.api.setMaxChatToolCallRetries(StreamingChatClient.MAX_AGENT_TOOL_ROUNDS);
     }
 
     @Override

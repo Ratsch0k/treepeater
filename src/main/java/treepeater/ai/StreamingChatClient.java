@@ -8,6 +8,12 @@ import java.util.function.Consumer;
  */
 public interface StreamingChatClient {
     /**
+     * Safety cap on assistant↔tool round-trips when tools are active. The user can stop earlier via
+     * {@link ChatStreamSession#close()}; clients should also exit when the session is closed or the worker thread is
+     * interrupted.
+     */
+    int MAX_AGENT_TOOL_ROUNDS = 256;
+    /**
      * Runs a streaming chat request with no tools; all output is delivered as {@link ChatStreamMessage.AssistantDelta}.
      */
     default List<ChatMessage> streamChat(List<ChatMessage> messages, Consumer<ChatStreamMessage> onMessage)

@@ -23,8 +23,10 @@ import com.openai.models.chat.completions.ChatCompletionChunk;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall;
 import com.openai.models.chat.completions.ChatCompletionMessageToolCall;
+import com.openai.models.chat.completions.ChatCompletionStreamOptions;
 import com.openai.models.chat.completions.ChatCompletionToolChoiceOption;
 import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
+import com.openai.models.completions.CompletionUsage;
 
 import treepeater.ai.ChatMessage;
 import treepeater.ai.ChatRole;
@@ -32,7 +34,9 @@ import treepeater.ai.ChatStreamMessage;
 import treepeater.ai.ChatStreamSession;
 import treepeater.ai.ChatToolCall;
 import treepeater.ai.ChatToolDefinition;
+import treepeater.ai.ChatStreamLogging;
 import treepeater.ai.ChatTooling;
+import treepeater.ai.ParallelToolExecution;
 import treepeater.ai.StreamingChatClient;
 
 /**
@@ -51,37 +55,48 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
     @Override
     public List<ChatMessage> streamChat(
             List<ChatMessage> messages, ChatTooling tooling, ChatStreamSession session) throws Exception {
-        if (tooling == null || !tooling.isActive()) {
-            return streamOncePlain(messages, session);
-        }
-        List<ChatMessage> work = new ArrayList<>(messages);
-        for (int round = 0; round < StreamingChatClient.MAX_AGENT_TOOL_ROUNDS; round++) {
-            if (session.isClosed() || Thread.currentThread().isInterrupted()) {
-                return work;
+        OpenAIClient client = newClient();
+        String cacheKey = "treepeater-" + System.identityHashCode(session);
+        try {
+            if (tooling == null || !tooling.isActive()) {
+                return streamOncePlain(client, messages, session, cacheKey);
             }
-            RoundResult rr = streamOneAssistantTurn(work, session, tooling);
-            work.add(rr.assistant());
-            if (session.isClosed() || Thread.currentThread().isInterrupted()) {
-                return work;
-            }
-            if (!rr.hadToolCalls()) {
-                return work;
-            }
-            for (ChatToolCall tc : rr.assistant().assistantToolCalls()) {
+            List<ChatMessage> work = new ArrayList<>(messages);
+            for (int round = 0; round < StreamingChatClient.MAX_AGENT_TOOL_ROUNDS; round++) {
                 if (session.isClosed() || Thread.currentThread().isInterrupted()) {
                     return work;
                 }
-                String result = tooling.executeWithApproval(tc, session);
-                work.add(new ChatMessage(ChatRole.TOOL, result, List.of(), tc.id()));
+                RoundResult rr = streamOneAssistantTurn(client, work, session, tooling, round, cacheKey);
+                work.add(rr.assistant());
+                if (session.isClosed() || Thread.currentThread().isInterrupted()) {
+                    return work;
+                }
+                if (!rr.hadToolCalls()) {
+                    return work;
+                }
+                List<ChatToolCall> calls = rr.assistant().assistantToolCalls();
+                List<String> results =
+                        ParallelToolExecution.executeRound(calls, tooling, session);
+                for (int i = 0; i < calls.size(); i++) {
+                    if (session.isClosed() || Thread.currentThread().isInterrupted()) {
+                        return work;
+                    }
+                    work.add(new ChatMessage(ChatRole.TOOL, results.get(i), List.of(), calls.get(i).id()));
+                }
             }
+            return work;
+        } finally {
+            client.close();
         }
-        return work;
     }
 
-    private List<ChatMessage> streamOncePlain(List<ChatMessage> messages, ChatStreamSession session) throws Exception {
-        ChatCompletionCreateParams params = buildParams(messages, ChatTooling.none(), false);
+    private List<ChatMessage> streamOncePlain(
+            OpenAIClient client, List<ChatMessage> messages, ChatStreamSession session, String cacheKey)
+            throws Exception {
+        ChatStreamLogging.logApiRequest("OpenAI", this.config.deploymentName(), 0, messages.size(), false);
+        ChatCompletionCreateParams params = buildParams(messages, ChatTooling.none(), false, cacheKey);
         StringBuilder assistantAccum = new StringBuilder();
-        runTextStream(params, assistantAccum, session);
+        runTextStream(client, params, assistantAccum, session, 0);
         List<ChatMessage> history = new ArrayList<>(messages.size() + 1);
         history.addAll(messages);
         history.add(new ChatMessage(ChatRole.ASSISTANT, assistantAccum.toString()));
@@ -89,18 +104,26 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
     }
 
     private RoundResult streamOneAssistantTurn(
-            List<ChatMessage> messages, ChatStreamSession session, ChatTooling tooling) throws Exception {
-        ChatCompletionCreateParams params = buildParams(messages, tooling, true);
+            OpenAIClient client,
+            List<ChatMessage> messages,
+            ChatStreamSession session,
+            ChatTooling tooling,
+            int round,
+            String cacheKey)
+            throws Exception {
+        ChatStreamLogging.logApiRequest("OpenAI", this.config.deploymentName(), round, messages.size(), true);
+        ChatCompletionCreateParams params = buildParams(messages, tooling, true, cacheKey);
         StringBuilder textOut = new StringBuilder();
         Map<Long, ToolStreamAccumulator> toolAcc = new TreeMap<>();
+        UsageAccumulator usage = new UsageAccumulator();
 
-        OpenAIClient client = newClient();
         try (StreamResponse<ChatCompletionChunk> stream = client.chat().completions().createStreaming(params)) {
             Iterator<ChatCompletionChunk> it = stream.stream().iterator();
             while (it.hasNext()
                     && !session.isClosed()
                     && !Thread.currentThread().isInterrupted()) {
                 ChatCompletionChunk chunk = it.next();
+                absorbUsage(chunk, usage);
                 List<ChatCompletionChunk.Choice> choices = chunk.choices();
                 if (choices == null || choices.isEmpty()) {
                     continue;
@@ -132,9 +155,15 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
                                     }
                                 });
             }
-        } finally {
-            client.close();
         }
+
+        ChatStreamLogging.logApiUsage(
+                "OpenAI",
+                round,
+                usage.inputTokens,
+                usage.cacheReadTokens,
+                0L,
+                usage.outputTokens);
 
         List<ChatToolCall> toolCalls = new ArrayList<>();
         for (Map.Entry<Long, ToolStreamAccumulator> e : toolAcc.entrySet()) {
@@ -154,15 +183,20 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
     }
 
     private void runTextStream(
-            ChatCompletionCreateParams params, StringBuilder assistantAccum, ChatStreamSession session)
+            OpenAIClient client,
+            ChatCompletionCreateParams params,
+            StringBuilder assistantAccum,
+            ChatStreamSession session,
+            int round)
             throws Exception {
-        OpenAIClient client = newClient();
+        UsageAccumulator usage = new UsageAccumulator();
         try (StreamResponse<ChatCompletionChunk> stream = client.chat().completions().createStreaming(params)) {
             Iterator<ChatCompletionChunk> it = stream.stream().iterator();
             while (it.hasNext()
                     && !session.isClosed()
                     && !Thread.currentThread().isInterrupted()) {
                 ChatCompletionChunk chunk = it.next();
+                absorbUsage(chunk, usage);
                 List<ChatCompletionChunk.Choice> choices = chunk.choices();
                 if (choices == null || choices.isEmpty()) {
                     continue;
@@ -178,17 +212,46 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
                                     }
                                 });
             }
-        } finally {
-            client.close();
         }
+        ChatStreamLogging.logApiUsage(
+                "OpenAI",
+                round,
+                usage.inputTokens,
+                usage.cacheReadTokens,
+                0L,
+                usage.outputTokens);
+    }
+
+    private static void absorbUsage(ChatCompletionChunk chunk, UsageAccumulator usage) {
+        chunk.usage()
+                .ifPresent(
+                        (CompletionUsage cu) -> {
+                            usage.inputTokens = cu.promptTokens();
+                            usage.outputTokens = cu.completionTokens();
+                            cu.promptTokensDetails()
+                                    .ifPresent(
+                                            details ->
+                                                    details.cachedTokens()
+                                                            .ifPresent(v -> usage.cacheReadTokens = v));
+                        });
     }
 
     private ChatCompletionCreateParams buildParams(
-            List<ChatMessage> messages, ChatTooling tooling, boolean includeTools) throws JsonProcessingException {
+            List<ChatMessage> messages, ChatTooling tooling, boolean includeTools, String cacheKey)
+            throws JsonProcessingException {
+        // Order matters for auto prompt caching: emit tools → system → messages. The Azure/OpenAI
+        // prefix cache keys on a stable prefix; mutating system or tools mid-session invalidates
+        // subsequent hits. promptCacheKey keeps a session's prefix colocated on the same backend.
         ChatCompletionCreateParams.Builder b =
                 ChatCompletionCreateParams.builder()
                         .model(ChatModel.of(this.config.deploymentName()))
-                        .maxCompletionTokens(4096L);
+                        .maxCompletionTokens(4096L)
+                        .streamOptions(
+                                ChatCompletionStreamOptions.builder().includeUsage(true).build());
+
+        if (cacheKey != null && !cacheKey.isBlank()) {
+            b.promptCacheKey(cacheKey);
+        }
 
         if (includeTools && tooling != null && tooling.isActive()) {
             b.toolChoice(ChatCompletionToolChoiceOption.Auto.AUTO);
@@ -282,6 +345,12 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
         String id;
         String name = "";
         final StringBuilder args = new StringBuilder();
+    }
+
+    private static final class UsageAccumulator {
+        long inputTokens;
+        long outputTokens;
+        long cacheReadTokens;
     }
 
     private record RoundResult(ChatMessage assistant, boolean hadToolCalls) {}

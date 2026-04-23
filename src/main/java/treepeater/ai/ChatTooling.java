@@ -30,6 +30,11 @@ public record ChatTooling(
         return this.tools != null && !this.tools.isEmpty() && this.executor != null;
     }
 
+    /** Whether the given tool name needs user approval under the current policy. */
+    public boolean requiresApproval(String toolName) {
+        return this.toolRunPolicy.requiresApproval(toolName);
+    }
+
     /**
      * Snapshot of the UI's current history entry index for one-line tool labels; {@link Integer#MIN_VALUE} if unknown.
      */

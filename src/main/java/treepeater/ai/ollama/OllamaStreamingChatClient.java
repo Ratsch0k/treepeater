@@ -27,6 +27,7 @@ import treepeater.ai.ChatStreamSession;
 import treepeater.ai.ChatToolCall;
 import treepeater.ai.ChatToolDefinition;
 import treepeater.ai.ChatTooling;
+import treepeater.ai.ChatStreamLogging;
 import treepeater.ai.StreamingChatClient;
 
 /**
@@ -82,6 +83,8 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
             partial = partial.withUseTools(true);
         }
         OllamaChatRequest request = partial.build();
+
+        ChatStreamLogging.logApiRequest("Ollama", this.config.model(), 0, messages.size(), useTools);
 
         OllamaChatTokenHandler handler =
                 chunk -> {

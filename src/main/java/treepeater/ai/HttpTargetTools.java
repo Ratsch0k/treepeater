@@ -16,6 +16,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -39,6 +41,7 @@ import burp.api.montoya.http.message.responses.HttpResponse;
  */
 public final class HttpTargetTools {
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final Logger TIMING = Logger.getLogger("treepeater.ai.HttpTargetTools.commitLiveRequest");
 
     /** Tool name: current editor/target only; JSON from {@link HttpTargetSnapshot#toJson()} plus nested {@code history}. */
     public static final String GET_CURRENT_HTTP_TARGET = "get_current_http_target";
@@ -95,8 +98,16 @@ public final class HttpTargetTools {
         }
     }
 
-    private static final int DEFAULT_BODY_CHUNK_BYTES = 16_384;
+    private static final int DEFAULT_BODY_CHUNK_BYTES = 8_192;
     private static final int MAX_BODY_CHUNK_BYTES = 65_536;
+
+    /**
+     * Upper bound on the JSON string returned to the model for any single tool call. Sized to
+     * comfortably accommodate one {@link #MAX_BODY_CHUNK_BYTES}-sized body chunk after base64
+     * inflation (~88k chars) plus JSON overhead. When a tool returns more, the payload is replaced
+     * with a small error object pointing the model at the paginated alternatives.
+     */
+    private static final int MAX_TOOL_RESULT_CHARS = 96_000;
 
     private static final String EMPTY_PARAMS_SCHEMA =
             """
@@ -340,8 +351,9 @@ public final class HttpTargetTools {
         } catch (Exception e) {
             return errorJson("invalid tool arguments JSON");
         }
+        String result;
         try {
-            return switch (toolName) {
+            result = switch (toolName) {
                 case GET_CURRENT_HTTP_TARGET -> targetWithHistoryJson(ctx);
                 case GET_HTTP_HISTORY_STATE -> historyStateJson(ctx);
                 case GET_HTTP_REQUEST_LINE -> requestLineJson(ctx, args);
@@ -364,6 +376,32 @@ public final class HttpTargetTools {
         } catch (Exception e) {
             return errorJson(e.getMessage() != null ? e.getMessage() : "tool error");
         }
+        return capResult(result);
+    }
+
+    /**
+     * Returns an oversized tool result unchanged when within budget; otherwise replaces it with a
+     * small structured error pointing the model at paginated alternatives. This backstops every tool
+     * uniformly so an unexpectedly large payload can never explode the next round's input-token
+     * count. {@link #READ_HTTP_BODY} is sized to stay well under this cap even for a max chunk.
+     */
+    private static String capResult(String result) {
+        if (result == null) {
+            return errorJson("tool returned null");
+        }
+        if (result.length() <= MAX_TOOL_RESULT_CHARS) {
+            return result;
+        }
+        ObjectNode n = JSON.createObjectNode();
+        n.put("error", "tool_result_too_large");
+        n.put("result_chars", result.length());
+        n.put("max_result_chars", MAX_TOOL_RESULT_CHARS);
+        n.put(
+                "hint",
+                "Call read_http_body with offset/max_bytes for paginated body reads, "
+                        + "list_http_header_names then get_http_header for headers, or "
+                        + "list_http_cookies then get_http_cookie for cookies.");
+        return write(n);
     }
 
     private static JsonNode parseArgs(String argumentsJson) throws JsonProcessingException {
@@ -609,8 +647,20 @@ public final class HttpTargetTools {
         if (applier == null) {
             throw new IllegalArgumentException("request body updates unavailable");
         }
+        long t0 = System.nanoTime();
+        if (TIMING.isLoggable(Level.FINE)) {
+            TIMING.fine("commitLiveRequest: begin invokeAndWait (worker thread)");
+        }
         try {
-            SwingUtilities.invokeAndWait(() -> applier.accept(updated));
+            SwingUtilities.invokeAndWait(
+                    () -> {
+                        if (TIMING.isLoggable(Level.FINE)) {
+                            long waitMs = (System.nanoTime() - t0) / 1_000_000L;
+                            TIMING.fine(
+                                    "commitLiveRequest: EDT runnable started after " + waitMs + "ms (queue wait)");
+                        }
+                        applier.accept(updated);
+                    });
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("interrupted while applying request");
@@ -623,6 +673,10 @@ public final class HttpTargetTools {
                 throw err;
             }
             throw new IllegalStateException(c != null ? c.getMessage() : "request update failed");
+        }
+        if (TIMING.isLoggable(Level.FINE)) {
+            long totalMs = (System.nanoTime() - t0) / 1_000_000L;
+            TIMING.fine("commitLiveRequest: invokeAndWait returned after " + totalMs + "ms total (incl. apply on EDT)");
         }
     }
 

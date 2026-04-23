@@ -62,7 +62,9 @@ import treepeater.ai.ChatMessage;
 import treepeater.ai.ChatRole;
 import treepeater.ai.ChatStreamMessage;
 import treepeater.ai.ChatStreamSession;
+import treepeater.ai.ChatStreamLogging;
 import treepeater.ai.ChatTooling;
+import treepeater.ai.CoalescingChatStreamOutbound;
 import treepeater.components.RoundedPanel;
 import treepeater.components.StyledButton;
 import treepeater.settings.TreepeaterSettings;
@@ -99,6 +101,9 @@ public final class AIAgentChatPanel extends JPanel {
     private final AtomicReference<AssistantStrip> transcriptActiveAssistantStrip = new AtomicReference<>();
 
     private final AtomicReference<ChatStreamSession> activeSession = new AtomicReference<>();
+
+    /** Coalesces repeated scroll-to-bottom requests to a single {@link SwingUtilities#invokeLater}. */
+    private boolean transcriptScrollCoalescePending;
 
     public AIAgentChatPanel(AIChatHost host) {
         super(new BorderLayout());
@@ -356,9 +361,10 @@ public final class AIAgentChatPanel extends JPanel {
         appendTranscriptRow(firstStrip.root);
 
         AtomicReference<ChatStreamSession> sessionRef = new AtomicReference<>();
-        Consumer<ChatStreamMessage> outbound =
-                m -> SwingUtilities.invokeLater(() -> handleStreamMessageOnEdt(m, sessionRef.get()));
-        ChatStreamSession session = new ChatStreamSession(outbound);
+        final CoalescingChatStreamOutbound streamCoalescer =
+                new CoalescingChatStreamOutbound(
+                        m -> SwingUtilities.invokeLater(() -> handleStreamMessageOnEdt(m, sessionRef.get())));
+        ChatStreamSession session = new ChatStreamSession(streamCoalescer);
         sessionRef.set(session);
         this.activeSession.set(session);
 
@@ -368,11 +374,15 @@ public final class AIAgentChatPanel extends JPanel {
             @Override
             protected List<ChatMessage> doInBackground() throws Exception {
                 try {
+                    AiModelOption choice = (AiModelOption) AIAgentChatPanel.this.modelCombo.getSelectedItem();
+                    String modelLabel = choice != null ? choice.toString() : "?";
+                    ChatStreamLogging.logUserTurnStart(modelLabel, this.requestMessages.size());
                     return AIAgentChatPanel.this
                             .host
                             .clientForSelectedModel(AIAgentChatPanel.this.modelCombo)
                             .streamChat(this.requestMessages, requestTooling, session);
                 } finally {
+                    streamCoalescer.shutdown();
                     session.close();
                     AIAgentChatPanel.this.activeSession.compareAndSet(session, null);
                 }
@@ -838,8 +848,13 @@ public final class AIAgentChatPanel extends JPanel {
     }
 
     private void scrollTranscriptToBottom() {
+        if (this.transcriptScrollCoalescePending) {
+            return;
+        }
+        this.transcriptScrollCoalescePending = true;
         SwingUtilities.invokeLater(
                 () -> {
+                    this.transcriptScrollCoalescePending = false;
                     JScrollBar bar = this.transcriptScroll.getVerticalScrollBar();
                     bar.setValue(bar.getMaximum());
                 });

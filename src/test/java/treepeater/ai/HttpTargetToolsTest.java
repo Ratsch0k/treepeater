@@ -237,6 +237,27 @@ class HttpTargetToolsTest {
         assertEquals(17, HttpTargetTools.definitions().size());
     }
 
+    // ===== result cap =====
+
+    @Test
+    void execute_cappedWhenResultExceedsLimit() throws Exception {
+        // A single header value large enough that the surrounding JSON for get_http_header
+        // exceeds MAX_TOOL_RESULT_CHARS (96k). Use 120k chars to leave no doubt.
+        String huge = "x".repeat(120_000);
+        List<HttpHeader> headers = List.of(hdr("X-Big", huge));
+        HttpRequest request = req("GET", "https://x.com/", "/", headers, new byte[0]);
+        AgentToolContext ctx = singleEntryCtx(request, null);
+
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_HTTP_HEADER,
+                "{\"history_index\":0,\"side\":\"request\",\"name\":\"X-Big\"}", ctx));
+
+        assertEquals("tool_result_too_large", result.get("error").asText());
+        assertTrue(result.has("result_chars"));
+        assertTrue(result.has("max_result_chars"));
+        assertTrue(result.get("result_chars").asInt() > result.get("max_result_chars").asInt());
+        assertTrue(result.has("hint"), "cap response should point the model at paginated alternatives");
+    }
+
     @Test
     void definitions_allHaveNonEmptyNamesAndDescriptions() {
         for (ChatToolDefinition def : HttpTargetTools.definitions()) {

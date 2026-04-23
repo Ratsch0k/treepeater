@@ -28,6 +28,7 @@ public final class ChatStreamSession {
         if (m == null) {
             return;
         }
+        ChatStreamLogging.logEmitTowardUi(m);
         this.outbound.accept(m);
     }
 
@@ -36,6 +37,7 @@ public final class ChatStreamSession {
         if (m == null) {
             return;
         }
+        ChatStreamLogging.logSessionPostReply(m);
         this.inbound.offer(m);
     }
 

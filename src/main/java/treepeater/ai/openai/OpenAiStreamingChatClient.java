@@ -270,7 +270,12 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
     }
 
     private static FunctionParameters schemaToParameters(String jsonSchema) throws JsonProcessingException {
-        JsonNode n = JSON.readTree(jsonSchema);
+        final JsonNode n;
+        try {
+            n = JSON.readTree(jsonSchema);
+        } catch (JsonProcessingException e) {
+            return FunctionParameters.builder().build();
+        }
         if (!n.isObject()) {
             return FunctionParameters.builder().build();
         }

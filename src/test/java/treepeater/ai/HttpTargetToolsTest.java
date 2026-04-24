@@ -86,7 +86,7 @@ class HttpTargetToolsTest {
         lenient().when(ba.getBytes()).thenReturn(safeBody.clone());
         lenient().when(req.body()).thenReturn(ba);
 
-        stubMutations(req);
+        stubMutations(req, ba);
         return req;
     }
 
@@ -95,14 +95,22 @@ class HttpTargetToolsTest {
      * exposes the new ByteArray via body(); all other with* methods return a shared
      * "mutated" mock that self-chains further with* calls.
      */
-    private static void stubMutations(HttpRequest req) {
+    private static void stubMutations(HttpRequest req, ByteArray sameBody) {
         HttpRequest mutated = mock(HttpRequest.class);
+        if (sameBody != null) {
+            lenient().when(mutated.body()).thenReturn(sameBody);
+        }
         lenient().when(mutated.withHeader(anyString(), anyString())).thenReturn(mutated);
         lenient().when(mutated.withRemovedHeader(anyString())).thenReturn(mutated);
         lenient().when(mutated.withMethod(anyString())).thenReturn(mutated);
         lenient().when(mutated.withService(any(HttpService.class))).thenReturn(mutated);
         lenient().when(mutated.withPath(anyString())).thenReturn(mutated);
-        lenient().when(mutated.withBody(any(ByteArray.class))).thenReturn(mutated);
+        lenient().when(mutated.withBody(any(ByteArray.class)))
+                .thenAnswer(inv -> {
+                    ByteArray newBa = inv.getArgument(0);
+                    lenient().when(mutated.body()).thenReturn(newBa);
+                    return mutated;
+                });
 
         lenient().when(req.withHeader(anyString(), anyString())).thenReturn(mutated);
         lenient().when(req.withRemovedHeader(anyString())).thenReturn(mutated);
@@ -113,6 +121,17 @@ class HttpTargetToolsTest {
             ByteArray newBa = inv.getArgument(0);
             HttpRequest updated = mock(HttpRequest.class);
             lenient().when(updated.body()).thenReturn(newBa);
+            lenient().when(updated.withMethod(anyString())).thenReturn(updated);
+            lenient().when(updated.withHeader(anyString(), anyString())).thenReturn(updated);
+            lenient().when(updated.withRemovedHeader(anyString())).thenReturn(updated);
+            lenient().when(updated.withService(any(HttpService.class))).thenReturn(updated);
+            lenient().when(updated.withPath(anyString())).thenReturn(updated);
+            lenient().when(updated.withBody(any(ByteArray.class)))
+                    .thenAnswer(inv2 -> {
+                        ByteArray b2 = inv2.getArgument(0);
+                        lenient().when(updated.body()).thenReturn(b2);
+                        return updated;
+                    });
             return updated;
         });
     }
@@ -177,11 +196,7 @@ class HttpTargetToolsTest {
         assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.REPLACE_IN_HTTP_REQUEST_BODY));
         assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.PATCH_HTTP_REQUEST_BODY_LINES));
         assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.SET_HTTP_REQUEST_BODY));
-        assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.SET_HTTP_REQUEST_HEADER));
-        assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.REMOVE_HTTP_REQUEST_HEADER));
-        assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.SET_HTTP_REQUEST_COOKIE));
-        assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.SET_HTTP_REQUEST_METHOD));
-        assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.SET_HTTP_REQUEST_URL));
+        assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES));
     }
 
     @Test
@@ -240,8 +255,8 @@ class HttpTargetToolsTest {
     // ===== definitions =====
 
     @Test
-    void definitions_returnsAll12Tools() {
-        assertEquals(12, HttpTargetTools.definitions().size());
+    void definitions_returnsAllBuiltInTools() {
+        assertEquals(8, HttpTargetTools.definitions().size());
     }
 
     // ===== result cap =====
@@ -800,108 +815,104 @@ class HttpTargetToolsTest {
         assertTrue(result.has("error"));
     }
 
-    // ===== set_http_request_header =====
+    // ===== apply_http_request_semantic_changes =====
 
     @Test
-    void setHttpRequestHeader_invokesWithHeaderAndCommits() throws Exception {
+    void applySemantic_setHeader_invokesWithHeaderAndCommits() throws Exception {
         AtomicReference<HttpRequest> applied = new AtomicReference<>();
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
+        String args =
+                "{\"operations\":[{\"type\":\"header\",\"action\":\"set\",\"key\":\"X-Custom\",\"value\":\"hello\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SET_HTTP_REQUEST_HEADER,
-                "{\"name\":\"X-Custom\",\"value\":\"hello\"}", ctx));
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
 
         assertTrue(result.get("ok").asBoolean());
+        assertEquals(1, result.get("operations_applied").asInt());
         assertNotNull(applied.get());
         verify(request).withHeader("X-Custom", "hello");
     }
 
     @Test
-    void setHttpRequestHeader_missingName_returnsError() throws Exception {
+    void applySemantic_setHeader_emptyKey_returnsError() throws Exception {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null);
+        String args = "{\"operations\":[{\"type\":\"header\",\"action\":\"set\",\"value\":\"hello\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SET_HTTP_REQUEST_HEADER,
-                "{\"value\":\"hello\"}", ctx));
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
 
         assertTrue(result.has("error"));
+        assertEquals(0, result.get("op_index").asInt());
     }
 
-    // ===== remove_http_request_header =====
-
     @Test
-    void removeHttpRequestHeader_invokesWithRemovedHeaderAndCommits() throws Exception {
+    void applySemantic_removeHeader_invokesWithRemovedHeaderAndCommits() throws Exception {
         AtomicReference<HttpRequest> applied = new AtomicReference<>();
         List<HttpHeader> headers = List.of(hdr("X-Remove-Me", "value"));
         HttpRequest request = req("GET", "https://x.com/", "/", headers, new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
+        String args = "{\"operations\":[{\"type\":\"header\",\"action\":\"remove\",\"key\":\"X-Remove-Me\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.REMOVE_HTTP_REQUEST_HEADER,
-                "{\"name\":\"X-Remove-Me\"}", ctx));
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertNotNull(applied.get());
         verify(request).withRemovedHeader("X-Remove-Me");
     }
 
-    // ===== set_http_request_cookie =====
-
     @Test
-    void setHttpRequestCookie_addsCookieAlongsideExisting() throws Exception {
+    void applySemantic_cookie_addsAlongsideExisting() throws Exception {
         List<HttpHeader> headers = List.of(hdr("Cookie", "session=abc"));
         AtomicReference<HttpRequest> applied = new AtomicReference<>();
         HttpRequest request = req("GET", "https://x.com/", "/", headers, new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
+        String args = "{\"operations\":[{\"type\":\"cookie\",\"action\":\"set\",\"key\":\"token\",\"value\":\"xyz\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SET_HTTP_REQUEST_COOKIE,
-                "{\"name\":\"token\",\"value\":\"xyz\"}", ctx));
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertNotNull(applied.get());
-        // The old Cookie header must be removed first
         verify(request).withRemovedHeader("Cookie");
     }
 
     @Test
-    void setHttpRequestCookie_removeCookie() throws Exception {
+    void applySemantic_cookie_removeOne() throws Exception {
         List<HttpHeader> headers = List.of(hdr("Cookie", "session=abc; token=xyz"));
         AtomicReference<HttpRequest> applied = new AtomicReference<>();
         HttpRequest request = req("GET", "https://x.com/", "/", headers, new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
+        String args = "{\"operations\":[{\"type\":\"cookie\",\"action\":\"remove\",\"key\":\"session\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SET_HTTP_REQUEST_COOKIE,
-                "{\"name\":\"session\",\"remove\":true}", ctx));
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertNotNull(applied.get());
     }
 
-    // ===== set_http_request_method =====
-
     @Test
-    void setHttpRequestMethod_invokesWithMethodAndCommits() throws Exception {
+    void applySemantic_method_setCommits() throws Exception {
         AtomicReference<HttpRequest> applied = new AtomicReference<>();
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
+        String args =
+                "{\"operations\":[{\"type\":\"method\",\"action\":\"set\",\"key\":\"\",\"value\":\"POST\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SET_HTTP_REQUEST_METHOD,
-                "{\"method\":\"POST\"}", ctx));
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertNotNull(applied.get());
         verify(request).withMethod("POST");
     }
 
-    // ===== set_http_request_url =====
-
     @Test
-    void setHttpRequestUrl_parsesHostPortPathAndCommits() throws Exception {
+    void applySemantic_url_parsesHostPortPathAndCommits() throws Exception {
         AtomicReference<HttpRequest> applied = new AtomicReference<>();
         HttpRequest request = req("GET", "https://old.com/", "/", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
+        String args = "{\"operations\":[{\"type\":\"url\",\"action\":\"set\",\"key\":\"\","
+                + "\"value\":\"https://new.com:8443/api/v1?q=test\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SET_HTTP_REQUEST_URL,
-                "{\"url\":\"https://new.com:8443/api/v1?q=test\"}", ctx));
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertNotNull(applied.get());
@@ -910,47 +921,166 @@ class HttpTargetToolsTest {
     }
 
     @Test
-    void setHttpRequestUrl_httpDefaultPort80() throws Exception {
+    void applySemantic_url_httpDefaultPort80() throws Exception {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null, req -> {});
+        String args =
+                "{\"operations\":[{\"type\":\"url\",\"action\":\"set\",\"key\":\"\",\"value\":\"http://example.com/path\"}]}";
 
-        parse(HttpTargetTools.execute(HttpTargetTools.SET_HTTP_REQUEST_URL,
-                "{\"url\":\"http://example.com/path\"}", ctx));
+        parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
 
         httpServiceMock.verify(() -> HttpService.httpService("example.com", 80, false));
     }
 
     @Test
-    void setHttpRequestUrl_noScheme_returnsError() throws Exception {
+    void applySemantic_url_noScheme_returnsError() throws Exception {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null);
+        String args =
+                "{\"operations\":[{\"type\":\"url\",\"action\":\"set\",\"key\":\"\",\"value\":\"//example.com/path\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SET_HTTP_REQUEST_URL,
-                "{\"url\":\"//example.com/path\"}", ctx));
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
 
         assertTrue(result.has("error"));
     }
 
     @Test
-    void setHttpRequestUrl_nonHttpScheme_returnsError() throws Exception {
+    void applySemantic_url_nonHttpScheme_returnsError() throws Exception {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null);
+        String args =
+                "{\"operations\":[{\"type\":\"url\",\"action\":\"set\",\"key\":\"\",\"value\":\"ftp://example.com/file\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SET_HTTP_REQUEST_URL,
-                "{\"url\":\"ftp://example.com/file\"}", ctx));
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
 
         assertTrue(result.has("error"));
     }
 
     @Test
-    void setHttpRequestUrl_invalidUrl_returnsError() throws Exception {
+    void applySemantic_url_invalidUrl_returnsError() throws Exception {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null);
+        String args =
+                "{\"operations\":[{\"type\":\"url\",\"action\":\"set\",\"key\":\"\",\"value\":\"https://\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SET_HTTP_REQUEST_URL,
-                "{\"url\":\"https://\"}", ctx));
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
 
         assertTrue(result.has("error"));
+    }
+
+    @Test
+    void applySemantic_happyPath_headerJsonMethod() throws Exception {
+        AtomicReference<HttpRequest> applied = new AtomicReference<>();
+        byte[] startBody = "{\"a\":1,\"b\":2}".getBytes(StandardCharsets.UTF_8);
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), startBody);
+        AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
+        String args = "{"
+                + "\"operations\": ["
+                + "  {\"type\": \"header\", \"action\": \"set\", \"key\": \"X-Test\", \"value\": \"1\"},"
+                + "  {\"type\": \"json\", \"action\": \"set\", \"path\": \"/a\", \"value\": null},"
+                + "  {\"type\": \"method\", \"action\": \"set\", \"key\": \"\", \"value\": \"POST\"}"
+                + "]}";
+
+        String raw = HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx);
+        JsonNode result = parse(raw);
+        assertFalse(result.has("error"), "unexpected error: " + raw);
+
+        assertTrue(result.get("ok").asBoolean());
+        assertEquals(3, result.get("operations_applied").asInt());
+        assertNotNull(applied.get());
+        verify(request).withHeader("X-Test", "1");
+    }
+
+    @Test
+    void applySemantic_jsonRemoveField() throws Exception {
+        AtomicReference<HttpRequest> applied = new AtomicReference<>();
+        byte[] startBody = "{\"a\":1,\"b\":2}".getBytes(StandardCharsets.UTF_8);
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), startBody);
+        AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
+        String args = "{\"operations\":[{\"type\":\"json\",\"action\":\"remove\",\"path\":\"/a\"}]}";
+
+        String raw2 = HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx);
+        JsonNode result = parse(raw2);
+        assertFalse(result.has("error"), "unexpected error: " + raw2);
+        assertTrue(result.get("ok").asBoolean());
+        assertNotNull(applied.get());
+    }
+
+    @Test
+    void applySemantic_jsonOnNonJsonBody_includesOpIndex() throws Exception {
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), "not json".getBytes(StandardCharsets.UTF_8));
+        AgentToolContext ctx = singleEntryCtx(request, null);
+        String args = "{\"operations\":[{\"type\":\"json\",\"action\":\"set\",\"path\":\"/x\",\"value\":1}]}";
+
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        assertTrue(result.has("error"));
+        assertTrue(result.get("error").asText().toLowerCase().contains("not valid json")
+                || result.get("error").asText().toLowerCase().contains("not valid"), result.toString());
+        assertEquals(0, result.get("op_index").asInt());
+        assertEquals("json", result.get("op_type").asText());
+    }
+
+    @Test
+    void applySemantic_xmlOnInvalidXml_returnsError() throws Exception {
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), "<nope".getBytes(StandardCharsets.UTF_8));
+        AgentToolContext ctx = singleEntryCtx(request, null);
+        String args = "{\"operations\":[{\"type\":\"xml\",\"action\":\"set\",\"path\":\"/a\",\"value\":\"v\"}]}";
+
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        assertTrue(result.has("error"));
+        assertTrue(result.get("error").asText().toLowerCase().contains("xml")
+                || result.get("error").asText().toLowerCase().contains("form"), result.toString());
+    }
+
+    @Test
+    void applySemantic_methodWithNonEmptyKey_rejects() throws Exception {
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
+        AgentToolContext ctx = singleEntryCtx(request, null);
+        String args = "{\"operations\":[{\"type\":\"method\",\"action\":\"set\",\"key\":\"m\",\"value\":\"GET\"}]}";
+
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        assertTrue(result.has("error"));
+        assertTrue(result.get("error").asText().contains("key must be empty") || result.get("error").asText().contains("empty"));
+    }
+
+    @Test
+    void applySemantic_methodRemove_rejects() throws Exception {
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
+        AgentToolContext ctx = singleEntryCtx(request, null);
+        String args = "{\"operations\":[{\"type\":\"method\",\"action\":\"remove\"}]}";
+
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        assertTrue(result.has("error"));
+    }
+
+    @Test
+    void applySemantic_removeWithExplicitValue_rejects() throws Exception {
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
+        AgentToolContext ctx = singleEntryCtx(request, null);
+        String args = "{\"operations\":[{\"type\":\"header\",\"action\":\"remove\",\"key\":\"A\",\"value\":\"x\"}]}";
+
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        assertTrue(result.has("error"));
+        assertTrue(result.get("error").asText().contains("omit") || result.get("error").asText().contains("value"));
+    }
+
+    @Test
+    void applySemantic_batchFailureDoesNotCommit() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger applierCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        List<HttpHeader> headers = List.of();
+        byte[] startBody = "not json".getBytes(StandardCharsets.UTF_8);
+        HttpRequest request = req("GET", "https://x.com/", "/", headers, startBody);
+        AgentToolContext ctx = singleEntryCtx(request, null, r -> applierCount.incrementAndGet());
+        // First: header ok; second: json on invalid body
+        String args = "{"
+                + "\"operations\": ["
+                + "  {\"type\": \"header\", \"action\": \"set\", \"key\": \"X-Ok\", \"value\": \"1\"},"
+                + "  {\"type\": \"json\", \"action\": \"set\", \"path\": \"/a\", \"value\": 1}"
+                + "]}";
+
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        assertTrue(result.has("error"));
+        assertEquals(0, applierCount.get());
     }
 
     // ===== send_current_http_request =====
@@ -1009,39 +1139,25 @@ class HttpTargetToolsTest {
     }
 
     @Test
-    void humanToolUsage_setHeader_includesHeaderNameAndValue() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.SET_HTTP_REQUEST_HEADER,
-                "{\"name\":\"X-Custom\",\"value\":\"hello\"}", 0);
+    void humanToolUsage_applySemantic_listsEachOperation() {
+        String json =
+                "{\"operations\":["
+                        + "{\"type\":\"header\",\"action\":\"set\",\"key\":\"X-Test\",\"value\":\"1\"},"
+                        + "{\"type\":\"method\",\"action\":\"set\",\"key\":\"\",\"value\":\"POST\"},"
+                        + "{\"type\":\"json\",\"action\":\"remove\",\"path\":\"/a\"}"
+                        + "]}";
+        HttpTargetTools.HumanToolUsage usage =
+                HttpTargetTools.humanToolUsage(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, json, 0);
 
-        assertEquals("Set request header", usage.title());
-        assertEquals("X-Custom: hello", usage.detail());
-    }
-
-    @Test
-    void humanToolUsage_removeHeader_includesHeaderName() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.REMOVE_HTTP_REQUEST_HEADER,
-                "{\"name\":\"Authorization\"}", 0);
-
-        assertEquals("Remove request header", usage.title());
-        assertTrue(usage.detail().contains("Authorization"));
-    }
-
-    @Test
-    void humanToolUsage_setMethod_includesNewMethod() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.SET_HTTP_REQUEST_METHOD, "{\"method\":\"DELETE\"}", 0);
-
-        assertTrue(usage.detail().contains("DELETE"));
-    }
-
-    @Test
-    void humanToolUsage_setUrl_includesUrl() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.SET_HTTP_REQUEST_URL, "{\"url\":\"https://example.com/api\"}", 0);
-
-        assertTrue(usage.detail().contains("https://example.com/api"));
+        assertEquals("Apply semantic request changes", usage.title());
+        String d = usage.detail();
+        assertTrue(d.contains("1."), d);
+        assertTrue(d.contains("Set header"), d);
+        assertTrue(d.contains("X-Test"), d);
+        assertTrue(d.contains("2."), d);
+        assertTrue(d.contains("POST"), d);
+        assertTrue(d.contains("3."), d);
+        assertTrue(d.contains("JSON remove") && d.contains("/a"), d);
     }
 
     @Test
@@ -1073,27 +1189,6 @@ class HttpTargetToolsTest {
         assertEquals("Patch request body line range", usage.title());
         assertTrue(usage.detail().contains("3"));
         assertTrue(usage.detail().contains("5"));
-    }
-
-    @Test
-    void humanToolUsage_setCookie_setMode() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.SET_HTTP_REQUEST_COOKIE,
-                "{\"name\":\"session\",\"value\":\"abc123\"}", 0);
-
-        assertEquals("Set cookie", usage.title());
-        assertTrue(usage.detail().contains("session"));
-        assertTrue(usage.detail().contains("abc123"));
-    }
-
-    @Test
-    void humanToolUsage_setCookie_removeMode() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.SET_HTTP_REQUEST_COOKIE,
-                "{\"name\":\"session\",\"remove\":true}", 0);
-
-        assertEquals("Remove cookie", usage.title());
-        assertTrue(usage.detail().contains("session"));
     }
 
     @Test
@@ -1137,7 +1232,7 @@ class HttpTargetToolsTest {
     @Test
     void humanToolUsage_invalidArgs_doesNotThrow() {
         assertDoesNotThrow(() ->
-                HttpTargetTools.humanToolUsage(HttpTargetTools.SET_HTTP_REQUEST_HEADER, "INVALID{JSON", 0));
+                HttpTargetTools.humanToolUsage(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, "INVALID{JSON", 0));
     }
 
     // ===== diagnostic =====

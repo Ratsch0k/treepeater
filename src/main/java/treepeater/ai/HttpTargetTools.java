@@ -1,5 +1,8 @@
 package treepeater.ai;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CharsetDecoder;
@@ -22,12 +25,31 @@ import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 import javax.swing.SwingUtilities;
+import javax.xml.XMLConstants;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.transform.OutputKeys;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerException;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+import javax.xml.xpath.XPath;
+import javax.xml.xpath.XPathConstants;
+import javax.xml.xpath.XPathFactory;
 
+import com.fasterxml.jackson.core.JsonPointer;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+
+import org.w3c.dom.Attr;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 import burp.api.montoya.core.ByteArray;
 import burp.api.montoya.http.HttpService;
@@ -37,7 +59,8 @@ import burp.api.montoya.http.message.responses.HttpResponse;
 
 /**
  * Built-in tools: HTTP target summary, raw wire read ({@value #READ_HTTP_MESSAGE}), regex search
- * ({@value #SEARCH_HTTP_MESSAGE}), and request mutation / send in Repeater.
+ * ({@value #SEARCH_HTTP_MESSAGE}), structured request edits ({@value #APPLY_HTTP_REQUEST_SEMANTIC_CHANGES}), other body
+ * helpers, and send in Repeater.
  */
 public final class HttpTargetTools {
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -64,23 +87,15 @@ public final class HttpTargetTools {
     /** Replace the entire current request body. */
     public static final String SET_HTTP_REQUEST_BODY = "set_http_request_body";
 
-    /** Add or update one header on the current request (live editor). */
-    public static final String SET_HTTP_REQUEST_HEADER = "set_http_request_header";
-
-    /** Remove all request headers with the given name (case-insensitive). */
-    public static final String REMOVE_HTTP_REQUEST_HEADER = "remove_http_request_header";
-
-    /** Set or remove one Cookie header pair on the current request. */
-    public static final String SET_HTTP_REQUEST_COOKIE = "set_http_request_cookie";
-
-    /** Set the HTTP method on the current request. */
-    public static final String SET_HTTP_REQUEST_METHOD = "set_http_request_method";
-
-    /** Set scheme, host, port, and path (and query) from an absolute http(s) URL on the current request. */
-    public static final String SET_HTTP_REQUEST_URL = "set_http_request_url";
-
     /** Send the current repeater request and wait for the response; tool result contains only HTTP status_code. */
     public static final String SEND_CURRENT_HTTP_REQUEST = "send_current_http_request";
+
+    /**
+     * Batch semantic mutations on the current request (headers, cookies, JSON Pointer, XPath, method, URL). Use
+     * {@code action} {@code set} vs {@code remove}; literal JSON null in the body uses {@code set} with {@code value}
+     * null.
+     */
+    public static final String APPLY_HTTP_REQUEST_SEMANTIC_CHANGES = "apply_http_request_semantic_changes";
 
     /**
      * Transcript line for a tool: short {@code title} plus optional {@code detail} (what will change, key arguments).
@@ -145,30 +160,13 @@ public final class HttpTargetTools {
             {"type":"object","properties":{"body_utf8":{"type":"string","description":"Full new body as UTF-8 text."},"body_base64":{"type":"string","description":"Full new body as standard Base64 (mutually exclusive with body_utf8)."}},"additionalProperties":false}\
             """;
 
-    private static final String SET_HEADER_SCHEMA =
-            """
-            {"type":"object","properties":{"name":{"type":"string","description":"Header name (e.g. Content-Type)."},"value":{"type":"string","description":"Header value (may be empty)."}},"required":["name","value"],"additionalProperties":false}\
-            """;
+    private static final int MAX_SEMANTIC_OPERATIONS = 32;
 
-    private static final String REMOVE_HEADER_SCHEMA =
+    private static final String APPLY_SEMANTIC_CHANGES_SCHEMA =
             """
-            {"type":"object","properties":{"name":{"type":"string","description":"Header name to remove (all matching, case-insensitive)."}},"required":["name"],"additionalProperties":false}\
-            """;
-
-    private static final String SET_COOKIE_SCHEMA =
+            {"type":"object","required":["operations"],"properties":{"operations":{"type":"array","minItems":1,"maxItems":%d,"items":{"type":"object","required":["type","action"],"properties":{"type":{"type":"string","enum":["header","cookie","json","xml","method","url"]},"action":{"type":"string","enum":["set","remove"]},"key":{"type":"string","description":"Header/cookie name; must be empty for method/url when set."},"path":{"type":"string","description":"JSON Pointer (type json) or XPath 1.0 (type xml)."},"value":{}},"additionalProperties":false}},"additionalProperties":false}\
             """
-            {"type":"object","properties":{"name":{"type":"string","description":"Cookie name."},"value":{"type":"string","description":"Cookie value; ignored when remove is true."},"remove":{"type":"boolean","default":false,"description":"If true, delete this cookie from the Cookie header."}},"required":["name"],"additionalProperties":false}\
-            """;
-
-    private static final String SET_METHOD_SCHEMA =
-            """
-            {"type":"object","properties":{"method":{"type":"string","description":"HTTP method (e.g. GET, POST)."}},"required":["method"],"additionalProperties":false}\
-            """;
-
-    private static final String SET_URL_SCHEMA =
-            """
-            {"type":"object","properties":{"url":{"type":"string","description":"Absolute URL including scheme and host (e.g. https://example.com/path?x=1)."}},"required":["url"],"additionalProperties":false}\
-            """;
+                    .formatted(MAX_SEMANTIC_OPERATIONS);
 
     private HttpTargetTools() {}
 
@@ -223,28 +221,16 @@ public final class HttpTargetTools {
                                 + "Use base64 for arbitrary bytes.",
                         SET_BODY_SCHEMA),
                 new ChatToolDefinition(
-                        SET_HTTP_REQUEST_HEADER,
-                        "Adds or updates one HTTP header on the **current** repeater request (live editor). "
-                                + "If the header already exists, it is updated.",
-                        SET_HEADER_SCHEMA),
-                new ChatToolDefinition(
-                        REMOVE_HTTP_REQUEST_HEADER,
-                        "Removes all HTTP headers with the given name from the **current** request (case-insensitive name).",
-                        REMOVE_HEADER_SCHEMA),
-                new ChatToolDefinition(
-                        SET_HTTP_REQUEST_COOKIE,
-                        "Sets or removes one cookie in the **Cookie** header of the **current** request. "
-                                + "Other cookies are preserved. Use remove=true to delete a cookie by name.",
-                        SET_COOKIE_SCHEMA),
-                new ChatToolDefinition(
-                        SET_HTTP_REQUEST_METHOD,
-                        "Sets the HTTP method of the **current** repeater request (e.g. GET, POST).",
-                        SET_METHOD_SCHEMA),
-                new ChatToolDefinition(
-                        SET_HTTP_REQUEST_URL,
-                        "Sets target and path from an **absolute** http(s) URL for the **current** request: updates "
-                                + "scheme, host, port, and path (including query string).",
-                        SET_URL_SCHEMA),
+                        APPLY_HTTP_REQUEST_SEMANTIC_CHANGES,
+                        "Applies a batch of typed changes to the **current** repeater request in one call. Each item has "
+                                + "`type` (header|cookie|json|xml|method|url) and `action` (set|remove). Use `action: "
+                                + "remove` to delete; use `action: set` with `value: null` to store a **literal JSON "
+                                + "null** in the body (json type). `path` is a JSON Pointer (RFC 6901) for type json, "
+                                + "or XPath 1.0 for type xml. For method and url with `set`, `key` must be empty. "
+                                + "Omit the `value` field entirely on `remove` (when present, the call is rejected). "
+                                + "If the body is not valid JSON or XML for that operation, the error includes "
+                                + "`op_index` and a hint to use read_http_message or set_http_request_body.",
+                        APPLY_SEMANTIC_CHANGES_SCHEMA),
                 new ChatToolDefinition(
                         SEND_CURRENT_HTTP_REQUEST,
                         "Sends the **current** repeater request (live editor, with target applied) and waits until the "
@@ -265,11 +251,7 @@ public final class HttpTargetTools {
             case REPLACE_IN_HTTP_REQUEST_BODY,
                     PATCH_HTTP_REQUEST_BODY_LINES,
                     SET_HTTP_REQUEST_BODY,
-                    SET_HTTP_REQUEST_HEADER,
-                    REMOVE_HTTP_REQUEST_HEADER,
-                    SET_HTTP_REQUEST_COOKIE,
-                    SET_HTTP_REQUEST_METHOD,
-                    SET_HTTP_REQUEST_URL -> ToolActionLevel.WRITE;
+                    APPLY_HTTP_REQUEST_SEMANTIC_CHANGES -> ToolActionLevel.WRITE;
             case SEND_CURRENT_HTTP_REQUEST -> ToolActionLevel.EXECUTE;
             default -> null;
         };
@@ -322,11 +304,7 @@ public final class HttpTargetTools {
                 case REPLACE_IN_HTTP_REQUEST_BODY -> replaceInHttpRequestBody(ctx, args);
                 case PATCH_HTTP_REQUEST_BODY_LINES -> patchHttpRequestBodyLines(ctx, args);
                 case SET_HTTP_REQUEST_BODY -> setHttpRequestBody(ctx, args);
-                case SET_HTTP_REQUEST_HEADER -> setHttpRequestHeader(ctx, args);
-                case REMOVE_HTTP_REQUEST_HEADER -> removeHttpRequestHeader(ctx, args);
-                case SET_HTTP_REQUEST_COOKIE -> setHttpRequestCookie(ctx, args);
-                case SET_HTTP_REQUEST_METHOD -> setHttpRequestMethod(ctx, args);
-                case SET_HTTP_REQUEST_URL -> setHttpRequestUrl(ctx, args);
+                case APPLY_HTTP_REQUEST_SEMANTIC_CHANGES -> applyHttpRequestSemanticChanges(ctx, args);
                 case SEND_CURRENT_HTTP_REQUEST -> sendCurrentHttpRequest(ctx);
                 default -> "{\"error\":\"unknown tool: " + escapeJson(toolName) + "\"}";
             };
@@ -928,42 +906,6 @@ public final class HttpTargetTools {
         return write(o);
     }
 
-    private static String setHttpRequestHeader(AgentToolContext ctx, JsonNode args) {
-        HttpRequest req = requireCurrentRequest(ctx);
-        String name = requiredTextAny(args, "name", "header_name", "headerName");
-        String value = "";
-        if (args.has("value") && !args.get("value").isNull()) {
-            value = args.get("value").asText();
-        }
-        HttpRequest updated = req.withHeader(name, value);
-        commitLiveRequest(ctx, updated);
-        return okMutationJson(ctx);
-    }
-
-    private static String removeHttpRequestHeader(AgentToolContext ctx, JsonNode args) {
-        HttpRequest req = requireCurrentRequest(ctx);
-        String name = requiredTextAny(args, "name", "header_name", "headerName");
-        HttpRequest updated = req.withRemovedHeader(name);
-        commitLiveRequest(ctx, updated);
-        return okMutationJson(ctx);
-    }
-
-    private static String setHttpRequestCookie(AgentToolContext ctx, JsonNode args) {
-        HttpRequest req = requireCurrentRequest(ctx);
-        String name = requiredTextAny(args, "name", "cookie_name", "cookieName");
-        boolean remove = args.has("remove") && args.get("remove").asBoolean(false);
-        String value = "";
-        if (!remove) {
-            JsonNode vn = argFirst(args, "value", "cookie_value", "cookieValue");
-            if (vn != null && !vn.isNull()) {
-                value = vn.asText();
-            }
-        }
-        HttpRequest updated = mergeCookieHeader(req, name, value, remove);
-        commitLiveRequest(ctx, updated);
-        return okMutationJson(ctx);
-    }
-
     /**
      * Rebuilds the {@code Cookie} header: removes any pair whose name matches case-insensitively, then adds {@code
      * name=value} unless {@code remove}.
@@ -997,22 +939,6 @@ public final class HttpTargetTools {
             sb.append(nv[0]).append("=").append(nv[1]);
         }
         return cur.withHeader("Cookie", sb.toString());
-    }
-
-    private static String setHttpRequestMethod(AgentToolContext ctx, JsonNode args) {
-        HttpRequest req = requireCurrentRequest(ctx);
-        String method = requiredTextAny(args, "method", "http_method", "httpMethod");
-        HttpRequest updated = req.withMethod(method);
-        commitLiveRequest(ctx, updated);
-        return okMutationJson(ctx);
-    }
-
-    private static String setHttpRequestUrl(AgentToolContext ctx, JsonNode args) {
-        HttpRequest req = requireCurrentRequest(ctx);
-        String url = requiredTextAny(args, "url", "URL");
-        HttpRequest updated = applyAbsoluteUrl(req, url);
-        commitLiveRequest(ctx, updated);
-        return okMutationJson(ctx);
     }
 
     private static HttpRequest applyAbsoluteUrl(HttpRequest req, String urlRaw) {
@@ -1050,11 +976,487 @@ public final class HttpTargetTools {
         return req.withService(service).withPath(path);
     }
 
-    private static String okMutationJson(AgentToolContext ctx) {
+    private static String applyHttpRequestSemanticChanges(AgentToolContext ctx, JsonNode args) {
+        HttpRequest[] current = {requireCurrentRequest(ctx)};
+        JsonNode opsNode = args.get("operations");
+        if (opsNode == null || !opsNode.isArray()) {
+            return errorJson("missing or invalid operations array");
+        }
+        int n = opsNode.size();
+        if (n == 0) {
+            return errorJson("operations must not be empty");
+        }
+        if (n > MAX_SEMANTIC_OPERATIONS) {
+            return errorJson("at most " + MAX_SEMANTIC_OPERATIONS + " operations per call");
+        }
+        for (int i = 0; i < n; i++) {
+            JsonNode one = opsNode.get(i);
+            if (one == null || !one.isObject()) {
+                return semanticMutationError(
+                        i,
+                        "?",
+                        "invalid operation at index " + i,
+                        "each operation must be a JSON object with type and action",
+                        "read the tool description for apply_http_request_semantic_changes");
+            }
+            String err = applyOneSemanticOperation(current, i, (ObjectNode) one);
+            if (err != null) {
+                return err;
+            }
+        }
+        commitLiveRequest(ctx, current[0]);
         ObjectNode o = JSON.createObjectNode();
         o.put("ok", true);
+        o.put("operations_applied", n);
         o.put("current_history_index", ctx.currentHistoryIndex());
         return write(o);
+    }
+
+    private static String semanticMutationError(
+            int opIndex, String opType, String message, String hint, String moreHint) {
+        ObjectNode n = JSON.createObjectNode();
+        n.put("error", message);
+        n.put("op_index", opIndex);
+        n.put("op_type", opType != null ? opType : "");
+        n.put("hint", hint);
+        n.put("detail", moreHint);
+        return write(n);
+    }
+
+    private static String opStringLower(ObjectNode op, String field) {
+        JsonNode v = op.get(field);
+        if (v == null || v.isNull() || !v.isTextual()) {
+            return "";
+        }
+        return v.asText().trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String opTextTrimmed(ObjectNode op, String field) {
+        JsonNode v = op.get(field);
+        if (v == null || v.isNull()) {
+            return "";
+        }
+        if (v.isTextual()) {
+            return v.asText().trim();
+        }
+        if (v.isNumber() || v.isBoolean()) {
+            return v.asText();
+        }
+        return v.toString();
+    }
+
+    private static boolean opHasExplicitValueProperty(ObjectNode op) {
+        return op.has("value");
+    }
+
+    private static String applyOneSemanticOperation(HttpRequest[] current, int opIndex, ObjectNode op) {
+        String type = opStringLower(op, "type");
+        String action = opStringLower(op, "action");
+        if (type.isEmpty() || !isKnownSemanticType(type)) {
+            return semanticMutationError(
+                    opIndex,
+                    type,
+                    "unknown or empty type (expected header, cookie, json, xml, method, or url)",
+                    "set the type field to one of the allowed values",
+                    "");
+        }
+        if (!"set".equals(action) && !"remove".equals(action)) {
+            return semanticMutationError(
+                    opIndex,
+                    type,
+                    "action must be set or remove",
+                    "set action to remove to delete, or set to assign (including JSON null in-body via value: null for json type)",
+                    "");
+        }
+        if ("remove".equals(action) && opHasExplicitValueProperty(op)) {
+            return semanticMutationError(
+                    opIndex,
+                    type,
+                    "value must be omitted when action is remove",
+                    "removal is controlled only by action: remove; do not pass a value field at all on this op",
+                    "");
+        }
+        return switch (type) {
+            case "header" -> applySemanticHeader(current, opIndex, op, action);
+            case "cookie" -> applySemanticCookie(current, opIndex, op, action);
+            case "json" -> applySemanticJson(current, opIndex, op, action);
+            case "xml" -> applySemanticXml(current, opIndex, op, action);
+            case "method" -> applySemanticMethod(current, opIndex, op, action);
+            case "url" -> applySemanticUrl(current, opIndex, op, action);
+            default -> semanticMutationError(opIndex, type, "unhandled type", "", "");
+        };
+    }
+
+    private static boolean isKnownSemanticType(String type) {
+        return "header".equals(type)
+                || "cookie".equals(type)
+                || "json".equals(type)
+                || "xml".equals(type)
+                || "method".equals(type)
+                || "url".equals(type);
+    }
+
+    private static String applySemanticHeader(HttpRequest[] current, int opIndex, ObjectNode op, String action) {
+        String key = opTextTrimmed(op, "key");
+        if (key.isEmpty()) {
+            return semanticMutationError(
+                    opIndex, "header", "key is required for type header", "set key to the header name", "");
+        }
+        if ("set".equals(action)) {
+            if (!opHasExplicitValueProperty(op)) {
+                return semanticMutationError(
+                        opIndex, "header", "value is required for action set on header", "set the value string (empty allowed)", "");
+            }
+            JsonNode vn = op.get("value");
+            String value = vn == null || vn.isNull() ? "" : vn.isTextual() ? vn.asText() : vn.asText();
+            current[0] = current[0].withHeader(key, value);
+        } else {
+            current[0] = current[0].withRemovedHeader(key);
+        }
+        return null;
+    }
+
+    private static String applySemanticCookie(HttpRequest[] current, int opIndex, ObjectNode op, String action) {
+        String name = opTextTrimmed(op, "key");
+        if (name.isEmpty()) {
+            return semanticMutationError(
+                    opIndex, "cookie", "key is required for type cookie (cookie name)", "set key to the cookie name", "");
+        }
+        if ("set".equals(action)) {
+            if (!opHasExplicitValueProperty(op)) {
+                return semanticMutationError(
+                        opIndex, "cookie", "value is required for action set on cookie", "set value to the cookie value string", "");
+            }
+            JsonNode vn = op.get("value");
+            String value = vn == null || vn.isNull() ? "" : vn.isTextual() ? vn.asText() : vn.asText();
+            current[0] = mergeCookieHeader(current[0], name, value, false);
+        } else {
+            current[0] = mergeCookieHeader(current[0], name, "", true);
+        }
+        return null;
+    }
+
+    private static String applySemanticMethod(HttpRequest[] current, int opIndex, ObjectNode op, String action) {
+        if ("remove".equals(action)) {
+            return semanticMutationError(
+                    opIndex,
+                    "method",
+                    "type method does not support action remove",
+                    "only action set is valid; give an HTTP method in value and leave key empty",
+                    "");
+        }
+        String key = opTextTrimmed(op, "key");
+        if (!key.isEmpty()) {
+            return semanticMutationError(
+                    opIndex,
+                    "method",
+                    "key must be empty for type method (use value for the HTTP method)",
+                    "remove the key field or set it to an empty string",
+                    "");
+        }
+        if (!opHasExplicitValueProperty(op) || !op.get("value").isTextual()) {
+            return semanticMutationError(
+                    opIndex, "method", "value is required and must be a string (the HTTP method)", "e.g. GET or POST", "");
+        }
+        String method = op.get("value").asText().trim();
+        if (method.isEmpty()) {
+            return semanticMutationError(opIndex, "method", "method value is empty", "set value to a non-empty method name", "");
+        }
+        current[0] = current[0].withMethod(method);
+        return null;
+    }
+
+    private static String applySemanticUrl(HttpRequest[] current, int opIndex, ObjectNode op, String action) {
+        if ("remove".equals(action)) {
+            return semanticMutationError(
+                    opIndex, "url", "type url does not support action remove", "only action set is valid with an absolute URL in value", "");
+        }
+        String key = opTextTrimmed(op, "key");
+        if (!key.isEmpty()) {
+            return semanticMutationError(
+                    opIndex, "url", "key must be empty for type url (use value for the absolute URL)", "remove key or use an empty string", "");
+        }
+        if (!opHasExplicitValueProperty(op) || !op.get("value").isTextual()) {
+            return semanticMutationError(
+                    opIndex, "url", "value is required and must be a string (absolute http(s) URL)", "e.g. https://host/path?query=1", "");
+        }
+        String url = op.get("value").asText().trim();
+        if (url.isEmpty()) {
+            return semanticMutationError(opIndex, "url", "url value is empty", "set value to a full URL string", "");
+        }
+        try {
+            current[0] = applyAbsoluteUrl(current[0], url);
+        } catch (IllegalArgumentException e) {
+            return semanticMutationError(
+                    opIndex, "url", e.getMessage() != null ? e.getMessage() : "invalid url", "fix the URL and retry", "");
+        }
+        return null;
+    }
+
+    private static String applySemanticJson(HttpRequest[] current, int opIndex, ObjectNode op, String action) {
+        String pathStr = opTextTrimmed(op, "path");
+        if (pathStr.isEmpty()) {
+            return semanticMutationError(
+                    opIndex, "json", "path is required for type json (JSON Pointer, RFC 6901)", "e.g. /data/0/id", "");
+        }
+        final JsonPointer pointer;
+        try {
+            pointer = JsonPointer.valueOf(pathStr);
+        } catch (IllegalArgumentException e) {
+            return semanticMutationError(
+                    opIndex, "json", e.getMessage() != null ? e.getMessage() : "invalid JSON Pointer", "path must be a valid JSON Pointer starting with /", "");
+        }
+        if (pointer.matches()) {
+            return semanticMutationError(
+                    opIndex,
+                    "json",
+                    "empty JSON Pointer is not allowed for type json; use set_http_request_body to replace the whole body",
+                    "or use a non-empty path to patch part of the JSON",
+                    "");
+        }
+        if ("set".equals(action) && !opHasExplicitValueProperty(op)) {
+            return semanticMutationError(
+                    opIndex, "json", "value is required for action set (use value: null for JSON null in the body)", "include a value field, even if null", "");
+        }
+        byte[] raw = bytesFromByteArray(() -> current[0].body());
+        String utf8 = decodeUtf8Strict(raw);
+        if (utf8 == null) {
+            return semanticMutationError(
+                    opIndex,
+                    "json",
+                    "request body is not valid UTF-8 for JSON mutation",
+                    "use set_http_request_body with body_base64, or fix encoding first",
+                    "read raw bytes with read_http_message if you need to inspect the body");
+        }
+        JsonNode root;
+        try {
+            root = JSON.readTree(raw);
+        } catch (JsonProcessingException e) {
+            return semanticMutationError(
+                    opIndex,
+                    "json",
+                    "request body is not valid JSON: " + (e.getOriginalMessage() != null ? e.getOriginalMessage() : e.getMessage()),
+                    "use set_http_request_body to replace the body, or read_http_message to inspect it",
+                    "");
+        } catch (IOException e) {
+            return semanticMutationError(
+                    opIndex,
+                    "json",
+                    "request body is not valid JSON: " + (e.getMessage() != null ? e.getMessage() : e.toString()),
+                    "use set_http_request_body to replace the body, or read_http_message to inspect it",
+                    "");
+        }
+        try {
+            if ("remove".equals(action)) {
+                mutateJsonTreeAtPointer(root, pathStr, true, null);
+            } else {
+                mutateJsonTreeAtPointer(root, pathStr, false, op.get("value"));
+            }
+        } catch (IllegalArgumentException e) {
+            return semanticMutationError(
+                    opIndex, "json", e.getMessage() != null ? e.getMessage() : "JSON mutation failed", "check path against the current JSON and retry", "");
+        }
+        byte[] out;
+        try {
+            out = JSON.writeValueAsBytes(root);
+        } catch (JsonProcessingException e) {
+            return semanticMutationError(opIndex, "json", "failed to serialize JSON after mutation", e.getMessage(), "");
+        }
+        current[0] = withBodyBytes(current[0], out);
+        return null;
+    }
+
+    private static void mutateJsonTreeAtPointer(JsonNode root, String pathStr, boolean remove, JsonNode newValue) {
+        if (pathStr == null) {
+            throw new IllegalArgumentException("path must not be null");
+        }
+        String s = pathStr.trim();
+        if (s.isEmpty() || s.equals("/")) {
+            throw new IllegalArgumentException("empty JSON Pointer is not allowed; use set_http_request_body to replace the whole body");
+        }
+        if (s.charAt(0) != '/') {
+            throw new IllegalArgumentException("JSON Pointer must start with /");
+        }
+        int lastSlash = s.lastIndexOf('/');
+        if (lastSlash < 0) {
+            throw new IllegalArgumentException("JSON Pointer must start with /");
+        }
+        String lastTokenRaw = s.substring(lastSlash + 1);
+        String lastRef = rfc6901UnescapeToken(lastTokenRaw);
+        JsonNode parent = lastSlash == 0 ? root : root.at(JsonPointer.valueOf(s.substring(0, lastSlash)));
+        if (parent == null || parent.isMissingNode()) {
+            throw new IllegalArgumentException("JSON Pointer path not found (parent is missing)");
+        }
+        if (!parent.isObject() && !parent.isArray()) {
+            throw new IllegalArgumentException("JSON Pointer path not found: parent is not an object or array");
+        }
+        if (parent.isObject()) {
+            ObjectNode ob = (ObjectNode) parent;
+            if (remove) {
+                if (!ob.has(lastRef)) {
+                    throw new IllegalArgumentException("JSON Pointer path not found: no such property to remove");
+                }
+                ob.remove(lastRef);
+            } else {
+                ob.set(lastRef, newValue);
+            }
+            return;
+        }
+        int idx;
+        try {
+            idx = Integer.parseInt(lastRef, 10);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("JSON Pointer for array must end with a non-negative integer index");
+        }
+        if (idx < 0) {
+            throw new IllegalArgumentException("JSON Pointer array index must be non-negative");
+        }
+        ArrayNode ar = (ArrayNode) parent;
+        if (remove) {
+            if (idx >= ar.size()) {
+                throw new IllegalArgumentException("JSON Pointer array index out of range for remove");
+            }
+            ar.remove(idx);
+        } else {
+            if (idx > ar.size()) {
+                throw new IllegalArgumentException("JSON Pointer array index out of range (gaps are not allowed)");
+            }
+            if (idx == ar.size()) {
+                ar.add(newValue);
+            } else {
+                ar.set(idx, newValue);
+            }
+        }
+    }
+
+    /** RFC 6901 reference token unescape: ~1 -> /, ~0 -> ~. */
+    private static String rfc6901UnescapeToken(String raw) {
+        if (raw.isEmpty()) {
+            return "";
+        }
+        return raw.replace("~1", "/").replace("~0", "~");
+    }
+
+    private static String applySemanticXml(HttpRequest[] current, int opIndex, ObjectNode op, String action) {
+        String pathStr = opTextTrimmed(op, "path");
+        if (pathStr.isEmpty()) {
+            return semanticMutationError(
+                    opIndex, "xml", "path is required for type xml (XPath 1.0 expression)", "e.g. //item or /root/a", "");
+        }
+        if ("set".equals(action) && !opHasExplicitValueProperty(op)) {
+            return semanticMutationError(
+                    opIndex, "xml", "value is required for action set on xml (text to set for matched elements)", "set value to a string; attribute targets are not supported in v1", "");
+        }
+        if ("set".equals(action) && !op.get("value").isTextual()) {
+            return semanticMutationError(
+                    opIndex, "xml", "value for type xml on set must be a string in v1", "only text content of matched elements is updated", "");
+        }
+        byte[] raw = bytesFromByteArray(() -> current[0].body());
+        String utf8 = decodeUtf8Strict(raw);
+        if (utf8 == null) {
+            return semanticMutationError(
+                    opIndex, "xml", "request body is not valid UTF-8 for xml mutation", "use set_http_request_body with body_base64 first", "read the body with read_http_message if needed");
+        }
+        DocumentBuilder db;
+        try {
+            db = newSecureDocumentBuilder();
+        } catch (Exception e) {
+            return semanticMutationError(
+                    opIndex, "xml", "could not create XML parser: " + (e.getMessage() != null ? e.getMessage() : e), "", "");
+        }
+        Document doc;
+        try {
+            doc = db.parse(new ByteArrayInputStream(raw));
+        } catch (Exception e) {
+            return semanticMutationError(
+                    opIndex,
+                    "xml",
+                    "request body is not well-formed XML: " + (e.getMessage() != null ? e.getMessage() : e.toString()),
+                    "use set_http_request_body to replace the body, or read_http_message to inspect it",
+                    "");
+        }
+        XPath xPath = XPathFactory.newInstance().newXPath();
+        NodeList nl;
+        try {
+            nl = (NodeList) xPath.compile(pathStr).evaluate(doc, XPathConstants.NODESET);
+        } catch (Exception e) {
+            return semanticMutationError(
+                    opIndex,
+                    "xml",
+                    "invalid or unsupported XPath: " + (e.getMessage() != null ? e.getMessage() : e),
+                    "simplify the XPath expression and retry",
+                    "");
+        }
+        if (nl.getLength() == 0) {
+            return semanticMutationError(
+                    opIndex, "xml", "XPath matched no nodes", "adjust path or set the body so the target exists", "use read_http_message to inspect the XML");
+        }
+        if ("set".equals(action)) {
+            String v = op.get("value").asText();
+            Node n = nl.item(0);
+            if (n.getNodeType() == Node.ATTRIBUTE_NODE) {
+                return semanticMutationError(
+                        opIndex,
+                        "xml",
+                        "type xml set: attribute nodes are not supported in v1 (matched an attribute with XPath)",
+                        "use an XPath to an element and set its text, or set_http_request_body to rewrite attributes",
+                        "");
+            }
+            n.setTextContent(v);
+        } else {
+            List<Node> toRemove = new ArrayList<>();
+            for (int k = 0; k < nl.getLength(); k++) {
+                toRemove.add(nl.item(k));
+            }
+            for (Node n : toRemove) {
+                if (n.getNodeType() == Node.ATTRIBUTE_NODE) {
+                    Attr a = (Attr) n;
+                    Element e = a.getOwnerElement();
+                    if (e != null) {
+                        e.removeAttributeNode(a);
+                    }
+                } else {
+                    Node p = n.getParentNode();
+                    p.removeChild(n);
+                }
+            }
+        }
+        try {
+            current[0] = withBodyBytes(current[0], serializeXmlDocument(doc));
+        } catch (Exception e) {
+            return semanticMutationError(
+                    opIndex, "xml", "failed to serialize XML: " + (e.getMessage() != null ? e.getMessage() : e), "", "");
+        }
+        return null;
+    }
+
+    private static DocumentBuilder newSecureDocumentBuilder() throws Exception {
+        DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
+        dbf.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+        try {
+            dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        } catch (java.lang.IllegalArgumentException ignored) {
+            // not supported on all JAXP providers
+        }
+        dbf.setExpandEntityReferences(false);
+        dbf.setNamespaceAware(true);
+        return dbf.newDocumentBuilder();
+    }
+
+    private static byte[] serializeXmlDocument(Document doc) throws TransformerException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        TransformerFactory tf = TransformerFactory.newInstance();
+        try {
+            tf.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            tf.setAttribute(XMLConstants.ACCESS_EXTERNAL_STYLESHEET, "");
+        } catch (java.lang.IllegalArgumentException ignored) {
+            // not supported on all JAXP
+        }
+        Transformer t = tf.newTransformer();
+        t.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
+        t.setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "no");
+        t.transform(new DOMSource(doc), new StreamResult(out));
+        return out.toByteArray();
     }
 
     /** Tool result intentionally contains only {@code status_code} (no body or headers). */
@@ -1164,18 +1566,6 @@ public final class HttpTargetTools {
         return t;
     }
 
-    private static String requiredTextAny(JsonNode args, String... keys) {
-        JsonNode v = argFirst(args, keys);
-        if (v == null) {
-            throw new IllegalArgumentException("missing " + keys[0]);
-        }
-        String s = v.isTextual() ? v.asText().trim() : v.asText();
-        if (s == null || s.isBlank()) {
-            throw new IllegalArgumentException("missing " + keys[0]);
-        }
-        return s;
-    }
-
     private static int readOffsetArg(JsonNode args) {
         JsonNode v = argFirst(args, "offset", "byte_offset", "byteOffset", "start");
         if (v == null) {
@@ -1258,6 +1648,127 @@ public final class HttpTargetTools {
     /** JSON tool result when the user declines to run a tool. */
     public static String permissionDeniedResult() {
         return errorJson("permission denied");
+    }
+
+    private static final int MAX_SEMANTIC_HUMAN_DETAIL_CHARS = 12_000;
+
+    /** One line per operation for agent tool cards ({@link #humanToolUsage}). */
+    private static String formatSemanticOperationsHumanDetail(JsonNode args) {
+        JsonNode arr = args.get("operations");
+        if (arr == null || !arr.isArray()) {
+            return "(no operations array)";
+        }
+        if (arr.isEmpty()) {
+            return "(empty operations)";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < arr.size(); i++) {
+            if (i > 0) {
+                sb.append('\n');
+            }
+            sb.append(i + 1).append(". ");
+            JsonNode raw = arr.get(i);
+            if (raw == null || !raw.isObject()) {
+                sb.append("(not an object)");
+            } else {
+                sb.append(formatOneSemanticOperationHumanLine((ObjectNode) raw));
+            }
+            if (sb.length() >= MAX_SEMANTIC_HUMAN_DETAIL_CHARS) {
+                sb.append("\n… (truncated)");
+                break;
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String formatOneSemanticOperationHumanLine(ObjectNode op) {
+        String type = opStringLower(op, "type");
+        String action = opStringLower(op, "action");
+        if (type.isEmpty()) {
+            type = "?";
+        }
+        if (action.isEmpty()) {
+            action = "?";
+        }
+        String key = opTextTrimmed(op, "key");
+        String path = opTextTrimmed(op, "path");
+        boolean hasValue = op.has("value");
+        JsonNode val = op.get("value");
+
+        return switch (type) {
+            case "header" ->
+                    "remove".equals(action)
+                            ? ("Remove header " + (key.isEmpty() ? "(unnamed)" : truncateForStatus(key, 120)))
+                            : ("Set header "
+                                    + (key.isEmpty() ? "(unnamed)" : truncateForStatus(key, 80))
+                                    + " = "
+                                    + semanticValueHumanSnippet(val, hasValue));
+            case "cookie" ->
+                    "remove".equals(action)
+                            ? ("Remove cookie " + (key.isEmpty() ? "(unnamed)" : truncateForStatus(key, 120)))
+                            : ("Set cookie "
+                                    + (key.isEmpty() ? "(unnamed)" : truncateForStatus(key, 80))
+                                    + " = "
+                                    + semanticValueHumanSnippet(val, hasValue));
+            case "json" ->
+                    "remove".equals(action)
+                            ? ("JSON remove " + (path.isEmpty() ? "(no path)" : truncateForStatus(path, 200)))
+                            : ("JSON set "
+                                    + (path.isEmpty() ? "(no path)" : truncateForStatus(path, 200))
+                                    + " → "
+                                    + semanticValueHumanSnippet(val, hasValue));
+            case "xml" ->
+                    "remove".equals(action)
+                            ? ("XML remove " + (path.isEmpty() ? "(no path)" : truncateForStatus(path, 200)))
+                            : ("XML set "
+                                    + (path.isEmpty() ? "(no path)" : truncateForStatus(path, 200))
+                                    + " → "
+                                    + semanticValueHumanSnippet(val, hasValue));
+            case "method" ->
+                    "Set method "
+                            + (hasValue && val != null && val.isTextual()
+                                    ? truncateForStatus(val.asText().trim(), 64)
+                                    : semanticValueHumanSnippet(val, hasValue));
+            case "url" ->
+                    "Set URL "
+                            + (hasValue && val != null && val.isTextual()
+                                    ? truncateForStatus(val.asText().trim(), 220)
+                                    : semanticValueHumanSnippet(val, hasValue));
+            default -> {
+                StringBuilder b = new StringBuilder();
+                b.append(type).append(' ').append(action);
+                if (!key.isEmpty()) {
+                    b.append(" · key ").append(truncateForStatus(key, 80));
+                }
+                if (!path.isEmpty()) {
+                    b.append(" · path ").append(truncateForStatus(path, 120));
+                }
+                if (hasValue) {
+                    b.append(" → ").append(semanticValueHumanSnippet(val, true));
+                }
+                yield truncateForStatus(b.toString(), 300);
+            }
+        };
+    }
+
+    private static String semanticValueHumanSnippet(JsonNode val, boolean hasValue) {
+        if (!hasValue) {
+            return "(value omitted)";
+        }
+        if (val == null || val.isNull()) {
+            return "null";
+        }
+        if (val.isTextual()) {
+            return quotedSnippet(val.asText(), 100);
+        }
+        if (val.isNumber() || val.isBoolean()) {
+            return val.asText();
+        }
+        try {
+            return singleLinePreview(JSON.writeValueAsString(val), 160);
+        } catch (JsonProcessingException e) {
+            return singleLinePreview(val.toString(), 160);
+        }
     }
 
     /**
@@ -1357,56 +1868,8 @@ public final class HttpTargetTools {
                 yield new HumanToolUsage("Patch request body line range", det);
             }
             case SET_HTTP_REQUEST_BODY -> new HumanToolUsage("Setting full request body", "");
-            case SET_HTTP_REQUEST_HEADER -> {
-                String hn = argTextAny(args, "name", "header_name", "headerName");
-                String value = "";
-                if (args.has("value") && !args.get("value").isNull()) {
-                    value = args.get("value").asText();
-                }
-                String det =
-                        hn.isEmpty()
-                                ? (value.isEmpty() ? "(name required)" : "(name required) value: " + truncateForStatus(value, 200))
-                                : truncateForStatus(hn + ": " + value, 220);
-                yield new HumanToolUsage("Set request header", det);
-            }
-            case REMOVE_HTTP_REQUEST_HEADER -> {
-                String hn = truncateForStatus(argTextAny(args, "name", "header_name", "headerName"), 80);
-                yield new HumanToolUsage(
-                        "Remove request header",
-                        hn.isEmpty() ? "(name not set)" : "Remove all \"" + hn + "\" headers");
-            }
-            case SET_HTTP_REQUEST_COOKIE -> {
-                String cn = argTextAny(args, "name", "cookie_name", "cookieName");
-                boolean rem = args.has("remove") && args.get("remove").asBoolean(false);
-                String value = "";
-                if (!rem) {
-                    JsonNode vn = argFirst(args, "value", "cookie_value", "cookieValue");
-                    if (vn != null && !vn.isNull()) {
-                        value = vn.asText();
-                    }
-                }
-                String t = rem ? "Remove cookie" : "Set cookie";
-                String det =
-                        rem
-                                ? (cn.isEmpty()
-                                        ? "Remove by name (name missing in tool args)"
-                                        : "Remove \"" + truncateForStatus(cn, 80) + "\" from Cookie")
-                                : (cn.isEmpty()
-                                        ? (value.isEmpty() ? "Name required" : "Name required · value: " + truncateForStatus(value, 180))
-                                        : truncateForStatus(cn + "=" + value, 220));
-                yield new HumanToolUsage(t, det);
-            }
-            case SET_HTTP_REQUEST_METHOD -> {
-                String m = truncateForStatus(argTextAny(args, "method", "http_method", "httpMethod"), 32);
-                yield new HumanToolUsage(
-                        "Set request method",
-                        m.isEmpty() ? "Method not specified" : "New method: " + m);
-            }
-            case SET_HTTP_REQUEST_URL -> {
-                String u = argTextAny(args, "url", "URL");
-                String t = "Set request URL";
-                yield new HumanToolUsage(t, u.isEmpty() ? "URL not specified" : truncateForStatus(u, 220));
-            }
+            case APPLY_HTTP_REQUEST_SEMANTIC_CHANGES ->
+                    new HumanToolUsage("Apply semantic request changes", formatSemanticOperationsHumanDetail(args));
             case SEND_CURRENT_HTTP_REQUEST -> new HumanToolUsage(
                     "Send current HTTP request", "Sends the in-editor request and waits for the response (status only)");
             default -> new HumanToolUsage("Working…", "");

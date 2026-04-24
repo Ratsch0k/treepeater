@@ -24,6 +24,7 @@ import com.anthropic.models.messages.Tool;
 import com.anthropic.models.messages.ToolResultBlockParam;
 import com.anthropic.models.messages.ToolUseBlockParam;
 import com.anthropic.models.messages.Usage;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -344,7 +345,12 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
         if (jsonSchema == null || jsonSchema.isBlank()) {
             return sb.build();
         }
-        JsonNode root = JSON.readTree(jsonSchema);
+        final JsonNode root;
+        try {
+            root = JSON.readTree(jsonSchema);
+        } catch (JsonProcessingException e) {
+            return sb.build();
+        }
         if (!root.isObject()) {
             return sb.build();
         }
@@ -420,11 +426,18 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
         }
     }
 
-    private static ToolUseBlockParam.Input toolInputFromJsonString(String json) throws Exception {
+    private static ToolUseBlockParam.Input toolInputFromJsonString(String json) {
         if (json == null || json.isBlank()) {
             return ToolUseBlockParam.Input.builder().build();
         }
-        JsonNode n = JSON.readTree(json);
+        final JsonNode n;
+        try {
+            n = JSON.readTree(json);
+        } catch (JsonProcessingException e) {
+            // Tool arguments are streamed; truncation (e.g. max output tokens) can leave invalid JSON
+            // in history even after a tool round. Replay must not fail the next API request.
+            return ToolUseBlockParam.Input.builder().build();
+        }
         ToolUseBlockParam.Input.Builder ib = ToolUseBlockParam.Input.builder();
         if (n.isObject()) {
             n.properties()

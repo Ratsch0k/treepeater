@@ -127,6 +127,18 @@ class HttpTargetToolsTest {
         return response;
     }
 
+    private static void stubToByteArray(HttpRequest request, byte[] wire) {
+        ByteArray w = mock(ByteArray.class);
+        lenient().when(w.getBytes()).thenReturn(wire.clone());
+        lenient().when(request.toByteArray()).thenReturn(w);
+    }
+
+    private static void stubToByteArray(HttpResponse response, byte[] wire) {
+        ByteArray w = mock(ByteArray.class);
+        lenient().when(w.getBytes()).thenReturn(wire.clone());
+        lenient().when(response.toByteArray()).thenReturn(w);
+    }
+
     private static HttpTargetSnapshot defaultTarget() {
         return new HttpTargetSnapshot("https", "example.com", 443, true,
                 "GET", "https://example.com/path", "/path");
@@ -156,13 +168,8 @@ class HttpTargetToolsTest {
     @Test
     void toolActionLevel_readOnlyTools() {
         assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.GET_CURRENT_HTTP_TARGET));
-        assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.GET_HTTP_HISTORY_STATE));
-        assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.GET_HTTP_REQUEST_LINE));
-        assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.LIST_HTTP_HEADER_NAMES));
-        assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.GET_HTTP_HEADER));
-        assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.LIST_HTTP_COOKIES));
-        assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.GET_HTTP_COOKIE));
-        assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.READ_HTTP_BODY));
+        assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.READ_HTTP_MESSAGE));
+        assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.SEARCH_HTTP_MESSAGE));
     }
 
     @Test
@@ -192,8 +199,8 @@ class HttpTargetToolsTest {
 
     @Test
     void approval_askMode_readToolsNeedNoApproval() {
-        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.GET_HTTP_HISTORY_STATE, AgentMode.ASK));
-        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.READ_HTTP_BODY, AgentMode.ASK));
+        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.READ_HTTP_MESSAGE, AgentMode.ASK));
+        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SEARCH_HTTP_MESSAGE, AgentMode.ASK));
     }
 
     @Test
@@ -204,14 +211,14 @@ class HttpTargetToolsTest {
 
     @Test
     void approval_helperMode_onlyExecuteNeedsApproval() {
-        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.GET_HTTP_HISTORY_STATE, AgentMode.HELPER));
+        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.GET_CURRENT_HTTP_TARGET, AgentMode.HELPER));
         assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SET_HTTP_REQUEST_BODY, AgentMode.HELPER));
         assertTrue(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SEND_CURRENT_HTTP_REQUEST, AgentMode.HELPER));
     }
 
     @Test
     void approval_autonomousMode_nothingNeedsApproval() {
-        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.GET_HTTP_HISTORY_STATE, AgentMode.AUTONOMOUS));
+        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SEARCH_HTTP_MESSAGE, AgentMode.AUTONOMOUS));
         assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SET_HTTP_REQUEST_BODY, AgentMode.AUTONOMOUS));
         assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SEND_CURRENT_HTTP_REQUEST, AgentMode.AUTONOMOUS));
     }
@@ -225,7 +232,7 @@ class HttpTargetToolsTest {
 
     @Test
     void approval_nullMode_treatedAsAsk() {
-        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.GET_HTTP_HISTORY_STATE, null));
+        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.GET_CURRENT_HTTP_TARGET, null));
         assertTrue(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SET_HTTP_REQUEST_BODY, null));
         assertTrue(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SEND_CURRENT_HTTP_REQUEST, null));
     }
@@ -233,23 +240,25 @@ class HttpTargetToolsTest {
     // ===== definitions =====
 
     @Test
-    void definitions_returnsAll17Tools() {
-        assertEquals(17, HttpTargetTools.definitions().size());
+    void definitions_returnsAll12Tools() {
+        assertEquals(12, HttpTargetTools.definitions().size());
     }
 
     // ===== result cap =====
 
     @Test
     void execute_cappedWhenResultExceedsLimit() throws Exception {
-        // A single header value large enough that the surrounding JSON for get_http_header
-        // exceeds MAX_TOOL_RESULT_CHARS (96k). Use 120k chars to leave no doubt.
-        String huge = "x".repeat(120_000);
-        List<HttpHeader> headers = List.of(hdr("X-Big", huge));
-        HttpRequest request = req("GET", "https://x.com/", "/", headers, new byte[0]);
+        String prefix = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+        String body = "A".repeat(200_000);
+        byte[] wire = (prefix + body).getBytes(StandardCharsets.ISO_8859_1);
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), body.getBytes(StandardCharsets.UTF_8));
+        stubToByteArray(request, wire);
         AgentToolContext ctx = singleEntryCtx(request, null);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_HTTP_HEADER,
-                "{\"history_index\":0,\"side\":\"request\",\"name\":\"X-Big\"}", ctx));
+        JsonNode result = parse(
+                HttpTargetTools.execute(
+                        HttpTargetTools.SEARCH_HTTP_MESSAGE,
+                        "{\"side\":\"request\",\"scope\":\"body\",\"pattern\":\"(A{200000})\"}", ctx));
 
         assertEquals("tool_result_too_large", result.get("error").asText());
         assertTrue(result.has("result_chars"));
@@ -271,7 +280,7 @@ class HttpTargetToolsTest {
 
     @Test
     void execute_nullContext_returnsError() throws Exception {
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_HTTP_HISTORY_STATE, "{}", null));
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{}", null));
         assertTrue(result.has("error"), "expected error field");
     }
 
@@ -279,7 +288,7 @@ class HttpTargetToolsTest {
     void execute_invalidJsonArgs_returnsError() throws Exception {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null);
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_HTTP_HISTORY_STATE, "NOT{JSON", ctx));
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "NOT{JSON", ctx));
         assertTrue(result.has("error"));
     }
 
@@ -309,351 +318,254 @@ class HttpTargetToolsTest {
         assertEquals(0, result.get("history").get("current_history_index").asInt());
     }
 
-    // ===== get_http_history_state =====
+    // ===== read_http_message & search_http_message =====
 
     @Test
-    void getHttpHistoryState_singleEntry_noPrevOrNext() throws Exception {
+    void readHttpMessage_missingSide_returnsError() throws Exception {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
+        stubToByteArray(request, "GET /x HTTP/1.1\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
         AgentToolContext ctx = singleEntryCtx(request, null);
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_HTTP_HISTORY_STATE, "{}", ctx));
-
-        assertEquals(0, result.get("current_history_index").asInt());
-        assertEquals(1, result.get("entry_count").asInt());
-        assertFalse(result.get("has_previous_history").asBoolean());
-        assertFalse(result.get("has_next_history").asBoolean());
-        assertEquals(1, result.get("entries").size());
-        assertEquals("12:00:00", result.get("entries").get(0).get("time").asText());
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.READ_HTTP_MESSAGE, "{}", ctx));
+        assertTrue(result.has("error"));
     }
 
     @Test
-    void getHttpHistoryState_middleEntry_hasPrevAndNext() throws Exception {
-        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
-        List<AgentToolContext.HistoryEntryInfo> entries = List.of(
-                new AgentToolContext.HistoryEntryInfo(0, "10:00", "GET /a"),
-                new AgentToolContext.HistoryEntryInfo(1, "10:01", "POST /b"),
-                new AgentToolContext.HistoryEntryInfo(2, "10:02", "GET /c"));
-        AgentToolContext ctx = new AgentToolContext(defaultTarget(), 1, entries,
-                idx -> request, idx -> null, req -> {}, null);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_HTTP_HISTORY_STATE, "{}", ctx));
-
-        assertEquals(1, result.get("current_history_index").asInt());
-        assertEquals(3, result.get("entry_count").asInt());
-        assertTrue(result.get("has_previous_history").asBoolean());
-        assertTrue(result.get("has_next_history").asBoolean());
-        assertEquals(3, result.get("entries").size());
-    }
-
-    // ===== get_http_request_line =====
-
-    @Test
-    void getHttpRequestLine_returnsMethodUrlPathVersionAndService() throws Exception {
-        HttpService svc = mock(HttpService.class);
-        when(svc.host()).thenReturn("example.com");
-        when(svc.port()).thenReturn(443);
-        when(svc.secure()).thenReturn(true);
-
-        HttpRequest request = req("POST", "https://example.com/api", "/api", List.of(), new byte[0]);
-        when(request.httpService()).thenReturn(svc);
+    void readHttpMessage_requestHeaderBytesAndBodySlice() throws Exception {
+        String head = "GET /p HTTP/1.1\r\nHost: z\r\nContent-Length: 5\r\n\r\n";
+        String fullStr = head + "HELLO";
+        byte[] full = fullStr.getBytes(StandardCharsets.ISO_8859_1);
+        HttpRequest request = req("GET", "https://x.com/p", "/p", List.of(), "HELLO".getBytes(StandardCharsets.UTF_8));
+        stubToByteArray(request, full);
         AgentToolContext ctx = singleEntryCtx(request, null);
+        int hb = head.length();
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_HTTP_REQUEST_LINE,
-                "{\"history_index\":0}", ctx));
+        JsonNode start = parse(
+                HttpTargetTools.execute(
+                        HttpTargetTools.READ_HTTP_MESSAGE, "{\"side\":\"request\",\"max_bytes\":" + full.length + "}", ctx));
+        assertEquals("request", start.get("side").asText());
+        assertEquals(full.length, start.get("total_bytes").asInt());
+        assertEquals(hb, start.get("header_bytes").asInt());
+        assertTrue(start.get("text").asText().startsWith("GET /p"));
+        assertEquals(fullStr, start.get("text").asText());
 
-        assertEquals("POST", result.get("method").asText());
-        assertEquals("https://example.com/api", result.get("url").asText());
-        assertEquals("/api", result.get("path").asText());
-        assertEquals("HTTP/1.1", result.get("http_version").asText());
-        assertTrue(result.has("http_service"));
-        assertEquals("https", result.get("http_service").get("scheme").asText());
-        assertEquals("example.com", result.get("http_service").get("host").asText());
-        assertEquals(443, result.get("http_service").get("port").asInt());
-        assertTrue(result.get("http_service").get("secure").asBoolean());
+        JsonNode body = parse(
+                HttpTargetTools.execute(
+                        HttpTargetTools.READ_HTTP_MESSAGE,
+                        "{\"side\":\"request\",\"offset\":" + hb + "}",
+                        ctx));
+        assertEquals("HELLO", body.get("text").asText());
+        assertEquals(hb, body.get("offset").asInt());
     }
 
     @Test
-    void getHttpRequestLine_omittedHistoryIndex_usesCurrentEntry() throws Exception {
-        HttpRequest request = req("DELETE", "https://x.com/resource/1", "/resource/1", List.of(), new byte[0]);
-        AgentToolContext ctx = singleEntryCtx(request, null);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_HTTP_REQUEST_LINE, "{}", ctx));
-        assertEquals("DELETE", result.get("method").asText());
-    }
-
-    @Test
-    void getHttpRequestLine_camelCaseHistoryIndexAlias() throws Exception {
-        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
-        AgentToolContext ctx = singleEntryCtx(request, null);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_HTTP_REQUEST_LINE,
-                "{\"historyIndex\":0}", ctx));
+    void readHttpMessage_resAlias() throws Exception {
+        String s = "HTTP/1.1 200 OK\r\nX:1\r\n\r\n";
+        byte[] w = s.getBytes(StandardCharsets.ISO_8859_1);
+        HttpResponse res = res(List.of(), new byte[0]);
+        HttpRequest reqR = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
+        stubToByteArray(res, w);
+        AgentToolContext ctx = singleEntryCtx(reqR, res);
+        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.READ_HTTP_MESSAGE, "{\"side\":\"res\"}", ctx));
         assertFalse(result.has("error"));
-        assertEquals("GET", result.get("method").asText());
-    }
-
-    // ===== list_http_header_names =====
-
-    @Test
-    void listHttpHeaderNames_requestSide_deduplicatesCaseInsensitively() throws Exception {
-        List<HttpHeader> headers = List.of(
-                hdr("Content-Type", "application/json"),
-                hdr("X-Custom", "a"),
-                hdr("content-type", "text/plain"));  // duplicate of Content-Type
-        HttpRequest request = req("POST", "https://x.com/", "/", headers, new byte[0]);
-        AgentToolContext ctx = singleEntryCtx(request, null);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.LIST_HTTP_HEADER_NAMES,
-                "{\"history_index\":0,\"side\":\"request\"}", ctx));
-
-        JsonNode names = result.get("header_names");
-        assertEquals(2, names.size(), "duplicate should be removed");
-        assertEquals("Content-Type", names.get(0).asText());
-        assertEquals("X-Custom", names.get(1).asText());
-        assertEquals("request", result.get("side").asText());
+        assertTrue(result.get("text").asText().startsWith("HTTP/1.1 200"));
     }
 
     @Test
-    void listHttpHeaderNames_responseSide() throws Exception {
-        List<HttpHeader> headers = List.of(
-                hdr("Content-Length", "42"),
-                hdr("Set-Cookie", "session=abc"));
-        HttpResponse response = res(headers, new byte[0]);
-        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
-        AgentToolContext ctx = singleEntryCtx(request, response);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.LIST_HTTP_HEADER_NAMES,
-                "{\"history_index\":0,\"side\":\"response\"}", ctx));
-
-        assertEquals(2, result.get("header_names").size());
-        assertEquals("response", result.get("side").asText());
-    }
-
-    // ===== get_http_header =====
-
-    @Test
-    void getHttpHeader_caseInsensitiveMatch_returnsAllValues() throws Exception {
-        List<HttpHeader> headers = List.of(
-                hdr("Accept", "text/html"),
-                hdr("accept", "application/json"));
-        HttpRequest request = req("GET", "https://x.com/", "/", headers, new byte[0]);
-        AgentToolContext ctx = singleEntryCtx(request, null);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_HTTP_HEADER,
-                "{\"history_index\":0,\"side\":\"request\",\"name\":\"ACCEPT\"}", ctx));
-
-        assertTrue(result.get("found").asBoolean());
-        assertEquals(2, result.get("values").size());
-        assertEquals("text/html", result.get("values").get(0).asText());
-        assertEquals("application/json", result.get("values").get(1).asText());
-    }
-
-    @Test
-    void getHttpHeader_notFound_returnsFalse() throws Exception {
-        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
-        AgentToolContext ctx = singleEntryCtx(request, null);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_HTTP_HEADER,
-                "{\"history_index\":0,\"side\":\"request\",\"name\":\"X-Missing\"}", ctx));
-
-        assertFalse(result.get("found").asBoolean());
-        assertEquals(0, result.get("values").size());
-    }
-
-    // ===== list_http_cookies =====
-
-    @Test
-    void listHttpCookies_requestSide_parsesMultipleCookies() throws Exception {
-        List<HttpHeader> headers = List.of(hdr("Cookie", "session=abc; token=xyz"));
-        HttpRequest request = req("GET", "https://x.com/", "/", headers, new byte[0]);
-        AgentToolContext ctx = singleEntryCtx(request, null);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.LIST_HTTP_COOKIES,
-                "{\"history_index\":0,\"side\":\"request\"}", ctx));
-
-        JsonNode names = result.get("cookie_names");
-        assertEquals(2, names.size());
-        assertEquals("session", names.get(0).asText());
-        assertEquals("token", names.get(1).asText());
-    }
-
-    @Test
-    void listHttpCookies_responseSide_parsesSetCookieHeaders() throws Exception {
-        List<HttpHeader> headers = List.of(
-                hdr("Set-Cookie", "session=abc; Path=/"),
-                hdr("Set-Cookie", "prefs=dark; HttpOnly"));
-        HttpResponse response = res(headers, new byte[0]);
-        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
-        AgentToolContext ctx = singleEntryCtx(request, response);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.LIST_HTTP_COOKIES,
-                "{\"history_index\":0,\"side\":\"response\"}", ctx));
-
-        JsonNode names = result.get("cookie_names");
-        assertEquals(2, names.size());
-        assertEquals("session", names.get(0).asText());
-        assertEquals("prefs", names.get(1).asText());
-    }
-
-    @Test
-    void listHttpCookies_noCookieHeader_returnsEmptyList() throws Exception {
-        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
-        AgentToolContext ctx = singleEntryCtx(request, null);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.LIST_HTTP_COOKIES,
-                "{\"history_index\":0,\"side\":\"request\"}", ctx));
-
-        assertEquals(0, result.get("cookie_names").size());
-    }
-
-    // ===== get_http_cookie =====
-
-    @Test
-    void getHttpCookie_requestSide_found() throws Exception {
-        List<HttpHeader> headers = List.of(hdr("Cookie", "session=abc123; token=xyz"));
-        HttpRequest request = req("GET", "https://x.com/", "/", headers, new byte[0]);
-        AgentToolContext ctx = singleEntryCtx(request, null);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_HTTP_COOKIE,
-                "{\"history_index\":0,\"side\":\"request\",\"name\":\"session\"}", ctx));
-
-        assertTrue(result.get("found").asBoolean());
-        assertEquals("abc123", result.get("value").asText());
-    }
-
-    @Test
-    void getHttpCookie_requestSide_notFound() throws Exception {
-        List<HttpHeader> headers = List.of(hdr("Cookie", "session=abc123"));
-        HttpRequest request = req("GET", "https://x.com/", "/", headers, new byte[0]);
-        AgentToolContext ctx = singleEntryCtx(request, null);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_HTTP_COOKIE,
-                "{\"history_index\":0,\"side\":\"request\",\"name\":\"token\"}", ctx));
-
-        assertFalse(result.get("found").asBoolean());
-        assertFalse(result.has("value"));
-    }
-
-    @Test
-    void getHttpCookie_responseSide_found_returnsRawSetCookieHeader() throws Exception {
-        List<HttpHeader> headers = List.of(hdr("Set-Cookie", "session=abc123; Path=/; Secure"));
-        HttpResponse response = res(headers, new byte[0]);
-        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
-        AgentToolContext ctx = singleEntryCtx(request, response);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_HTTP_COOKIE,
-                "{\"history_index\":0,\"side\":\"response\",\"name\":\"session\"}", ctx));
-
-        assertTrue(result.get("found").asBoolean());
-        assertEquals("session=abc123; Path=/; Secure", result.get("set_cookie_header").asText());
-    }
-
-    @Test
-    void getHttpCookie_responseSide_notFound() throws Exception {
-        List<HttpHeader> headers = List.of(hdr("Set-Cookie", "other=value"));
-        HttpResponse response = res(headers, new byte[0]);
-        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
-        AgentToolContext ctx = singleEntryCtx(request, response);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_HTTP_COOKIE,
-                "{\"history_index\":0,\"side\":\"response\",\"name\":\"session\"}", ctx));
-
-        assertFalse(result.get("found").asBoolean());
-    }
-
-    // ===== read_http_body =====
-
-    @Test
-    void readHttpBody_utf8Body_returnsTextEncoding() throws Exception {
-        byte[] body = "Hello, World!".getBytes(StandardCharsets.UTF_8);
-        HttpRequest request = req("POST", "https://x.com/", "/", List.of(), body);
-        AgentToolContext ctx = singleEntryCtx(request, null);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.READ_HTTP_BODY,
-                "{\"history_index\":0,\"side\":\"request\"}", ctx));
-
-        assertEquals(13, result.get("total_bytes").asInt());
-        assertEquals("utf-8", result.get("encoding").asText());
-        assertEquals("Hello, World!", result.get("text").asText());
-        assertEquals(0, result.get("offset").asInt());
-        assertFalse(result.get("has_more").asBoolean());
-        assertEquals(13, result.get("next_offset").asInt());
-    }
-
-    @Test
-    void readHttpBody_binaryBody_returnsBase64Encoding() throws Exception {
-        byte[] body = new byte[]{(byte) 0xFF, (byte) 0xFE, 0x00, 0x01};
-        HttpRequest request = req("POST", "https://x.com/", "/", List.of(), body);
-        AgentToolContext ctx = singleEntryCtx(request, null);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.READ_HTTP_BODY,
-                "{\"history_index\":0,\"side\":\"request\"}", ctx));
-
-        assertEquals("base64", result.get("encoding").asText());
-        assertTrue(result.get("is_binary_chunk").asBoolean());
-        byte[] decoded = Base64.getDecoder().decode(result.get("base64").asText());
-        assertArrayEquals(body, decoded);
-    }
-
-    @Test
-    void readHttpBody_withOffsetAndMaxBytes_returnsCorrectChunk() throws Exception {
-        byte[] body = "0123456789".getBytes(StandardCharsets.UTF_8);
+    void readHttpMessage_clampsMaxBytes() throws Exception {
+        final int maxB = 65_536;
+        byte[] body = "A".repeat(2 * maxB).getBytes(StandardCharsets.ISO_8859_1);
+        String p = "GET / HTTP/1.1\r\nHost: a\r\n\r\n";
+        byte[] full = (p + new String(body, StandardCharsets.ISO_8859_1)).getBytes(StandardCharsets.ISO_8859_1);
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), body);
+        stubToByteArray(request, full);
         AgentToolContext ctx = singleEntryCtx(request, null);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.READ_HTTP_BODY,
-                "{\"history_index\":0,\"side\":\"request\",\"offset\":4,\"max_bytes\":3}", ctx));
-
-        assertEquals(10, result.get("total_bytes").asInt());
-        assertEquals(4, result.get("offset").asInt());
-        assertEquals(3, result.get("returned_bytes").asInt());
-        assertEquals("456", result.get("text").asText());
-        assertTrue(result.get("has_more").asBoolean());
-        assertEquals(7, result.get("next_offset").asInt());
+        JsonNode r = parse(
+                HttpTargetTools.execute(
+                        HttpTargetTools.READ_HTTP_MESSAGE,
+                        "{\"side\":\"request\",\"offset\":" + p.length() + ",\"max_bytes\":9999999999}",
+                        ctx));
+        assertEquals(p.length() + 2 * maxB, r.get("total_bytes").asInt());
+        assertEquals(maxB, r.get("returned_bytes").asInt());
     }
 
     @Test
-    void readHttpBody_maxBytesTooLarge_returnsError() throws Exception {
-        final int maxBytes = 65_536;
-
-        byte[] body = "A".repeat(2 * maxBytes).getBytes(StandardCharsets.UTF_8);
-        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), body);
+    void readHttpMessage_binaryChunkUsesBase64() throws Exception {
+        String head = "POST /b HTTP/1.1\r\nX: y\r\n\r\n";
+        byte[] body = new byte[] {(byte) 0xFF, 0x00, 0x01};
+        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+        bos.writeBytes(head.getBytes(StandardCharsets.ISO_8859_1));
+        bos.writeBytes(body);
+        byte[] full = bos.toByteArray();
+        HttpRequest request = req("POST", "https://x.com/b", "/b", List.of(), body);
+        stubToByteArray(request, full);
         AgentToolContext ctx = singleEntryCtx(request, null);
+        int hb = firstDoubleCrlfEnd(full);
+        JsonNode r = parse(
+                HttpTargetTools.execute(
+                        HttpTargetTools.READ_HTTP_MESSAGE,
+                        "{\"side\":\"request\",\"offset\":" + hb + "}",
+                        ctx));
+        assertEquals("base64", r.get("encoding").asText());
+        assertArrayEquals(body, Base64.getDecoder().decode(r.get("base64").asText()));
+    }
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.READ_HTTP_BODY,
-                "{\"history_index\":0,\"side\":\"request\",\"offset\":0,\"max_bytes\":9999999999}", ctx));
-
-        assertEquals(maxBytes * 2, result.get("total_bytes").asInt());
-        assertEquals(0, result.get("offset").asInt());
-        assertEquals(maxBytes, result.get("returned_bytes").asInt());
-        assertEquals("A".repeat(maxBytes), result.get("text").asText());
-        assertTrue(result.get("has_more").asBoolean());
-        assertEquals(maxBytes, result.get("next_offset").asInt());    }
-
-    @Test
-    void readHttpBody_responseSide() throws Exception {
-        byte[] body = "{\"status\":\"ok\"}".getBytes(StandardCharsets.UTF_8);
-        HttpResponse response = res(List.of(), body);
-        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
-        AgentToolContext ctx = singleEntryCtx(request, response);
-
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.READ_HTTP_BODY,
-                "{\"history_index\":0,\"side\":\"response\"}", ctx));
-
-        assertEquals("utf-8", result.get("encoding").asText());
-        assertEquals("{\"status\":\"ok\"}", result.get("text").asText());
+    private static int firstDoubleCrlfEnd(byte[] d) {
+        for (int i = 0; i + 3 < d.length; i++) {
+            if (d[i] == '\r' && d[i + 1] == '\n' && d[i + 2] == '\r' && d[i + 3] == '\n') {
+                return i + 4;
+            }
+        }
+        return d.length;
     }
 
     @Test
-    void readHttpBody_emptyBody() throws Exception {
+    void searchHostHeaderCapturesValueAndOffsets() throws Exception {
+        String wStr = "GET / HTTP/1.1\r\nHost: example.org\r\n\r\n";
+        byte[] w = wStr.getBytes(StandardCharsets.ISO_8859_1);
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
+        stubToByteArray(request, w);
         AgentToolContext ctx = singleEntryCtx(request, null);
+        // JSON needs \\ before s so the pattern string contains the regex \\s (whitespace), not invalid JSON \\s
+        String raw = HttpTargetTools.execute(
+                HttpTargetTools.SEARCH_HTTP_MESSAGE,
+                "{\"side\":\"request\",\"pattern\":\"(?im)^Host:\\\\s*(.+)$\"}",
+                ctx);
+        JsonNode r = parse(raw);
+        if (r.has("error")) {
+            fail("Unexpected tool error: " + r.get("error").asText() + " raw=" + raw);
+        }
+        assertEquals(1, r.get("match_count").asInt());
+        JsonNode m0 = r.get("matches").get(0);
+        assertEquals(1, m0.get("groups").size());
+        assertEquals("example.org", m0.get("groups").get(0).asText());
+        int matchStart = m0.get("start").asInt();
+        assertTrue(matchStart >= 0);
+        assertTrue(wStr.substring(matchStart, m0.get("end").asInt()).contains("Host:"));
+    }
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.READ_HTTP_BODY,
-                "{\"history_index\":0,\"side\":\"request\"}", ctx));
+    @Test
+    void searchScopeHeadersExcludesDecoyInBody() throws Exception {
+        String wStr = "GET / HTTP/1.1\r\nHost: real\r\n\r\nThis line has Host: decoy in it\r\n";
+        byte[] w = wStr.getBytes(StandardCharsets.ISO_8859_1);
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
+        stubToByteArray(request, w);
+        AgentToolContext ctx = singleEntryCtx(request, null);
+        JsonNode all = parse(
+                HttpTargetTools.execute(
+                        HttpTargetTools.SEARCH_HTTP_MESSAGE, "{\"side\":\"request\",\"pattern\":\"Host:\",\"scope\":\"all\"}", ctx));
+        assertTrue(all.get("match_count").asInt() > 1);
+        JsonNode hdr = parse(
+                HttpTargetTools.execute(
+                        HttpTargetTools.SEARCH_HTTP_MESSAGE, "{\"side\":\"request\",\"pattern\":\"Host:\",\"scope\":\"headers\"}", ctx));
+        assertEquals(1, hdr.get("match_count").asInt());
+    }
 
-        assertEquals(0, result.get("total_bytes").asInt());
-        assertEquals(0, result.get("returned_bytes").asInt());
-        assertFalse(result.get("has_more").asBoolean());
+    @Test
+    void searchScopeBodyFindsTokenLiteral() throws Exception {
+        String wStr = "HTTP/1.1 200 OK\r\n\r\n{\"csrf\":\"tok456\"}";
+        byte[] w = wStr.getBytes(StandardCharsets.UTF_8);
+        HttpResponse res = res(List.of(), new byte[0]);
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
+        stubToByteArray(res, w);
+        AgentToolContext ctx = singleEntryCtx(request, res);
+        JsonNode r = parse(
+                HttpTargetTools.execute(
+                        HttpTargetTools.SEARCH_HTTP_MESSAGE,
+                        "{\"side\":\"response\",\"scope\":\"body\",\"pattern\":\"tok456\"}",
+                        ctx));
+        assertEquals(1, r.get("match_count").asInt());
+    }
+
+    @Test
+    void searchMaxMatchesTruncates() throws Exception {
+        String wStr = "GET / HTTP/1.1\r\n\r\n" + "a".repeat(8);
+        byte[] w = wStr.getBytes(StandardCharsets.ISO_8859_1);
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), "aaaaaaaa".getBytes(StandardCharsets.ISO_8859_1));
+        stubToByteArray(request, w);
+        AgentToolContext ctx = singleEntryCtx(request, null);
+        JsonNode r = parse(
+                HttpTargetTools.execute(
+                        HttpTargetTools.SEARCH_HTTP_MESSAGE,
+                        "{\"side\":\"request\",\"scope\":\"body\",\"pattern\":\"a\",\"max_matches\":2}",
+                        ctx));
+        assertEquals(2, r.get("match_count").asInt());
+        assertTrue(r.get("truncated").asBoolean());
+        assertTrue(r.get("total_matches_in_scan").asInt() > 2);
+    }
+
+    @Test
+    void searchContextBytesPresent() throws Exception {
+        String wStr = "GET /x HTTP/1.1\r\n\r\n0123456789abcdefghij";
+        byte[] w = wStr.getBytes(StandardCharsets.ISO_8859_1);
+        HttpRequest request = req("GET", "https://x.com/x", "/x", List.of(), "0123456789abcdefghij".getBytes(StandardCharsets.ISO_8859_1));
+        stubToByteArray(request, w);
+        AgentToolContext ctx = singleEntryCtx(request, null);
+        JsonNode r = parse(
+                HttpTargetTools.execute(
+                        HttpTargetTools.SEARCH_HTTP_MESSAGE,
+                        "{\"side\":\"request\",\"scope\":\"body\",\"pattern\":\"ghij\",\"context_bytes\":3}",
+                        ctx));
+        String ctxBefore = r.get("matches").get(0).get("context_before").asText();
+        String ctxAfter = r.get("matches").get(0).get("context_after").asText();
+        assertTrue(ctxBefore.contains("def"));
+        assertTrue(ctxAfter.isEmpty() || !ctxAfter.contains("Z"));
+    }
+
+    @Test
+    void searchInvalidRegex() throws Exception {
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
+        stubToByteArray(request, "GET / HTTP/1.1\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
+        AgentToolContext ctx = singleEntryCtx(request, null);
+        JsonNode r = parse(
+                HttpTargetTools.execute(
+                        HttpTargetTools.SEARCH_HTTP_MESSAGE, "{\"side\":\"request\",\"pattern\":\"(\"}", ctx));
+        assertTrue(r.get("error").asText().contains("regex") || r.get("error").asText().contains("Unclosed"));
+    }
+
+    @Test
+    void searchPatternTooLong() throws Exception {
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
+        stubToByteArray(request, "A".getBytes(StandardCharsets.ISO_8859_1));
+        AgentToolContext ctx = singleEntryCtx(request, null);
+        String p = "x".repeat(1025);
+        String args = "{\"side\":\"request\",\"pattern\":" + JSON.writeValueAsString(p) + "}";
+        JsonNode r = parse(HttpTargetTools.execute(HttpTargetTools.SEARCH_HTTP_MESSAGE, args, ctx));
+        assertTrue(r.get("error").asText().toLowerCase().contains("pattern"));
+    }
+
+    @Test
+    void searchHugeBodyIsScanLimited() throws Exception {
+        String twoMbBody = "B".repeat(2 * 1024 * 1024);
+        String head = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+        byte[] w = (head + twoMbBody).getBytes(StandardCharsets.ISO_8859_1);
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), twoMbBody.getBytes(StandardCharsets.ISO_8859_1));
+        stubToByteArray(request, w);
+        AgentToolContext ctx = singleEntryCtx(request, null);
+        long t0 = System.nanoTime();
+        JsonNode r = parse(
+                HttpTargetTools.execute(
+                        HttpTargetTools.SEARCH_HTTP_MESSAGE, "{\"side\":\"request\",\"scope\":\"body\",\"pattern\":\"NOMATCH\"}", ctx));
+        long ms = (System.nanoTime() - t0) / 1_000_000L;
+        assertTrue(ms < 10_000, "search should not hang, took " + ms + "ms");
+        assertEquals(0, r.get("match_count").asInt());
+        assertTrue(r.has("scan_limited_bytes"), "2MB body scope should be capped per scan_limited_bytes");
+    }
+
+    @Test
+    void searchBinaryMatchReturnsBase64InMatch() throws Exception {
+        java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+        b.write("GET / HTTP/1.1\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
+        b.write(0xFF);
+        b.write(0xFF);
+        byte[] w = b.toByteArray();
+        byte[] onlyBody = new byte[] {(byte) 0xFF, (byte) 0xFF};
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), onlyBody);
+        stubToByteArray(request, w);
+        AgentToolContext ctx = singleEntryCtx(request, null);
+        JsonNode r = parse(
+                HttpTargetTools.execute(
+                        HttpTargetTools.SEARCH_HTTP_MESSAGE, "{\"side\":\"request\",\"scope\":\"body\",\"pattern\":\".\"}", ctx));
+        assertTrue(r.get("matches").get(0).has("match_base64"));
     }
 
     // ===== replace_in_http_request_body =====
@@ -1083,17 +995,17 @@ class HttpTargetToolsTest {
     // ===== humanToolUsage =====
 
     @Test
-    void humanToolUsage_readOnlyTools_emptyDetail() {
-        for (String tool : new String[]{
-                HttpTargetTools.GET_CURRENT_HTTP_TARGET,
-                HttpTargetTools.GET_HTTP_HISTORY_STATE,
-                HttpTargetTools.LIST_HTTP_HEADER_NAMES,
-                HttpTargetTools.READ_HTTP_BODY}) {
-            HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(tool, "{}", 0);
-            assertFalse(usage.title().isBlank(), "title should not be blank for: " + tool);
-            // Read-only tools produce no detail
-            assertTrue(usage.detail().isEmpty(), "detail should be empty for read tool: " + tool);
-        }
+    void humanToolUsage_getCurrentAndReadMessages() {
+        HttpTargetTools.HumanToolUsage t1 = HttpTargetTools.humanToolUsage(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{}", 0);
+        assertTrue(t1.detail().isEmpty());
+        assertFalse(t1.title().isBlank());
+        HttpTargetTools.HumanToolUsage t2 =
+                HttpTargetTools.humanToolUsage(HttpTargetTools.READ_HTTP_MESSAGE, "{\"side\":\"request\"}", 0);
+        assertTrue(t2.title().contains("offset 0, max 4096"));
+        assertTrue(t2.detail().isEmpty());
+        HttpTargetTools.HumanToolUsage t3 = HttpTargetTools.humanToolUsage(
+                HttpTargetTools.SEARCH_HTTP_MESSAGE, "{\"side\":\"request\",\"pattern\":\"^Host:\"}", 0);
+        assertTrue(t3.title().contains("Searching request"));
     }
 
     @Test
@@ -1186,10 +1098,11 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_historyIndexSuffix_omittedWhenSameAsViewer() {
+        String args = "{\"side\":\"request\",\"history_index\":3}";
         HttpTargetTools.HumanToolUsage withSuffix = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.GET_HTTP_REQUEST_LINE, "{\"history_index\":3}", 0);
+                HttpTargetTools.READ_HTTP_MESSAGE, args, 0);
         HttpTargetTools.HumanToolUsage withoutSuffix = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.GET_HTTP_REQUEST_LINE, "{\"history_index\":3}", 3);
+                HttpTargetTools.READ_HTTP_MESSAGE, args, 3);
 
         assertTrue(withSuffix.title().contains("#3"),
                 "should include history index when different from viewer: " + withSuffix.title());

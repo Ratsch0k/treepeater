@@ -11,7 +11,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.Callable;
@@ -20,6 +19,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 import javax.swing.SwingUtilities;
 
@@ -36,8 +36,8 @@ import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 
 /**
- * Built-in tools: HTTP target summary, repeater history navigation, and scoped inspection of request/response
- * headers, cookies, and body (chunked reads for large bodies).
+ * Built-in tools: HTTP target summary, raw wire read ({@value #READ_HTTP_MESSAGE}), regex search
+ * ({@value #SEARCH_HTTP_MESSAGE}), and request mutation / send in Repeater.
  */
 public final class HttpTargetTools {
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -46,18 +46,14 @@ public final class HttpTargetTools {
     /** Tool name: current editor/target only; JSON from {@link HttpTargetSnapshot#toJson()} plus nested {@code history}. */
     public static final String GET_CURRENT_HTTP_TARGET = "get_current_http_target";
 
-    public static final String GET_HTTP_HISTORY_STATE = "get_http_history_state";
+    /**
+     * Byte slice of the raw request or response wire (start-line + headers + CRLFCRLF + body). Same side parameter as
+     * {@value #SEARCH_HTTP_MESSAGE}.
+     */
+    public static final String READ_HTTP_MESSAGE = "read_http_message";
 
-    /** Request line / target line for a specific send-history entry (method, URL, path, HTTP version, service). */
-    public static final String GET_HTTP_REQUEST_LINE = "get_http_request_line";
-
-    public static final String LIST_HTTP_HEADER_NAMES = "list_http_header_names";
-    public static final String GET_HTTP_HEADER = "get_http_header";
-
-    public static final String LIST_HTTP_COOKIES = "list_http_cookies";
-    public static final String GET_HTTP_COOKIE = "get_http_cookie";
-
-    public static final String READ_HTTP_BODY = "read_http_body";
+    /** Regex over raw wire bytes (Java {@link java.util.regex.Pattern}); byte offsets match {@link #READ_HTTP_MESSAGE}. */
+    public static final String SEARCH_HTTP_MESSAGE = "search_http_message";
 
     /** Substring replace in the current (live editor) request body only. */
     public static final String REPLACE_IN_HTTP_REQUEST_BODY = "replace_in_http_request_body";
@@ -98,8 +94,15 @@ public final class HttpTargetTools {
         }
     }
 
-    private static final int DEFAULT_BODY_CHUNK_BYTES = 8_192;
+    private static final int DEFAULT_READ_CHUNK_BYTES = 4_096;
     private static final int MAX_BODY_CHUNK_BYTES = 65_536;
+
+    private static final int DEFAULT_SEARCH_MAX_MATCHES = 10;
+    private static final int MAX_SEARCH_MAX_MATCHES = 100;
+    private static final int DEFAULT_SEARCH_CONTEXT_BYTES = 64;
+    private static final int MAX_SEARCH_CONTEXT_BYTES = 512;
+    private static final int MAX_SEARCH_PATTERN_CHARS = 1_024;
+    private static final int MAX_SCAN_BYTES = 1_048_576;
 
     /**
      * Upper bound on the JSON string returned to the model for any single tool call. Sized to
@@ -114,12 +117,15 @@ public final class HttpTargetTools {
             {"type":"object","properties":{},"additionalProperties":false}\
             """;
 
-    private static final String HISTORY_INDEX_ONLY_SCHEMA =
+    private static final String READ_MESSAGE_SCHEMA =
             """
-            {"type":"object","properties":{"history_index":{"type":"integer","minimum":0,"description":"Send-history index (0-based). Omit to use the current entry; historyIndex is accepted as an alias."}},"additionalProperties":false}\
+            {"type":"object","properties":{"side":{"type":"string","enum":["request","response"],"description":"Whether to read the stored request or response."},"history_index":{"type":"integer","minimum":0,"description":"0-based history index; omit for the current entry."},"offset":{"type":"integer","minimum":0,"default":0,"description":"Byte offset into the raw wire message."},"max_bytes":{"type":"integer","minimum":1,"maximum":65536,"default":4096,"description":"Maximum bytes to return in this call."}},"required":["side"],"additionalProperties":false}\
             """;
 
-    private static final String SIDE_ENUM = "\"request\",\"response\"";
+    private static final String SEARCH_MESSAGE_SCHEMA =
+            """
+            {"type":"object","properties":{"side":{"type":"string","enum":["request","response"]},"pattern":{"type":"string","description":"Java java.util.regex pattern; use inline flags (?i), (?m), (?s) as needed."},"history_index":{"type":"integer","minimum":0,"description":"0-based history index; omit for the current entry."},"scope":{"type":"string","enum":["headers","body","all"],"default":"all","description":"headers: only before CRLFCRLF; body: only after; all: full message."},"max_matches":{"type":"integer","minimum":1,"maximum":100,"default":10,"description":"Maximum matches to return."},"context_bytes":{"type":"integer","minimum":0,"maximum":512,"default":64,"description":"Context bytes on each side of each match."}},"required":["side","pattern"],"additionalProperties":false}\
+            """;
 
     private static final int MAX_SUBSTRING_REPLACEMENTS = 100_000;
 
@@ -164,75 +170,38 @@ public final class HttpTargetTools {
             {"type":"object","properties":{"url":{"type":"string","description":"Absolute URL including scheme and host (e.g. https://example.com/path?x=1)."}},"required":["url"],"additionalProperties":false}\
             """;
 
-    private static final Pattern SET_COOKIE_NAME_PATTERN = Pattern.compile("^\\s*([^=;\\s]+)\\s*=");
-
     private HttpTargetTools() {}
 
     public static List<ChatToolDefinition> definitions() {
         return List.of(
                 new ChatToolDefinition(
                         GET_CURRENT_HTTP_TARGET,
-                        "Returns the current repeater HTTP target only (what is configured for this tab right now): "
-                                + "scheme, host, port, SNI flag, method, full URL, and path, plus the same send-history "
-                                + "summary as get_http_history_state under a history object (current index, prev/next, "
-                                + "entries with index/time/target label). For the request line of a specific past send, "
-                                + "use get_http_request_line.",
+                        "Returns the current repeater HTTP target (what is configured for this tab right now): "
+                                + "scheme, host, port, SNI flag, method, full URL, and path, plus a send-history object "
+                                + "(current index, prev/next, entries with index/time/target label). "
+                                + "Use read_http_message or search_http_message to inspect the raw request/response for a past send.",
                         EMPTY_PARAMS_SCHEMA),
                 new ChatToolDefinition(
-                        GET_HTTP_HISTORY_STATE,
-                        "Returns Treepeater send history for this tab: current index, whether older/newer entries exist, "
-                                + "and a short summary per entry (index, time, target label). "
-                                + "Use this before other tools to choose a valid history_index.",
-                        EMPTY_PARAMS_SCHEMA),
+                        READ_HTTP_MESSAGE,
+                        "Reads a byte range of the raw HTTP request or response for one history entry (start-line + "
+                                + "headers + CRLFCRLF + body, as serialized by the proxy). `side` selects request or response. "
+                                + "Defaults return the first 4096 bytes, usually enough for the start-line and all headers. "
+                                + "Returns `total_bytes`, `header_bytes` (first body byte; use it as `offset` on a follow-up "
+                                + "read), `has_more`, `next_offset`, and `text` (utf-8) or `base64` on binary slices. For "
+                                + "targeted values (a header, token in a body) prefer `search_http_message` to keep results small.",
+                        READ_MESSAGE_SCHEMA),
                 new ChatToolDefinition(
-                        GET_HTTP_REQUEST_LINE,
-                        "Returns the HTTP request first-line details for one send-history entry: method, full URL, path, "
-                                + "HTTP version, and http_service (scheme, host, port, secure). "
-                                + "Use history_index to select an entry (omit for the current entry).",
-                        HISTORY_INDEX_ONLY_SCHEMA),
-                new ChatToolDefinition(
-                        LIST_HTTP_HEADER_NAMES,
-                        "Lists HTTP header field names only (no values) for the request or response of one history entry.",
-                        """
-                        {"type":"object","properties":{"history_index":{"type":"integer","minimum":0,"description":"0-based Treepeater history index."},"side":{"type":"string","enum":[%s],"description":"Whether to read from the stored request or response."}},"required":["history_index","side"],"additionalProperties":false}\
-                        """
-                                .formatted(SIDE_ENUM)),
-                new ChatToolDefinition(
-                        GET_HTTP_HEADER,
-                        "Returns all values for a header on the request or response (HTTP allows duplicate header names). "
-                                + "Name matching is case-insensitive.",
-                        """
-                        {"type":"object","properties":{"history_index":{"type":"integer","minimum":0},"side":{"type":"string","enum":[%s]},"name":{"type":"string","description":"Header name (e.g. Content-Type)."}},"required":["history_index","side","name"],"additionalProperties":false}\
-                        """
-                                .formatted(SIDE_ENUM)),
-                new ChatToolDefinition(
-                        LIST_HTTP_COOKIES,
-                        "Lists cookie names: for requests, names from the Cookie header; for responses, names from "
-                                + "Set-Cookie headers.",
-                        """
-                        {"type":"object","properties":{"history_index":{"type":"integer","minimum":0},"side":{"type":"string","enum":[%s]}},"required":["history_index","side"],"additionalProperties":false}\
-                        """
-                                .formatted(SIDE_ENUM)),
-                new ChatToolDefinition(
-                        GET_HTTP_COOKIE,
-                        "Returns one cookie by name. Request: parsed from Cookie header. Response: first Set-Cookie whose "
-                                + "name matches (case-sensitive cookie name).",
-                        """
-                        {"type":"object","properties":{"history_index":{"type":"integer","minimum":0},"side":{"type":"string","enum":[%s]},"name":{"type":"string","description":"Cookie name."}},"required":["history_index","side","name"],"additionalProperties":false}\
-                        """
-                                .formatted(SIDE_ENUM)),
-                new ChatToolDefinition(
-                        READ_HTTP_BODY,
-                        "Reads a byte range of the message body for one history entry. Large bodies must be read in "
-                                + "multiple calls using offset and max_bytes (default "
-                                + DEFAULT_BODY_CHUNK_BYTES
-                                + ", hard cap "
-                                + MAX_BODY_CHUNK_BYTES
-                                + "). Returns total_bytes, UTF-8 text when the chunk is valid UTF-8, otherwise base64.",
-                        """
-                        {"type":"object","properties":{"history_index":{"type":"integer","minimum":0},"side":{"type":"string","enum":[%s]},"offset":{"type":"integer","minimum":0,"default":0,"description":"Byte offset into the body."},"max_bytes":{"type":"integer","minimum":1,"maximum":%d,"default":%d,"description":"Maximum body bytes to return in this call."}},"required":["history_index","side"],"additionalProperties":false}\
-                        """
-                                .formatted(SIDE_ENUM, MAX_BODY_CHUNK_BYTES, DEFAULT_BODY_CHUNK_BYTES)),
+                        SEARCH_HTTP_MESSAGE,
+                        "Regex search over the raw wire bytes of a request or response (same byte address space as "
+                                + "read_http_message). Returns up to `max_matches` matches (default 10, cap 100) with "
+                                + "absolute byte offsets, capture groups, and short `context_bytes` (default 64, cap 512) "
+                                + "on each side. `scope` restricts to headers, body, or the full message. Use Java regex "
+                                + "with inline flags: `(?i)` case-insensitive, `(?m)` ^ and $ per line, `(?s)` dot includes "
+                                + "newlines. Examples: `(?im)^Set-Cookie:\\\\s*(.+)$`, `name=\\\"csrf_token\\\"\\\\s+value=\\\""
+                                + "([^\\\"]+)\\\"`. Matching uses Latin-1 (byte offset equals char index); stick to ASCII "
+                                + "or byte patterns. Pattern length max 1024; the scan is limited to 1MB per call "
+                                + "(`scan_limited_bytes` when clipped); page with read_http_message past that.",
+                        SEARCH_MESSAGE_SCHEMA),
                 new ChatToolDefinition(
                         REPLACE_IN_HTTP_REQUEST_BODY,
                         "Replaces literal text in the **current** repeater request body only (live editor). "
@@ -292,14 +261,7 @@ public final class HttpTargetTools {
             return null;
         }
         return switch (toolName) {
-            case GET_CURRENT_HTTP_TARGET,
-                    GET_HTTP_HISTORY_STATE,
-                    GET_HTTP_REQUEST_LINE,
-                    LIST_HTTP_HEADER_NAMES,
-                    GET_HTTP_HEADER,
-                    LIST_HTTP_COOKIES,
-                    GET_HTTP_COOKIE,
-                    READ_HTTP_BODY -> ToolActionLevel.READ_ONLY;
+            case GET_CURRENT_HTTP_TARGET, READ_HTTP_MESSAGE, SEARCH_HTTP_MESSAGE -> ToolActionLevel.READ_ONLY;
             case REPLACE_IN_HTTP_REQUEST_BODY,
                     PATCH_HTTP_REQUEST_BODY_LINES,
                     SET_HTTP_REQUEST_BODY,
@@ -355,13 +317,8 @@ public final class HttpTargetTools {
         try {
             result = switch (toolName) {
                 case GET_CURRENT_HTTP_TARGET -> targetWithHistoryJson(ctx);
-                case GET_HTTP_HISTORY_STATE -> historyStateJson(ctx);
-                case GET_HTTP_REQUEST_LINE -> requestLineJson(ctx, args);
-                case LIST_HTTP_HEADER_NAMES -> listHeaderNames(ctx, args);
-                case GET_HTTP_HEADER -> getHeader(ctx, args);
-                case LIST_HTTP_COOKIES -> listCookies(ctx, args);
-                case GET_HTTP_COOKIE -> getCookie(ctx, args);
-                case READ_HTTP_BODY -> readBody(ctx, args);
+                case READ_HTTP_MESSAGE -> readMessage(ctx, args);
+                case SEARCH_HTTP_MESSAGE -> searchMessage(ctx, args);
                 case REPLACE_IN_HTTP_REQUEST_BODY -> replaceInHttpRequestBody(ctx, args);
                 case PATCH_HTTP_REQUEST_BODY_LINES -> patchHttpRequestBodyLines(ctx, args);
                 case SET_HTTP_REQUEST_BODY -> setHttpRequestBody(ctx, args);
@@ -383,7 +340,7 @@ public final class HttpTargetTools {
      * Returns an oversized tool result unchanged when within budget; otherwise replaces it with a
      * small structured error pointing the model at paginated alternatives. This backstops every tool
      * uniformly so an unexpectedly large payload can never explode the next round's input-token
-     * count. {@link #READ_HTTP_BODY} is sized to stay well under this cap even for a max chunk.
+     * count. A max-sized read_http_message chunk is sized to stay under this cap.
      */
     private static String capResult(String result) {
         if (result == null) {
@@ -398,9 +355,8 @@ public final class HttpTargetTools {
         n.put("max_result_chars", MAX_TOOL_RESULT_CHARS);
         n.put(
                 "hint",
-                "Call read_http_body with offset/max_bytes for paginated body reads, "
-                        + "list_http_header_names then get_http_header for headers, or "
-                        + "list_http_cookies then get_http_cookie for cookies.");
+                "Call read_http_message with offset and max_bytes for smaller slices, or use search_http_message to "
+                        + "match a small substring; narrow search scope (headers|body) when possible.");
         return write(n);
     }
 
@@ -411,7 +367,7 @@ public final class HttpTargetTools {
         return JSON.readTree(argumentsJson);
     }
 
-    /** Same payload shape as {@link #historyStateJson} (standalone and nested under {@code history} for get_current_http_target). */
+    /** Nested under {@code history} in {@link #get_current_http_target}. */
     private static ObjectNode buildHistoryStateObject(AgentToolContext ctx) {
         ObjectNode n = JSON.createObjectNode();
         int size = ctx.historySize();
@@ -430,10 +386,6 @@ public final class HttpTargetTools {
         return n;
     }
 
-    private static String historyStateJson(AgentToolContext ctx) {
-        return write(buildHistoryStateObject(ctx));
-    }
-
     private static String targetWithHistoryJson(AgentToolContext ctx) {
         try {
             ObjectNode n = (ObjectNode) JSON.readTree(ctx.target().toJson());
@@ -444,176 +396,25 @@ public final class HttpTargetTools {
         }
     }
 
-    private static String requestLineJson(AgentToolContext ctx, JsonNode args) {
-        int idx = resolveHistoryIndex(ctx, args);
-        HttpRequest req = ctx.requestForHistoryIndex().apply(idx);
-        if (req == null) {
-            return errorJson("no request for this history index");
-        }
-        ObjectNode n = JSON.createObjectNode();
-        n.put("history_index", idx);
-        n.put("method", safeString(() -> req.method(), ""));
-        n.put("url", safeString(() -> req.url(), ""));
-        n.put("path", safeString(() -> req.path(), ""));
-        n.put("http_version", safeString(() -> req.httpVersion(), ""));
-        HttpService resolvedService = null;
-        try {
-            resolvedService = req.httpService();
-        } catch (Exception ignored) {
-        }
-        final HttpService svc = resolvedService;
-        if (svc != null) {
-            ObjectNode s = n.putObject("http_service");
-            s.put("scheme", svc.secure() ? "https" : "http");
-            s.put("host", safeString(() -> svc.host(), ""));
-            s.put("port", svc.port());
-            s.put("secure", svc.secure());
-        }
-        return write(n);
-    }
-
-    private static String listHeaderNames(AgentToolContext ctx, JsonNode args) {
-        int idx = resolveHistoryIndex(ctx, args);
+    private static String readMessage(AgentToolContext ctx, JsonNode args) {
         String side = resolveSide(args);
-        List<HttpHeader> headers = headersForSide(ctx, idx, side);
-        LinkedHashSet<String> seen = new LinkedHashSet<>();
-        ArrayNode names = JSON.createArrayNode();
-        for (HttpHeader h : headers) {
-            if (h == null) {
-                continue;
-            }
-            String name = safeString(() -> h.name(), "");
-            if (name.isEmpty()) {
-                continue;
-            }
-            String key = name.toLowerCase(Locale.ROOT);
-            if (seen.add(key)) {
-                names.add(name);
-            }
-        }
-        ObjectNode out = JSON.createObjectNode();
-        out.put("history_index", idx);
-        out.put("side", side);
-        out.set("header_names", names);
-        return write(out);
-    }
-
-    private static String getHeader(AgentToolContext ctx, JsonNode args) {
-        int idx = resolveHistoryIndex(ctx, args);
-        String side = resolveSide(args);
-        String want = requiredTextAny(args, "name", "header_name", "headerName");
-        List<HttpHeader> headers = headersForSide(ctx, idx, side);
-        ArrayNode values = JSON.createArrayNode();
-        for (HttpHeader h : headers) {
-            if (h == null) {
-                continue;
-            }
-            String n = safeString(() -> h.name(), "");
-            if (n.isEmpty()) {
-                continue;
-            }
-            if (n.equalsIgnoreCase(want)) {
-                values.add(safeString(() -> h.value(), ""));
-            }
-        }
-        ObjectNode out = JSON.createObjectNode();
-        out.put("history_index", idx);
-        out.put("side", side);
-        out.put("name", want);
-        out.set("values", values);
-        out.put("found", values.size() > 0);
-        return write(out);
-    }
-
-    private static String listCookies(AgentToolContext ctx, JsonNode args) {
-        int idx = resolveHistoryIndex(ctx, args);
-        String side = resolveSide(args);
-        ObjectNode out = JSON.createObjectNode();
-        out.put("history_index", idx);
-        out.put("side", side);
-        ArrayNode names = out.putArray("cookie_names");
-        if ("request".equals(side)) {
-            HttpRequest req = ctx.requestForHistoryIndex().apply(idx);
-            if (req == null) {
-                return errorJson("no request for this history index");
-            }
-            for (String name : cookieNamesFromRequest(req)) {
-                names.add(name);
-            }
-        } else {
-            HttpResponse res = ctx.responseForHistoryIndex().apply(idx);
-            if (res == null) {
-                return errorJson("no response for this history index");
-            }
-            for (String name : cookieNamesFromResponse(res)) {
-                names.add(name);
-            }
-        }
-        return write(out);
-    }
-
-    private static String getCookie(AgentToolContext ctx, JsonNode args) {
-        int idx = resolveHistoryIndex(ctx, args);
-        String side = resolveSide(args);
-        String want = requiredTextAny(args, "name", "cookie_name", "cookieName");
-        ObjectNode out = JSON.createObjectNode();
-        out.put("history_index", idx);
-        out.put("side", side);
-        out.put("name", want);
-        if ("request".equals(side)) {
-            HttpRequest req = ctx.requestForHistoryIndex().apply(idx);
-            if (req == null) {
-                return errorJson("no request for this history index");
-            }
-            String value = cookieValueFromRequest(req, want);
-            out.put("found", value != null);
-            if (value != null) {
-                out.put("value", value);
-            }
-        } else {
-            HttpResponse res = ctx.responseForHistoryIndex().apply(idx);
-            if (res == null) {
-                return errorJson("no response for this history index");
-            }
-            String raw = setCookieRawForName(res, want);
-            out.put("found", raw != null);
-            if (raw != null) {
-                out.put("set_cookie_header", raw);
-            }
-        }
-        return write(out);
-    }
-
-    private static String readBody(AgentToolContext ctx, JsonNode args) {
-        int idx = resolveHistoryIndex(ctx, args);
-        String side = resolveSide(args);
+        int idx = resolveHistoryIndexOptional(ctx, args);
         int offset = readOffsetArg(args);
-        int maxBytes = readMaxBytesArg(args);
-        byte[] body;
-        if ("request".equals(side)) {
-            HttpRequest req = ctx.requestForHistoryIndex().apply(idx);
-            if (req == null) {
-                return errorJson("no request for this history index");
-            }
-            body = bytesFromByteArray(() -> req.body());
-        } else {
-            HttpResponse res = ctx.responseForHistoryIndex().apply(idx);
-            if (res == null) {
-                return errorJson("no response for this history index");
-            }
-            body = bytesFromByteArray(() -> res.body());
-        }
-        int total = body.length;
+        int maxBytes = readMaxBytesForReadMessage(args);
+        byte[] full = rawWireBytes(ctx, idx, side);
+        int headerEnd = firstBodyByteIndex(full);
+        int total = full.length;
         if (offset > total) {
             offset = total;
         }
         int len = Math.min(maxBytes, total - offset);
-        byte[] chunk = len <= 0 ? new byte[0] : java.util.Arrays.copyOfRange(body, offset, offset + len);
+        byte[] chunk = len <= 0 ? new byte[0] : java.util.Arrays.copyOfRange(full, offset, offset + len);
 
         ObjectNode out = JSON.createObjectNode();
         out.put("history_index", idx);
         out.put("side", side);
         out.put("total_bytes", total);
+        out.put("header_bytes", headerEnd);
         out.put("offset", offset);
         out.put("returned_bytes", chunk.length);
         out.put("has_more", offset + chunk.length < total);
@@ -628,6 +429,236 @@ public final class HttpTargetTools {
             out.put("base64", Base64.getEncoder().encodeToString(chunk));
         }
         return write(out);
+    }
+
+    private static String searchMessage(AgentToolContext ctx, JsonNode args) {
+        JsonNode patNode = argFirst(args, "pattern", "regex", "re");
+        if (patNode == null || patNode.isNull()) {
+            return errorJson("missing pattern");
+        }
+        String patternStr = patNode.isTextual() ? patNode.asText() : patNode.toString();
+        if (patternStr.length() > MAX_SEARCH_PATTERN_CHARS) {
+            return errorJson("pattern too long (max " + MAX_SEARCH_PATTERN_CHARS + " characters)");
+        }
+        final Pattern pattern;
+        try {
+            pattern = Pattern.compile(patternStr);
+        } catch (PatternSyntaxException e) {
+            return errorJson("invalid regex: " + e.getMessage());
+        }
+        String side = resolveSide(args);
+        int idx = resolveHistoryIndexOptional(ctx, args);
+        String scope = resolveSearchScope(args);
+        int maxMatches = readMaxMatchesArg(args);
+        int contextBytes = readContextBytesArg(args);
+        byte[] full = rawWireBytes(ctx, idx, side);
+        int total = full.length;
+        int headerEnd = firstBodyByteIndex(full);
+        int[] region = resolveSearchRegion(scope, total, headerEnd);
+        int rStart = region[0];
+        int rEnd = region[1];
+        if (rStart >= rEnd) {
+            ObjectNode out = baseSearchResultObject(idx, side, total, headerEnd, scope, patternStr);
+            out.set("matches", JSON.createArrayNode());
+            out.put("match_count", 0);
+            out.put("truncated", false);
+            ArrayNode emptyRange = out.putArray("scanned_range");
+            emptyRange.add(rStart);
+            emptyRange.add(rStart);
+            return write(out);
+        }
+        int regionLen = rEnd - rStart;
+        boolean limited = false;
+        int scanEnd = rEnd;
+        if (regionLen > MAX_SCAN_BYTES) {
+            scanEnd = rStart + MAX_SCAN_BYTES;
+            limited = true;
+        }
+        int scanLen = scanEnd - rStart;
+        String searchSpace =
+                new String(java.util.Arrays.copyOfRange(full, rStart, rStart + scanLen), StandardCharsets.ISO_8859_1);
+        Matcher counter = pattern.matcher(searchSpace);
+        int totalInScan = 0;
+        while (counter.find()) {
+            totalInScan++;
+        }
+        Matcher m = pattern.matcher(searchSpace);
+        ArrayNode arr = JSON.createArrayNode();
+        int collected = 0;
+        while (m.find() && collected < maxMatches) {
+            int absStart = rStart + m.start();
+            int absEnd = rStart + m.end();
+            ObjectNode one = arr.addObject();
+            one.put("start", absStart);
+            one.put("end", absEnd);
+            addSliceFields(one, "match", "match_base64", full, absStart, absEnd);
+            if (m.groupCount() > 0) {
+                ArrayNode groups = one.putArray("groups");
+                for (int g = 1; g <= m.groupCount(); g++) {
+                    if (m.group(g) == null) {
+                        groups.addNull();
+                    } else {
+                        int gStart = rStart + m.start(g);
+                        int gEnd = rStart + m.end(g);
+                        byte[] gSlice = java.util.Arrays.copyOfRange(full, gStart, gEnd);
+                        String gUtf = decodeUtf8Strict(gSlice);
+                        if (gUtf != null) {
+                            groups.add(gUtf);
+                        } else {
+                            groups.add(Base64.getEncoder().encodeToString(gSlice));
+                        }
+                    }
+                }
+            }
+            int cBefore = Math.max(0, absStart - contextBytes);
+            int cAfter = Math.min(total, absEnd + contextBytes);
+            addSliceFields(one, "context_before", "context_before_base64", full, cBefore, absStart);
+            addSliceFields(one, "context_after", "context_after_base64", full, absEnd, cAfter);
+            collected++;
+        }
+        ObjectNode out = baseSearchResultObject(idx, side, total, headerEnd, scope, patternStr);
+        ArrayNode range = out.putArray("scanned_range");
+        range.add(rStart);
+        range.add(scanEnd);
+        if (limited) {
+            out.put("scan_limited_bytes", MAX_SCAN_BYTES);
+        }
+        out.set("matches", arr);
+        out.put("match_count", arr.size());
+        if (totalInScan > maxMatches) {
+            out.put("truncated", true);
+            out.put("total_matches_in_scan", totalInScan);
+        } else {
+            out.put("truncated", false);
+        }
+        return write(out);
+    }
+
+    private static ObjectNode baseSearchResultObject(
+            int idx, String side, int total, int headerEnd, String scope, String patternStr) {
+        ObjectNode out = JSON.createObjectNode();
+        out.put("history_index", idx);
+        out.put("side", side);
+        out.put("total_bytes", total);
+        out.put("header_bytes", headerEnd);
+        out.put("scope", scope);
+        out.put("pattern", patternStr);
+        return out;
+    }
+
+    private static void addSliceFields(
+            ObjectNode n, String utf8Key, String b64Key, byte[] data, int start, int end) {
+        if (start < 0 || end < start || end > data.length) {
+            return;
+        }
+        int len = end - start;
+        if (len == 0) {
+            n.put(utf8Key, "");
+            return;
+        }
+        byte[] slice = java.util.Arrays.copyOfRange(data, start, end);
+        String utf8 = decodeUtf8Strict(slice);
+        if (utf8 != null) {
+            n.put(utf8Key, utf8);
+        } else {
+            n.put(b64Key, Base64.getEncoder().encodeToString(slice));
+        }
+    }
+
+    private static int[] resolveSearchRegion(String scope, int total, int headerEnd) {
+        return switch (scope) {
+            case "headers" -> new int[] {0, headerEnd};
+            case "body" -> new int[] {headerEnd, total};
+            default -> new int[] {0, total};
+        };
+    }
+
+    private static String resolveSearchScope(JsonNode args) {
+        JsonNode v = argFirst(args, "scope", "where");
+        if (v == null) {
+            return "all";
+        }
+        if (!v.isTextual()) {
+            return "all";
+        }
+        String t = v.asText().trim().toLowerCase(Locale.ROOT);
+        if (t.equals("header") || t.equals("headers")) {
+            return "headers";
+        }
+        if (t.equals("body")) {
+            return "body";
+        }
+        return "all";
+    }
+
+    private static int readMaxMatchesArg(JsonNode args) {
+        JsonNode v = argFirst(args, "max_matches", "maxMatches", "limit");
+        if (v == null) {
+            return DEFAULT_SEARCH_MAX_MATCHES;
+        }
+        return Math.min(MAX_SEARCH_MAX_MATCHES, Math.max(1, jsonToInt(v)));
+    }
+
+    private static int readContextBytesArg(JsonNode args) {
+        JsonNode v = argFirst(args, "context_bytes", "contextBytes", "context");
+        if (v == null) {
+            return DEFAULT_SEARCH_CONTEXT_BYTES;
+        }
+        return Math.min(MAX_SEARCH_CONTEXT_BYTES, Math.max(0, jsonToInt(v)));
+    }
+
+    private static int readMaxBytesForReadMessage(JsonNode args) {
+        JsonNode v = argFirst(args, "max_bytes", "maxBytes", "limit", "chunk_size", "chunkSize");
+        if (v == null) {
+            return DEFAULT_READ_CHUNK_BYTES;
+        }
+        return Math.min(MAX_BODY_CHUNK_BYTES, Math.max(1, jsonToInt(v)));
+    }
+
+    /**
+     * First byte of the message body, i.e. index after the first {@code \r\n\r\n}. If missing, the whole range is
+     * treated as headers (e.g. malformed message).
+     */
+    private static int firstBodyByteIndex(byte[] data) {
+        for (int i = 0; i + 3 < data.length; i++) {
+            if (data[i] == '\r' && data[i + 1] == '\n' && data[i + 2] == '\r' && data[i + 3] == '\n') {
+                return i + 4;
+            }
+        }
+        return data.length;
+    }
+
+    private static byte[] rawWireBytes(AgentToolContext ctx, int idx, String side) {
+        if ("request".equals(side)) {
+            HttpRequest r = ctx.requestForHistoryIndex().apply(idx);
+            if (r == null) {
+                throw new IllegalArgumentException("no request for this history index");
+            }
+            return bytesFromByteArray(() -> r.toByteArray());
+        }
+        HttpResponse res = ctx.responseForHistoryIndex().apply(idx);
+        if (res == null) {
+            throw new IllegalArgumentException("no response for this history index");
+        }
+        return bytesFromByteArray(() -> res.toByteArray());
+    }
+
+    private static int resolveHistoryIndexOptional(AgentToolContext ctx, JsonNode args) {
+        JsonNode v = argFirst(args, "history_index", "historyIndex", "index", "entry_index", "entryIndex");
+        if (v == null) {
+            int cur = ctx.currentHistoryIndex();
+            if (cur >= 0 && cur < ctx.historySize()) {
+                return cur;
+            }
+            throw new IllegalArgumentException(
+                    "missing history_index: use history_index or historyIndex in range 0.." + (ctx.historySize() - 1));
+        }
+        int idx = jsonToInt(v);
+        if (idx < 0 || idx >= ctx.historySize()) {
+            throw new IllegalArgumentException(
+                    "history_index out of range (0.." + (ctx.historySize() - 1) + ")");
+        }
+        return idx;
     }
 
     private static HttpRequest requireCurrentRequest(AgentToolContext ctx) {
@@ -1038,21 +1069,6 @@ public final class HttpTargetTools {
         return write(o);
     }
 
-    private static List<HttpHeader> headersForSide(AgentToolContext ctx, int idx, String side) {
-        if ("request".equals(side)) {
-            HttpRequest req = ctx.requestForHistoryIndex().apply(idx);
-            if (req == null) {
-                throw new IllegalArgumentException("no request for this history index");
-            }
-            return safeHeaders(() -> req.headers());
-        }
-        HttpResponse res = ctx.responseForHistoryIndex().apply(idx);
-        if (res == null) {
-            throw new IllegalArgumentException("no response for this history index");
-        }
-        return safeHeaders(() -> res.headers());
-    }
-
     private static List<HttpHeader> safeHeaders(java.util.function.Supplier<List<HttpHeader>> supplier) {
         try {
             List<HttpHeader> h = supplier.get();
@@ -1090,61 +1106,6 @@ public final class HttpTargetTools {
         }
     }
 
-    private static List<String> cookieNamesFromRequest(HttpRequest req) {
-        List<String> out = new ArrayList<>();
-        LinkedHashSet<String> seen = new LinkedHashSet<>();
-        for (HttpHeader h : safeHeaders(() -> req.headers())) {
-            if (h == null || !"cookie".equalsIgnoreCase(safeString(() -> h.name(), ""))) {
-                continue;
-            }
-            String v = safeString(() -> h.value(), "");
-            for (String name : parseCookieHeaderNames(v)) {
-                if (seen.add(name.toLowerCase(Locale.ROOT))) {
-                    out.add(name);
-                }
-            }
-        }
-        return out;
-    }
-
-    private static List<String> parseCookieHeaderNames(String cookieHeaderValue) {
-        List<String> names = new ArrayList<>();
-        if (cookieHeaderValue == null || cookieHeaderValue.isBlank()) {
-            return names;
-        }
-        for (String part : cookieHeaderValue.split(";")) {
-            String p = part.trim();
-            if (p.isEmpty()) {
-                continue;
-            }
-            int eq = p.indexOf('=');
-            if (eq <= 0) {
-                continue;
-            }
-            String name = p.substring(0, eq).trim();
-            if (!name.isEmpty() && !name.startsWith("$")) {
-                names.add(name);
-            }
-        }
-        return names;
-    }
-
-    private static String cookieValueFromRequest(HttpRequest req, String want) {
-        String wantKey = want.toLowerCase(Locale.ROOT);
-        for (HttpHeader h : safeHeaders(() -> req.headers())) {
-            if (h == null || !"cookie".equalsIgnoreCase(safeString(() -> h.name(), ""))) {
-                continue;
-            }
-            String v = safeString(() -> h.value(), "");
-            for (String[] nv : parseCookiePairs(v)) {
-                if (nv[0].toLowerCase(Locale.ROOT).equals(wantKey)) {
-                    return nv[1];
-                }
-            }
-        }
-        return null;
-    }
-
     private static List<String[]> parseCookiePairs(String cookieHeaderValue) {
         List<String[]> out = new ArrayList<>();
         if (cookieHeaderValue == null || cookieHeaderValue.isBlank()) {
@@ -1166,57 +1127,6 @@ public final class HttpTargetTools {
             }
         }
         return out;
-    }
-
-    private static List<String> cookieNamesFromResponse(HttpResponse res) {
-        List<String> out = new ArrayList<>();
-        for (HttpHeader h : safeHeaders(() -> res.headers())) {
-            if (h == null || !"set-cookie".equalsIgnoreCase(safeString(() -> h.name(), ""))) {
-                continue;
-            }
-            String line = safeString(() -> h.value(), "");
-            Matcher m = SET_COOKIE_NAME_PATTERN.matcher(line);
-            if (m.find()) {
-                out.add(m.group(1));
-            }
-        }
-        return out;
-    }
-
-    private static String setCookieRawForName(HttpResponse res, String want) {
-        for (HttpHeader h : safeHeaders(() -> res.headers())) {
-            if (h == null || !"set-cookie".equalsIgnoreCase(safeString(() -> h.name(), ""))) {
-                continue;
-            }
-            String line = safeString(() -> h.value(), "");
-            Matcher m = SET_COOKIE_NAME_PATTERN.matcher(line);
-            if (m.find() && m.group(1).equals(want)) {
-                return line;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Models often send {@code historyIndex} or omit the field (meaning “current entry”); values may be JSON strings.
-     */
-    private static int resolveHistoryIndex(AgentToolContext ctx, JsonNode args) {
-        JsonNode v = argFirst(args, "history_index", "historyIndex", "index", "entry_index", "entryIndex");
-        if (v == null) {
-            int cur = ctx.currentHistoryIndex();
-            if (cur >= 0 && cur < ctx.historySize()) {
-                return cur;
-            }
-            throw new IllegalArgumentException(
-                    "missing history_index: use history_index or historyIndex in range 0.."
-                            + (ctx.historySize() - 1));
-        }
-        int idx = jsonToInt(v);
-        if (idx < 0 || idx >= ctx.historySize()) {
-            throw new IllegalArgumentException(
-                    "history_index out of range (0.." + (ctx.historySize() - 1) + ")");
-        }
-        return idx;
     }
 
     /** Accepts camelCase {@code side} and short aliases ({@code req}/{@code res}). */
@@ -1272,14 +1182,6 @@ public final class HttpTargetTools {
             return 0;
         }
         return Math.max(0, jsonToInt(v));
-    }
-
-    private static int readMaxBytesArg(JsonNode args) {
-        JsonNode v = argFirst(args, "max_bytes", "maxBytes", "limit", "chunk_size", "chunkSize");
-        if (v == null) {
-            return DEFAULT_BODY_CHUNK_BYTES;
-        }
-        return Math.min(MAX_BODY_CHUNK_BYTES, Math.max(1, jsonToInt(v)));
     }
 
     /** First defined non-null property among {@code keys} (root object only). */
@@ -1385,52 +1287,36 @@ public final class HttpTargetTools {
         String hist = formatHistoryIndexArg(args, viewerHistoryIndex);
         return switch (toolName) {
             case GET_CURRENT_HTTP_TARGET -> new HumanToolUsage("Getting current repeater target and send history", "");
-            case GET_HTTP_HISTORY_STATE -> new HumanToolUsage("Reading send history (indices, prev/next)", "");
-            case GET_HTTP_REQUEST_LINE -> {
-                String base = "Getting request line (method, URL, path, version)";
-                yield new HumanToolUsage(hist.isEmpty() ? base : base + hist, "");
-            }
-            case LIST_HTTP_HEADER_NAMES -> {
-                String base =
-                        sideLabel.isEmpty()
-                                ? "Listing header names"
-                                : "Listing " + sideLabel.toLowerCase() + " header names";
-                yield new HumanToolUsage(hist.isEmpty() ? base : base + hist, "");
-            }
-            case GET_HTTP_HEADER -> {
-                String n = truncateForStatus(argTextAny(args, "name", "header_name", "headerName"), 56);
-                String head = sideLabel.isEmpty() ? "Getting header" : "Getting " + sideLabel.toLowerCase() + " header";
-                if (!n.isEmpty()) {
-                    head += " \"" + n + "\"";
-                }
-                yield new HumanToolUsage(hist.isEmpty() ? head : head + hist, "");
-            }
-            case LIST_HTTP_COOKIES -> {
-                String base =
-                        sideLabel.isEmpty()
-                                ? "Listing cookie names"
-                                : "Listing " + sideLabel.toLowerCase() + " cookie names";
-                yield new HumanToolUsage(hist.isEmpty() ? base : base + hist, "");
-            }
-            case GET_HTTP_COOKIE -> {
-                String n = truncateForStatus(argTextAny(args, "name", "cookie_name", "cookieName"), 56);
-                String head = sideLabel.isEmpty() ? "Getting cookie" : "Getting " + sideLabel.toLowerCase() + " cookie";
-                if (!n.isEmpty()) {
-                    head += " \"" + n + "\"";
-                }
-                yield new HumanToolUsage(hist.isEmpty() ? head : head + hist, "");
-            }
-            case READ_HTTP_BODY -> {
+            case READ_HTTP_MESSAGE -> {
                 String head =
-                        sideLabel.isEmpty() ? "Reading message body" : "Reading " + sideLabel.toLowerCase() + " body";
+                        sideLabel.isEmpty()
+                                ? "Reading HTTP message"
+                                : "Reading " + sideLabel.toLowerCase();
                 StringBuilder b = new StringBuilder(head);
                 if (!hist.isEmpty()) {
                     b.append(hist);
                 }
                 int offset = readOffsetArg(args);
-                int maxBytes = readMaxBytesArg(args);
+                int maxBytes = readMaxBytesForReadMessage(args);
                 b.append(" · offset ").append(offset).append(", max ").append(maxBytes).append(" B");
                 yield new HumanToolUsage(b.toString(), "");
+            }
+            case SEARCH_HTTP_MESSAGE -> {
+                String head =
+                        sideLabel.isEmpty()
+                                ? "Searching HTTP message"
+                                : "Searching " + sideLabel.toLowerCase();
+                StringBuilder b = new StringBuilder(head);
+                String sc = resolveSearchScope(args);
+                if (!"all".equals(sc)) {
+                    b.append(" (scope=").append(sc).append(")");
+                }
+                if (!hist.isEmpty()) {
+                    b.append(hist);
+                }
+                String pat = argTextAny(args, "pattern", "regex", "re");
+                String det = pat.isEmpty() ? "" : quotedSnippet(pat, 96);
+                yield new HumanToolUsage(b.toString(), det);
             }
             case REPLACE_IN_HTTP_REQUEST_BODY -> {
                 String oldT = argTextAny(args, "old_text", "oldText");

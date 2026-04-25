@@ -72,7 +72,6 @@ import treepeater.ai.ChatMessage;
 import treepeater.ai.ChatRole;
 import treepeater.ai.ChatStreamMessage;
 import treepeater.ai.ChatStreamSession;
-import treepeater.ai.ChatStreamLogging;
 import treepeater.ai.ChatTooling;
 import treepeater.ai.CoalescingChatStreamOutbound;
 import treepeater.components.RoundedPanel;
@@ -492,9 +491,6 @@ public final class AIAgentChatPanel extends JPanel {
             @Override
             protected List<ChatMessage> doInBackground() throws Exception {
                 try {
-                    AiModelOption choice = (AiModelOption) AIAgentChatPanel.this.modelCombo.getSelectedItem();
-                    String modelLabel = choice != null ? choice.toString() : "?";
-                    ChatStreamLogging.logUserTurnStart(modelLabel, this.requestMessages.size());
                     return AIAgentChatPanel.this
                             .host
                             .clientForSelectedModel(

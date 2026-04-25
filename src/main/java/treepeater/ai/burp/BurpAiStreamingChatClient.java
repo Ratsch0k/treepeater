@@ -14,7 +14,6 @@ import treepeater.ai.ChatStreamSession;
 import treepeater.ai.ChatToolCall;
 import treepeater.ai.ChatToolDefinition;
 import treepeater.ai.ChatTooling;
-import treepeater.ai.ChatStreamLogging;
 import treepeater.ai.StreamingChatClient;
 
 /**
@@ -54,7 +53,6 @@ public class BurpAiStreamingChatClient implements StreamingChatClient {
         for (int i = 0; i < toSend.size(); i++) {
             burpMessages[i] = toBurpMessage(toSend.get(i));
         }
-        ChatStreamLogging.logApiRequest("Burp", "Burp AI", 0, toSend.size(), tooling != null && tooling.isActive());
         PromptResponse response = this.api.ai().prompt().execute(burpMessages);
         String text = response.content();
         if (text != null && !text.isEmpty()) {

@@ -12,21 +12,17 @@ import com.anthropic.core.http.StreamResponse;
 import com.anthropic.models.messages.CacheControlEphemeral;
 import com.anthropic.models.messages.ContentBlockParam;
 import com.anthropic.models.messages.MessageCreateParams;
-import com.anthropic.models.messages.MessageDeltaUsage;
 import com.anthropic.models.messages.Model;
 import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.RawContentBlockDelta;
 import com.anthropic.models.messages.RawContentBlockDeltaEvent;
 import com.anthropic.models.messages.RawContentBlockStartEvent;
-import com.anthropic.models.messages.RawMessageDeltaEvent;
-import com.anthropic.models.messages.RawMessageStartEvent;
 import com.anthropic.models.messages.RawMessageStreamEvent;
 import com.anthropic.models.messages.TextBlockParam;
 import com.anthropic.models.messages.ThinkingConfigAdaptive;
 import com.anthropic.models.messages.Tool;
 import com.anthropic.models.messages.ToolResultBlockParam;
 import com.anthropic.models.messages.ToolUseBlockParam;
-import com.anthropic.models.messages.Usage;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -37,7 +33,6 @@ import treepeater.ai.ChatStreamMessage;
 import treepeater.ai.ChatStreamSession;
 import treepeater.ai.ChatToolCall;
 import treepeater.ai.ChatToolDefinition;
-import treepeater.ai.ChatStreamLogging;
 import treepeater.ai.ChatTooling;
 import treepeater.ai.ParallelToolExecution;
 import treepeater.ai.StreamingChatClient;
@@ -70,7 +65,7 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
                 if (session.isClosed() || Thread.currentThread().isInterrupted()) {
                     return work;
                 }
-                RoundResult rr = streamOneAssistantTurn(client, work, session, tooling, round);
+                RoundResult rr = streamOneAssistantTurn(client, work, session, tooling);
                 work.add(rr.assistant());
                 if (session.isClosed() || Thread.currentThread().isInterrupted()) {
                     return work;
@@ -96,13 +91,10 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
 
     private List<ChatMessage> streamOncePlain(
             AnthropicClient client, List<ChatMessage> messages, ChatStreamSession session) throws Exception {
-        ChatStreamLogging.logApiRequest("Anthropic", this.config.model(), 0, messages.size(), false);
-        long tWallStart = System.nanoTime();
         MessageCreateParams.Builder paramsBuilder = baseBuilder(messages, ChatTooling.none());
         MessageCreateParams params = paramsBuilder.build();
-        long tAfterBuild = System.nanoTime();
         StringBuilder assistantAccum = new StringBuilder();
-        runTextOnlyStream(client, params, assistantAccum, session, 0, tWallStart, tAfterBuild);
+        runTextOnlyStream(client, params, assistantAccum, session);
         List<ChatMessage> history = new ArrayList<>(messages.size() + 1);
         history.addAll(messages);
         history.add(new ChatMessage(ChatRole.ASSISTANT, assistantAccum.toString()));
@@ -113,41 +105,25 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
             AnthropicClient client,
             List<ChatMessage> messages,
             ChatStreamSession session,
-            ChatTooling tooling,
-            int round)
+            ChatTooling tooling)
             throws Exception {
-        ChatStreamLogging.logApiRequest("Anthropic", this.config.model(), round, messages.size(), true);
-        long tWallStart = System.nanoTime();
         MessageCreateParams.Builder paramsBuilder = baseBuilder(messages, tooling);
         MessageCreateParams params = paramsBuilder.build();
-        long tAfterBuild = System.nanoTime();
 
         StringBuilder textOut = new StringBuilder();
         List<ChatToolCall> toolCalls = new ArrayList<>();
         ToolStreamState st = new ToolStreamState();
-        UsageAccumulator usage = new UsageAccumulator();
 
         try (StreamResponse<RawMessageStreamEvent> stream = client.messages().createStreaming(params)) {
-            long tAfterOpen = System.nanoTime();
-            long buildMs = (tAfterBuild - tWallStart) / 1_000_000L;
-            long httpOpenMs = (tAfterOpen - tAfterBuild) / 1_000_000L;
             Iterator<RawMessageStreamEvent> it = stream.stream().iterator();
-            long t0 = tAfterOpen;
-            long ttfbMs = -1;
-            int eventCount = 0;
             while (it.hasNext()
                     && !session.isClosed()
                     && !Thread.currentThread().isInterrupted()) {
                 RawMessageStreamEvent event = it.next();
-                eventCount++;
-                if (ttfbMs < 0) {
-                    ttfbMs = (System.nanoTime() - t0) / 1_000_000L;
+                if (event.isMessageStart() || event.isMessageDelta()) {
+                    continue;
                 }
-                if (event.isMessageStart()) {
-                    absorbMessageStart(event.asMessageStart(), usage);
-                } else if (event.isMessageDelta()) {
-                    absorbMessageDelta(event.asMessageDelta(), usage);
-                } else if (event.isContentBlockStart()) {
+                if (event.isContentBlockStart()) {
                     RawContentBlockStartEvent start = event.asContentBlockStart();
                     RawContentBlockStartEvent.ContentBlock block = start.contentBlock();
                     if (block.isText()) {
@@ -193,20 +169,6 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
                     st.phase = StreamPhase.SKIP;
                 }
             }
-            long streamMs = (System.nanoTime() - t0) / 1_000_000L;
-            long wallMs = (System.nanoTime() - tWallStart) / 1_000_000L;
-            if (ttfbMs < 0) {
-                ttfbMs = 0;
-            }
-            ChatStreamLogging.logApiStreamComplete(
-                    "Anthropic", round, wallMs, buildMs, httpOpenMs, ttfbMs, streamMs, eventCount);
-            ChatStreamLogging.logApiUsage(
-                    "Anthropic",
-                    round,
-                    usage.inputTokens,
-                    usage.cacheReadTokens,
-                    usage.cacheCreationTokens,
-                    usage.outputTokens);
         }
 
         ChatMessage assistant =
@@ -218,35 +180,16 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
             AnthropicClient client,
             MessageCreateParams params,
             StringBuilder assistantAccum,
-            ChatStreamSession session,
-            int round,
-            long tWallStart,
-            long tAfterBuild)
+            ChatStreamSession session)
             throws Exception {
-        UsageAccumulator usage = new UsageAccumulator();
         try (StreamResponse<RawMessageStreamEvent> stream = client.messages().createStreaming(params)) {
-            long tAfterOpen = System.nanoTime();
-            long buildMs = (tAfterBuild - tWallStart) / 1_000_000L;
-            long httpOpenMs = (tAfterOpen - tAfterBuild) / 1_000_000L;
             Iterator<RawMessageStreamEvent> it = stream.stream().iterator();
-            long t0 = tAfterOpen;
-            long ttfbMs = -1;
-            int eventCount = 0;
             StreamPhase plainPhase = StreamPhase.SKIP;
             while (it.hasNext()
                     && !session.isClosed()
                     && !Thread.currentThread().isInterrupted()) {
                 RawMessageStreamEvent event = it.next();
-                eventCount++;
-                if (ttfbMs < 0) {
-                    ttfbMs = (System.nanoTime() - t0) / 1_000_000L;
-                }
-                if (event.isMessageStart()) {
-                    absorbMessageStart(event.asMessageStart(), usage);
-                    continue;
-                }
-                if (event.isMessageDelta()) {
-                    absorbMessageDelta(event.asMessageDelta(), usage);
+                if (event.isMessageStart() || event.isMessageDelta()) {
                     continue;
                 }
                 if (event.isContentBlockStart()) {
@@ -282,42 +225,6 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
                     }
                 }
             }
-            long streamMs = (System.nanoTime() - t0) / 1_000_000L;
-            long wallMs = (System.nanoTime() - tWallStart) / 1_000_000L;
-            if (ttfbMs < 0) {
-                ttfbMs = 0;
-            }
-            ChatStreamLogging.logApiStreamComplete(
-                    "Anthropic", round, wallMs, buildMs, httpOpenMs, ttfbMs, streamMs, eventCount);
-            ChatStreamLogging.logApiUsage(
-                    "Anthropic",
-                    round,
-                    usage.inputTokens,
-                    usage.cacheReadTokens,
-                    usage.cacheCreationTokens,
-                    usage.outputTokens);
-        }
-    }
-
-    private static void absorbMessageStart(RawMessageStartEvent event, UsageAccumulator usage) {
-        try {
-            Usage u = event.message().usage();
-            usage.inputTokens = u.inputTokens();
-            usage.outputTokens = Math.max(usage.outputTokens, u.outputTokens());
-            u.cacheReadInputTokens().ifPresent(v -> usage.cacheReadTokens = v);
-            u.cacheCreationInputTokens().ifPresent(v -> usage.cacheCreationTokens = v);
-        } catch (Exception ignored) {
-        }
-    }
-
-    private static void absorbMessageDelta(RawMessageDeltaEvent event, UsageAccumulator usage) {
-        try {
-            MessageDeltaUsage u = event.usage();
-            u.inputTokens().ifPresent(v -> usage.inputTokens = v);
-            usage.outputTokens = u.outputTokens();
-            u.cacheReadInputTokens().ifPresent(v -> usage.cacheReadTokens = v);
-            u.cacheCreationInputTokens().ifPresent(v -> usage.cacheCreationTokens = v);
-        } catch (Exception ignored) {
         }
     }
 
@@ -522,13 +429,6 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
         final StringBuilder toolJsonIn = new StringBuilder();
         String curToolId = "";
         String curToolName = "";
-    }
-
-    private static final class UsageAccumulator {
-        long inputTokens;
-        long outputTokens;
-        long cacheReadTokens;
-        long cacheCreationTokens;
     }
 
     private record RoundResult(ChatMessage assistant, boolean hadToolCalls) {}

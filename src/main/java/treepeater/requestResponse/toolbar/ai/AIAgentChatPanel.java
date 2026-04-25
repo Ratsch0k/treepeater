@@ -76,8 +76,7 @@ import treepeater.ai.ChatTooling;
 import treepeater.ai.CoalescingChatStreamOutbound;
 import treepeater.components.RoundedPanel;
 import treepeater.components.StyledButton;
-import treepeater.icons.InfoIcon;
-import treepeater.requestResponse.toolbar.ToolbarIconButton;
+import treepeater.icons.GearIcon;
 import treepeater.settings.TreepeaterSettings;
 
 /**
@@ -104,7 +103,7 @@ public final class AIAgentChatPanel extends JPanel {
     private final StyledButton sendButton;
     private final JComboBox<AgentMode> agentModeCombo;
     private final JComboBox<AiModelOption> modelCombo;
-    private final ToolbarIconButton modelOptionsButton;
+    private final JButton modelOptionsButton;
     private final JPopupMenu modelOptionsMenu = new JPopupMenu();
     private LlmRequestOptions llmRequestOptions = LlmRequestOptions.DEFAULTS;
     private final List<ChatMessage> conversation = new ArrayList<>();
@@ -151,7 +150,8 @@ public final class AIAgentChatPanel extends JPanel {
         this.modelCombo.setMaximumRowCount(12);
         this.modelCombo.addActionListener(e -> this.updateModelOptionsButtonVisibility());
 
-        this.modelOptionsButton = new ToolbarIconButton(new InfoIcon());
+        this.modelOptionsButton = new JButton(new GearIcon().withColor(UIManager.getColor("Label.foreground")));
+        this.modelOptionsButton.putClientProperty(FlatClientProperties.STYLE, "background: $Colors.ui.background.2; border: 4,4,4,4,$ComboBox.buttonSeparatorColor,1,8;");
         this.modelOptionsButton.setToolTipText("Model options");
         this.modelOptionsButton.addActionListener(e -> this.showModelOptionsMenu());
 
@@ -257,7 +257,6 @@ public final class AIAgentChatPanel extends JPanel {
         add(body, BorderLayout.CENTER);
 
         this.updateModelOptionsButtonVisibility();
-        this.applyModelOptionsButtonLocalTheme();
     }
 
     void applyInputPanelTheme() {
@@ -265,11 +264,10 @@ public final class AIAgentChatPanel extends JPanel {
             return;
         }
         applyInputPanelTheme(this.inputPanel);
-        applyModelOptionsButtonLocalTheme();
-    }
 
-    void applyModelOptionsButtonLocalTheme() {
-        this.modelOptionsButton.applyLocalTheme();
+        if (this.modelOptionsButton != null) {
+            this.modelOptionsButton.setIcon(new GearIcon().withColor(UIManager.getColor("Label.foreground")));
+        }
     }
 
     private void updateModelOptionsButtonVisibility() {

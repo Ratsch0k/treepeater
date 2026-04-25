@@ -3,6 +3,7 @@ package treepeater.ai.anthropic;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
@@ -13,6 +14,7 @@ import com.anthropic.models.messages.ContentBlockParam;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageDeltaUsage;
 import com.anthropic.models.messages.Model;
+import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.RawContentBlockDelta;
 import com.anthropic.models.messages.RawContentBlockDeltaEvent;
 import com.anthropic.models.messages.RawContentBlockStartEvent;
@@ -20,6 +22,7 @@ import com.anthropic.models.messages.RawMessageDeltaEvent;
 import com.anthropic.models.messages.RawMessageStartEvent;
 import com.anthropic.models.messages.RawMessageStreamEvent;
 import com.anthropic.models.messages.TextBlockParam;
+import com.anthropic.models.messages.ThinkingConfigAdaptive;
 import com.anthropic.models.messages.Tool;
 import com.anthropic.models.messages.ToolResultBlockParam;
 import com.anthropic.models.messages.ToolUseBlockParam;
@@ -44,6 +47,9 @@ import treepeater.ai.StreamingChatClient;
  */
 public class AnthropicStreamingChatClient implements StreamingChatClient {
     private static final ObjectMapper JSON = new ObjectMapper();
+
+    /** Must stay in sync with {@link #baseBuilder}'s {@code maxTokens}. */
+    private static final long ANTHROPIC_MAX_OUTPUT_TOKENS = 4096L;
 
     private final AnthropicClientConfig config;
 
@@ -146,6 +152,8 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
                     RawContentBlockStartEvent.ContentBlock block = start.contentBlock();
                     if (block.isText()) {
                         st.phase = StreamPhase.TEXT;
+                    } else if (block.isThinking()) {
+                        st.phase = StreamPhase.THINKING;
                     } else if (block.isToolUse()) {
                         st.phase = StreamPhase.TOOL_INPUT;
                         st.toolJsonIn.setLength(0);
@@ -162,6 +170,11 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
                         if (piece != null && !piece.isEmpty()) {
                             textOut.append(piece);
                             session.emit(new ChatStreamMessage.AssistantDelta(piece));
+                        }
+                    } else if (st.phase == StreamPhase.THINKING && delta.isThinking()) {
+                        String piece = delta.asThinking().thinking();
+                        if (piece != null && !piece.isEmpty()) {
+                            session.emit(new ChatStreamMessage.ThinkingDelta(piece));
                         }
                     } else if (st.phase == StreamPhase.TOOL_INPUT && delta.isInputJson()) {
                         String part = delta.asInputJson().partialJson();
@@ -219,6 +232,7 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
             long t0 = tAfterOpen;
             long ttfbMs = -1;
             int eventCount = 0;
+            StreamPhase plainPhase = StreamPhase.SKIP;
             while (it.hasNext()
                     && !session.isClosed()
                     && !Thread.currentThread().isInterrupted()) {
@@ -235,18 +249,37 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
                     absorbMessageDelta(event.asMessageDelta(), usage);
                     continue;
                 }
+                if (event.isContentBlockStart()) {
+                    RawContentBlockStartEvent.ContentBlock block = event.asContentBlockStart().contentBlock();
+                    if (block.isText()) {
+                        plainPhase = StreamPhase.TEXT;
+                    } else if (block.isThinking()) {
+                        plainPhase = StreamPhase.THINKING;
+                    } else {
+                        plainPhase = StreamPhase.SKIP;
+                    }
+                    continue;
+                }
+                if (event.isContentBlockStop()) {
+                    plainPhase = StreamPhase.SKIP;
+                    continue;
+                }
                 if (!event.isContentBlockDelta()) {
                     continue;
                 }
                 RawContentBlockDeltaEvent blockDelta = event.asContentBlockDelta();
                 RawContentBlockDelta delta = blockDelta.delta();
-                if (!delta.isText()) {
-                    continue;
-                }
-                String piece = delta.asText().text();
-                if (piece != null && !piece.isEmpty()) {
-                    assistantAccum.append(piece);
-                    session.emit(new ChatStreamMessage.AssistantDelta(piece));
+                if (plainPhase == StreamPhase.TEXT && delta.isText()) {
+                    String piece = delta.asText().text();
+                    if (piece != null && !piece.isEmpty()) {
+                        assistantAccum.append(piece);
+                        session.emit(new ChatStreamMessage.AssistantDelta(piece));
+                    }
+                } else if (plainPhase == StreamPhase.THINKING && delta.isThinking()) {
+                    String piece = delta.asThinking().thinking();
+                    if (piece != null && !piece.isEmpty()) {
+                        session.emit(new ChatStreamMessage.ThinkingDelta(piece));
+                    }
                 }
             }
             long streamMs = (System.nanoTime() - t0) / 1_000_000L;
@@ -290,7 +323,14 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
 
     private MessageCreateParams.Builder baseBuilder(List<ChatMessage> messages, ChatTooling tooling) throws Exception {
         MessageCreateParams.Builder paramsBuilder =
-                MessageCreateParams.builder().model(Model.of(this.config.model())).maxTokens(4096);
+                MessageCreateParams.builder()
+                        .model(Model.of(this.config.model()))
+                        .maxTokens(ANTHROPIC_MAX_OUTPUT_TOKENS)
+                        .outputConfig(
+                                OutputConfig.builder()
+                                        .effort(this.config.outputEffort().toSdk())
+                                        .build());
+        applyExtendedThinkingConfig(paramsBuilder);
 
         if (tooling != null && tooling.isActive()) {
             List<ChatToolDefinition> defs = tooling.tools();
@@ -322,6 +362,30 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
 
         appendConversation(paramsBuilder, messages);
         return paramsBuilder;
+    }
+
+    /**
+     * Sonnet / Opus 4.6+ use {@link ThinkingConfigAdaptive}. Earlier 4.x thinking models use {@code enabled_thinking}
+     * with {@code budget_tokens &lt; max_tokens} (Anthropic API constraint). Skipped when
+     * {@link AnthropicClientConfig#extendedThinking()} is false.
+     */
+    private void applyExtendedThinkingConfig(MessageCreateParams.Builder b) {
+        if (!this.config.extendedThinking()) {
+            return;
+        }
+        String modelId = this.config.model();
+        String m = modelId == null ? "" : modelId.toLowerCase(Locale.ROOT);
+        if (m.isEmpty()) {
+            return;
+        }
+        if (AnthropicModelSupport.isClaude46FamilyOrLater(m)) {
+            b.thinking(ThinkingConfigAdaptive.builder().build());
+            return;
+        }
+        if (AnthropicModelSupport.likelySupportsFixedBudgetExtendedThinking(m)) {
+            long budget = Math.min(2048L, ANTHROPIC_MAX_OUTPUT_TOKENS - 1);
+            b.enabledThinking(budget);
+        }
     }
 
     /**
@@ -448,6 +512,7 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
 
     private enum StreamPhase {
         TEXT,
+        THINKING,
         TOOL_INPUT,
         SKIP
     }

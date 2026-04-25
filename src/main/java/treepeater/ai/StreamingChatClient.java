@@ -14,7 +14,8 @@ public interface StreamingChatClient {
      */
     int MAX_AGENT_TOOL_ROUNDS = 256;
     /**
-     * Runs a streaming chat request with no tools; all output is delivered as {@link ChatStreamMessage.AssistantDelta}.
+     * Runs a streaming chat request with no tools; output is delivered as {@link ChatStreamMessage.AssistantDelta}
+     * and optionally {@link ChatStreamMessage.ThinkingDelta} when the provider streams reasoning text.
      */
     default List<ChatMessage> streamChat(List<ChatMessage> messages, Consumer<ChatStreamMessage> onMessage)
             throws Exception {
@@ -31,7 +32,8 @@ public interface StreamingChatClient {
      * (listeners should marshal UI work to the EDT as needed) and may call {@link ChatStreamSession#awaitReply} to
      * wait for user-originated messages (e.g. {@link ChatStreamMessage.ToolApprovalResponse}).
      * <p>
-     * When {@link ChatTooling} is inactive, implementations behave like plain text chat (assistant deltas only).
+     * When {@link ChatTooling} is inactive, implementations behave like plain text chat (assistant and thinking deltas
+     * only).
      * With active tooling, a {@link ChatStreamMessage.ToolApprovalRequest} is emitted for each tool (approval may be
      * required or informational only).
      */

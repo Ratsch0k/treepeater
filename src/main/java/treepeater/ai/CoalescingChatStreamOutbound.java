@@ -7,22 +7,26 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
- * Merges adjacent {@link ChatStreamMessage.AssistantDelta} on the calling thread (typically the chat worker) before
- * they reach a delegate that may marshal to the EDT, reducing {@link javax.swing.SwingUtilities#invokeLater} queue
- * depth when a subsequent operation uses {@link javax.swing.SwingUtilities#invokeAndWait} (e.g. live request apply).
+ * Merges adjacent {@link ChatStreamMessage.AssistantDelta} and {@link ChatStreamMessage.ThinkingDelta} on the calling
+ * thread (typically the chat worker) before they reach a delegate that may marshal to the EDT, reducing
+ * {@link javax.swing.SwingUtilities#invokeLater} queue depth when a subsequent operation uses
+ * {@link javax.swing.SwingUtilities#invokeAndWait} (e.g. live request apply).
  * <p>
- * Non-delta messages flush any buffered text first, then are passed through immediately. Call {@link #shutdown} when
- * the stream ends so a trailing debounced flush is not lost and the scheduler is released.
+ * Switching between assistant and thinking text flushes the other buffer first so chunk order matches the provider.
+ * Non-delta messages flush both buffers (thinking, then assistant) before being passed through. Call {@link #shutdown}
+ * when the stream ends so trailing debounced flushes are not lost and the scheduler is released.
  */
 public final class CoalescingChatStreamOutbound implements Consumer<ChatStreamMessage> {
     private static final int DEBOUNCE_MS = 25;
     private static final int MAX_BUFFER_CHARS = 2048;
 
     private final Consumer<ChatStreamMessage> delegate;
-    private final StringBuilder buffer = new StringBuilder();
+    private final StringBuilder assistantBuffer = new StringBuilder();
+    private final StringBuilder thinkingBuffer = new StringBuilder();
     private final Object lock = new Object();
     private final ScheduledExecutorService scheduler;
-    private ScheduledFuture<?> pendingFlush;
+    private ScheduledFuture<?> pendingAssistantFlush;
+    private ScheduledFuture<?> pendingThinkingFlush;
     private volatile boolean shutdown;
 
     public CoalescingChatStreamOutbound(Consumer<ChatStreamMessage> delegate) {
@@ -49,12 +53,30 @@ public final class CoalescingChatStreamOutbound implements Consumer<ChatStreamMe
                 if (this.shutdown) {
                     return;
                 }
-                this.buffer.append(ad.text());
-                if (this.buffer.length() >= MAX_BUFFER_CHARS) {
-                    cancelFlushUnsafe();
-                    emitBufferUnsafe();
+                flushThinkingBufferUnsafe();
+                this.assistantBuffer.append(ad.text());
+                if (this.assistantBuffer.length() >= MAX_BUFFER_CHARS) {
+                    cancelAssistantFlushUnsafe();
+                    emitAssistantBufferUnsafe();
                 } else {
-                    rescheduleFlushUnsafe();
+                    rescheduleAssistantFlushUnsafe();
+                }
+            }
+        } else if (m instanceof ChatStreamMessage.ThinkingDelta td) {
+            if (td.text().isEmpty()) {
+                return;
+            }
+            synchronized (this.lock) {
+                if (this.shutdown) {
+                    return;
+                }
+                flushAssistantBufferUnsafe();
+                this.thinkingBuffer.append(td.text());
+                if (this.thinkingBuffer.length() >= MAX_BUFFER_CHARS) {
+                    cancelThinkingFlushUnsafe();
+                    emitThinkingBufferUnsafe();
+                } else {
+                    rescheduleThinkingFlushUnsafe();
                 }
             }
         } else {
@@ -64,67 +86,124 @@ public final class CoalescingChatStreamOutbound implements Consumer<ChatStreamMe
     }
 
     /**
-     * Emits any buffered assistant text, then stops the debounce timer and shuts down the scheduler. Idempotent; safe
-     * to call more than once.
+     * Emits any buffered assistant and thinking text, then stops debounce timers and shuts down the scheduler.
+     * Idempotent; safe to call more than once.
      */
     public void shutdown() {
         synchronized (this.lock) {
             this.shutdown = true;
-            cancelFlushUnsafe();
-            emitBufferUnsafe();
+            cancelAssistantFlushUnsafe();
+            cancelThinkingFlushUnsafe();
+            emitThinkingBufferUnsafe();
+            emitAssistantBufferUnsafe();
         }
         this.scheduler.shutdown();
     }
 
-    /** Flushes buffered assistant text to the delegate (used before session close in addition to {@link #shutdown}). */
+    /** Flushes both buffers to the delegate (thinking first, then assistant). */
     public void flush() {
         if (this.shutdown) {
             return;
         }
         synchronized (this.lock) {
-            cancelFlushUnsafe();
-            emitBufferUnsafe();
+            cancelAssistantFlushUnsafe();
+            cancelThinkingFlushUnsafe();
+            emitThinkingBufferUnsafe();
+            emitAssistantBufferUnsafe();
         }
     }
 
-    private void cancelFlushUnsafe() {
-        ScheduledFuture<?> f = this.pendingFlush;
-        this.pendingFlush = null;
+    private void cancelAssistantFlushUnsafe() {
+        ScheduledFuture<?> f = this.pendingAssistantFlush;
+        this.pendingAssistantFlush = null;
+        if (f != null) {
+            f.cancel(false);
+        }
+    }
+
+    private void cancelThinkingFlushUnsafe() {
+        ScheduledFuture<?> f = this.pendingThinkingFlush;
+        this.pendingThinkingFlush = null;
         if (f != null) {
             f.cancel(false);
         }
     }
 
     /** Requires {@link #lock} held. */
-    private void rescheduleFlushUnsafe() {
-        cancelFlushUnsafe();
+    private void rescheduleAssistantFlushUnsafe() {
+        cancelAssistantFlushUnsafe();
         final ScheduledFuture<?>[] box = new ScheduledFuture<?>[1];
         box[0] =
                 this.scheduler.schedule(
-                        () -> deferredFlush(box[0]), DEBOUNCE_MS, TimeUnit.MILLISECONDS);
-        this.pendingFlush = box[0];
+                        () -> deferredAssistantFlush(box[0]), DEBOUNCE_MS, TimeUnit.MILLISECONDS);
+        this.pendingAssistantFlush = box[0];
     }
 
-    private void deferredFlush(ScheduledFuture<?> expected) {
+    /** Requires {@link #lock} held. */
+    private void rescheduleThinkingFlushUnsafe() {
+        cancelThinkingFlushUnsafe();
+        final ScheduledFuture<?>[] box = new ScheduledFuture<?>[1];
+        box[0] =
+                this.scheduler.schedule(
+                        () -> deferredThinkingFlush(box[0]), DEBOUNCE_MS, TimeUnit.MILLISECONDS);
+        this.pendingThinkingFlush = box[0];
+    }
+
+    private void deferredAssistantFlush(ScheduledFuture<?> expected) {
         if (this.shutdown) {
             return;
         }
         synchronized (this.lock) {
-            if (this.pendingFlush != expected) {
+            if (this.pendingAssistantFlush != expected) {
                 return;
             }
-            this.pendingFlush = null;
-            emitBufferUnsafe();
+            this.pendingAssistantFlush = null;
+            emitAssistantBufferUnsafe();
+        }
+    }
+
+    private void deferredThinkingFlush(ScheduledFuture<?> expected) {
+        if (this.shutdown) {
+            return;
+        }
+        synchronized (this.lock) {
+            if (this.pendingThinkingFlush != expected) {
+                return;
+            }
+            this.pendingThinkingFlush = null;
+            emitThinkingBufferUnsafe();
         }
     }
 
     /** Requires {@link #lock} held. */
-    private void emitBufferUnsafe() {
-        if (this.buffer.isEmpty()) {
+    private void emitAssistantBufferUnsafe() {
+        if (this.assistantBuffer.isEmpty()) {
             return;
         }
-        String chunk = this.buffer.toString();
-        this.buffer.setLength(0);
+        String chunk = this.assistantBuffer.toString();
+        this.assistantBuffer.setLength(0);
         this.delegate.accept(new ChatStreamMessage.AssistantDelta(chunk));
+    }
+
+    /** Requires {@link #lock} held. */
+    private void emitThinkingBufferUnsafe() {
+        if (this.thinkingBuffer.isEmpty()) {
+            return;
+        }
+        String chunk = this.thinkingBuffer.toString();
+        this.thinkingBuffer.setLength(0);
+        this.delegate.accept(new ChatStreamMessage.ThinkingDelta(chunk));
+    }
+
+    /** Requires {@link #lock} held. */
+    private void flushAssistantBufferUnsafe() {
+        cancelAssistantFlushUnsafe();
+        emitAssistantBufferUnsafe();
+    }
+
+    /** Requires {@link #lock} held. */
+    private void flushThinkingBufferUnsafe() {
+        cancelThinkingFlushUnsafe();
+        emitThinkingBufferUnsafe();
     }
 }

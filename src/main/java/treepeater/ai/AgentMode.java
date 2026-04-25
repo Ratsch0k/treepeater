@@ -7,7 +7,7 @@ package treepeater.ai;
 public enum AgentMode {
     ASK("Ask"),
     HELPER("Helper"),
-    AUTONOMOUS("Autonomous");
+    AUTONOMOUS("Auto");
 
     private final String label;
 

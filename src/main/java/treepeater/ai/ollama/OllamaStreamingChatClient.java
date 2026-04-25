@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -86,11 +87,21 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
 
         ChatStreamLogging.logApiRequest("Ollama", this.config.model(), 0, messages.size(), useTools);
 
+        AtomicInteger thinkingCharsSeen = new AtomicInteger(0);
         OllamaChatTokenHandler handler =
                 chunk -> {
                     OllamaChatMessage msg = chunk.getMessage();
                     if (msg == null) {
                         return;
+                    }
+                    String thinking = msg.getThinking();
+                    if (thinking != null && !thinking.isEmpty()) {
+                        int prev = thinkingCharsSeen.get();
+                        if (thinking.length() > prev) {
+                            session.emit(
+                                    new ChatStreamMessage.ThinkingDelta(thinking.substring(prev)));
+                            thinkingCharsSeen.set(thinking.length());
+                        }
                     }
                     String delta = msg.getResponse();
                     if (delta != null && !delta.isEmpty()) {

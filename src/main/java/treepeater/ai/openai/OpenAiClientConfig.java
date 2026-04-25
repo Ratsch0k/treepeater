@@ -1,9 +1,13 @@
 package treepeater.ai.openai;
 
+import treepeater.ai.OpenAiReasoningEffort;
+
 /**
- * Azure OpenAI / Microsoft Foundry (or compatible) endpoint: API key, resource base URL, and deployment name.
+ * Azure OpenAI / Microsoft Foundry (or compatible) endpoint: API key, resource base URL, deployment, and
+ * reasoning effort for reasoning models.
  */
-public record OpenAiClientConfig(String endpoint, String apiKey, String deploymentName) {
+public record OpenAiClientConfig(
+        String endpoint, String apiKey, String deploymentName, OpenAiReasoningEffort reasoningEffort) {
     public OpenAiClientConfig {
         if (endpoint == null) {
             endpoint = "";
@@ -13,6 +17,9 @@ public record OpenAiClientConfig(String endpoint, String apiKey, String deployme
         }
         if (deploymentName == null) {
             deploymentName = "";
+        }
+        if (reasoningEffort == null) {
+            reasoningEffort = OpenAiReasoningEffort.MEDIUM;
         }
     }
 }

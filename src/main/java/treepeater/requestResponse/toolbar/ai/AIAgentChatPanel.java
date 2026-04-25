@@ -29,19 +29,26 @@ import javax.swing.ActionMap;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.ButtonGroup;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.InputMap;
+import javax.swing.JButton;
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JEditorPane;
 import javax.swing.JLabel;
+import javax.swing.JMenu;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
+import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JViewport;
 import javax.swing.KeyStroke;
+import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
 import javax.swing.Timer;
@@ -56,6 +63,9 @@ import treepeater.Treepeater;
 import treepeater.ai.AgentMode;
 import treepeater.ai.AgentSystemPrompt;
 import treepeater.ai.AiModelOption;
+import treepeater.ai.AnthropicOutputEffort;
+import treepeater.ai.LlmRequestOptions;
+import treepeater.ai.OpenAiReasoningEffort;
 import treepeater.ai.MarkdownRenderer;
 import treepeater.ai.ChatErrors;
 import treepeater.ai.ChatMessage;
@@ -67,6 +77,8 @@ import treepeater.ai.ChatTooling;
 import treepeater.ai.CoalescingChatStreamOutbound;
 import treepeater.components.RoundedPanel;
 import treepeater.components.StyledButton;
+import treepeater.icons.InfoIcon;
+import treepeater.requestResponse.toolbar.ToolbarIconButton;
 import treepeater.settings.TreepeaterSettings;
 
 /**
@@ -93,6 +105,9 @@ public final class AIAgentChatPanel extends JPanel {
     private final StyledButton sendButton;
     private final JComboBox<AgentMode> agentModeCombo;
     private final JComboBox<AiModelOption> modelCombo;
+    private final ToolbarIconButton modelOptionsButton;
+    private final JPopupMenu modelOptionsMenu = new JPopupMenu();
+    private LlmRequestOptions llmRequestOptions = LlmRequestOptions.DEFAULTS;
     private final List<ChatMessage> conversation = new ArrayList<>();
     private final List<AssistantStrip> renderedStrips = new ArrayList<>();
     private final AtomicReference<SwingWorker<List<ChatMessage>, Void>> activeChatWorker =
@@ -135,6 +150,11 @@ public final class AIAgentChatPanel extends JPanel {
                 new JComboBox<>(new DefaultComboBoxModel<>(new Vector<>(AiModelOption.defaultChoices())));
         this.modelCombo.setSelectedIndex(0);
         this.modelCombo.setMaximumRowCount(12);
+        this.modelCombo.addActionListener(e -> this.updateModelOptionsButtonVisibility());
+
+        this.modelOptionsButton = new ToolbarIconButton(new InfoIcon());
+        this.modelOptionsButton.setToolTipText("Model options");
+        this.modelOptionsButton.addActionListener(e -> this.showModelOptionsMenu());
 
         this.sendButton.addActionListener(e -> AIAgentChatPanel.this.onSendOrStopAction());
 
@@ -189,12 +209,13 @@ public final class AIAgentChatPanel extends JPanel {
                             }
                         });
 
-        this.agentModeCombo.setPreferredSize(new Dimension(120, this.agentModeCombo.getPreferredSize().height));
-        this.modelCombo.setPreferredSize(new Dimension(140, this.modelCombo.getPreferredSize().height));
+        this.agentModeCombo.setPreferredSize(new Dimension(80, this.agentModeCombo.getPreferredSize().height));
+        this.modelCombo.setPreferredSize(new Dimension(100, this.modelCombo.getPreferredSize().height));
 
         JPanel sendControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         sendControls.setOpaque(false);
         sendControls.add(this.agentModeCombo);
+        sendControls.add(this.modelOptionsButton);
         sendControls.add(this.modelCombo);
         sendControls.add(this.sendButton);
 
@@ -235,6 +256,9 @@ public final class AIAgentChatPanel extends JPanel {
         body.add(inputRow, BorderLayout.SOUTH);
 
         add(body, BorderLayout.CENTER);
+
+        this.updateModelOptionsButtonVisibility();
+        this.applyModelOptionsButtonLocalTheme();
     }
 
     void applyInputPanelTheme() {
@@ -242,6 +266,99 @@ public final class AIAgentChatPanel extends JPanel {
             return;
         }
         applyInputPanelTheme(this.inputPanel);
+        applyModelOptionsButtonLocalTheme();
+    }
+
+    void applyModelOptionsButtonLocalTheme() {
+        this.modelOptionsButton.applyLocalTheme();
+    }
+
+    private void updateModelOptionsButtonVisibility() {
+        AiModelOption opt = (AiModelOption) this.modelCombo.getSelectedItem();
+        this.modelOptionsButton.setVisible(LlmRequestOptions.anyConfigurable(opt));
+    }
+
+    private void showModelOptionsMenu() {
+        this.modelOptionsMenu.removeAll();
+        AiModelOption opt = (AiModelOption) this.modelCombo.getSelectedItem();
+        if (opt == null) {
+            return;
+        }
+        if (LlmRequestOptions.supportsOpenAiReasoningMenu(opt)) {
+            JMenu effortMenu = new JMenu("Reasoning effort");
+            ButtonGroup g = new ButtonGroup();
+            for (OpenAiReasoningEffort e : OpenAiReasoningEffort.values()) {
+                JRadioButtonMenuItem item = new JRadioButtonMenuItem(openAiReasoningLabel(e));
+                g.add(item);
+                if (e == this.llmRequestOptions.openAiReasoningEffort()) {
+                    item.setSelected(true);
+                }
+                final OpenAiReasoningEffort chosen = e;
+                item.addActionListener(
+                        a -> this.llmRequestOptions =
+                                new LlmRequestOptions(
+                                        chosen,
+                                        this.llmRequestOptions.anthropicOutputEffort(),
+                                        this.llmRequestOptions.anthropicExtendedThinking()));
+                effortMenu.add(item);
+            }
+            this.modelOptionsMenu.add(effortMenu);
+        }
+        if (LlmRequestOptions.supportsAnthropicOutputEffortMenu(opt)) {
+            JMenu effortMenu = new JMenu("Effort");
+            ButtonGroup g = new ButtonGroup();
+            for (AnthropicOutputEffort e : AnthropicOutputEffort.values()) {
+                JRadioButtonMenuItem item = new JRadioButtonMenuItem(anthropicOutputLabel(e));
+                g.add(item);
+                if (e == this.llmRequestOptions.anthropicOutputEffort()) {
+                    item.setSelected(true);
+                }
+                final AnthropicOutputEffort chosen = e;
+                item.addActionListener(
+                        a -> this.llmRequestOptions =
+                                new LlmRequestOptions(
+                                        this.llmRequestOptions.openAiReasoningEffort(),
+                                        chosen,
+                                        this.llmRequestOptions.anthropicExtendedThinking()));
+                effortMenu.add(item);
+            }
+            this.modelOptionsMenu.add(effortMenu);
+        }
+        if (LlmRequestOptions.supportsAnthropicExtendedThinkingMenu(opt)) {
+            JCheckBoxMenuItem thinkItem =
+                    new JCheckBoxMenuItem("Extended thinking", this.llmRequestOptions.anthropicExtendedThinking());
+            thinkItem.addActionListener(
+                    a -> this.llmRequestOptions =
+                            new LlmRequestOptions(
+                                    this.llmRequestOptions.openAiReasoningEffort(),
+                                    this.llmRequestOptions.anthropicOutputEffort(),
+                                    thinkItem.isSelected()));
+            this.modelOptionsMenu.add(thinkItem);
+        }
+        if (this.modelOptionsMenu.getComponentCount() == 0) {
+            return;
+        }
+        this.modelOptionsMenu.validate();
+        int ph = this.modelOptionsMenu.getPreferredSize().height;
+        this.modelOptionsMenu.show(this.modelOptionsButton, 0, -ph);
+    }
+
+    private static String openAiReasoningLabel(OpenAiReasoningEffort e) {
+        return switch (e) {
+            case MINIMAL -> "Minimal";
+            case LOW -> "Low";
+            case MEDIUM -> "Medium";
+            case HIGH -> "High";
+        };
+    }
+
+    private static String anthropicOutputLabel(AnthropicOutputEffort e) {
+        return switch (e) {
+            case LOW -> "Low";
+            case MEDIUM -> "Medium";
+            case HIGH -> "High";
+            case MAX -> "Max";
+        };
     }
 
     void adjustInputAreaHeight() {
@@ -353,6 +470,7 @@ public final class AIAgentChatPanel extends JPanel {
         setSendButtonWorking(true);
         this.agentModeCombo.setEnabled(false);
         this.modelCombo.setEnabled(false);
+        this.modelOptionsButton.setEnabled(false);
 
         ChatTooling requestTooling = this.host.chatTooling(selectedAgentMode());
 
@@ -379,7 +497,8 @@ public final class AIAgentChatPanel extends JPanel {
                     ChatStreamLogging.logUserTurnStart(modelLabel, this.requestMessages.size());
                     return AIAgentChatPanel.this
                             .host
-                            .clientForSelectedModel(AIAgentChatPanel.this.modelCombo)
+                            .clientForSelectedModel(
+                                    AIAgentChatPanel.this.modelCombo, AIAgentChatPanel.this.llmRequestOptions)
                             .streamChat(this.requestMessages, requestTooling, session);
                 } finally {
                     streamCoalescer.shutdown();
@@ -410,6 +529,7 @@ public final class AIAgentChatPanel extends JPanel {
                     AIAgentChatPanel.this.setSendButtonWorking(false);
                     AIAgentChatPanel.this.agentModeCombo.setEnabled(true);
                     AIAgentChatPanel.this.modelCombo.setEnabled(true);
+                    AIAgentChatPanel.this.modelOptionsButton.setEnabled(true);
                     if (AIAgentChatPanel.this.activeChatWorker.get() == this) {
                         AIAgentChatPanel.this.activeChatWorker.set(null);
                     }
@@ -464,6 +584,20 @@ public final class AIAgentChatPanel extends JPanel {
                     && req.requiresApproval()) {
                 session.postReply(new ChatStreamMessage.ToolApprovalResponse(req.toolCallId(), false));
             }
+            return;
+        }
+        if (m instanceof ChatStreamMessage.ThinkingDelta td) {
+            if (td.text().isEmpty()) {
+                return;
+            }
+            AssistantStrip strip = this.transcriptActiveAssistantStrip.get();
+            if (strip == null) {
+                return;
+            }
+            removeAssistantWaitingIndicator(strip);
+            ensureThinkingSection(strip);
+            appendThinkingDelta(strip, td.text());
+            scrollTranscriptToBottom();
             return;
         }
         if (m instanceof ChatStreamMessage.AssistantDelta ad) {
@@ -760,6 +894,96 @@ public final class AIAgentChatPanel extends JPanel {
 
     private static final int MARKDOWN_RENDER_DELAY_MS = 30;
 
+    /**
+     * Collapsible "Thinking" block above the assistant markdown body; created on first {@link
+     * treepeater.ai.ChatStreamMessage.ThinkingDelta}. Starts expanded.
+     */
+    private void ensureThinkingSection(AssistantStrip strip) {
+        if (strip.thinkingSection != null) {
+            return;
+        }
+        JPanel section = new JPanel();
+        section.setLayout(new BoxLayout(section, BoxLayout.PAGE_AXIS));
+        section.setOpaque(false);
+        section.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        Font lf = UIManager.getFont("Label.font");
+        Color muted = UIManager.getColor("Label.disabledForeground");
+
+        JButton toggle = new JButton("▼ Thinking");
+        toggle.setAlignmentX(Component.LEFT_ALIGNMENT);
+        toggle.setBorderPainted(false);
+        toggle.setContentAreaFilled(false);
+        toggle.setFocusPainted(false);
+        toggle.setHorizontalAlignment(SwingConstants.LEFT);
+        if (lf != null) {
+            toggle.setFont(lf.deriveFont(Font.PLAIN, lf.getSize2D() - 0.5f));
+        }
+        if (muted != null) {
+            toggle.setForeground(muted);
+        }
+
+        JTextArea thinkingArea = new JTextArea();
+        thinkingArea.setEditable(false);
+        thinkingArea.setOpaque(false);
+        thinkingArea.setLineWrap(true);
+        thinkingArea.setWrapStyleWord(true);
+        thinkingArea.setBorder(BorderFactory.createEmptyBorder(4, 12, 0, 0));
+        if (lf != null) {
+            thinkingArea.setFont(lf.deriveFont(Font.PLAIN, lf.getSize2D() - 1f));
+        }
+        if (muted != null) {
+            thinkingArea.setForeground(muted);
+        }
+        int columns = 56;
+        if (lf != null) {
+            columns = Math.max(44, Math.min(72, (int) (lf.getSize2D() * 2.2)));
+        }
+        thinkingArea.setColumns(columns);
+        thinkingArea.setRows(5);
+
+        JScrollPane scroll = new JScrollPane(thinkingArea);
+        scroll.setOpaque(false);
+        scroll.getViewport().setOpaque(false);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        scroll.setAlignmentX(Component.LEFT_ALIGNMENT);
+        scroll.setVisible(true);
+
+        toggle.addActionListener(
+                e -> {
+                    strip.thinkingExpanded = !strip.thinkingExpanded;
+                    scroll.setVisible(strip.thinkingExpanded);
+                    toggle.setText(strip.thinkingExpanded ? "▼ Thinking" : "▶ Thinking");
+                    section.revalidate();
+                    section.repaint();
+                    this.transcriptList.revalidate();
+                    this.transcriptList.repaint();
+                    scrollTranscriptToBottom();
+                });
+
+        section.add(toggle);
+        section.add(scroll);
+        strip.column.add(section, 0);
+
+        strip.thinkingSection = section;
+        strip.thinkingArea = thinkingArea;
+        strip.thinkingExpanded = true;
+
+        this.transcriptList.revalidate();
+        this.transcriptList.repaint();
+    }
+
+    private void appendThinkingDelta(AssistantStrip strip, String delta) {
+        if (delta == null || delta.isEmpty() || strip.thinkingArea == null) {
+            return;
+        }
+        strip.thinkingAccumulator.append(delta);
+        strip.thinkingArea.setText(strip.thinkingAccumulator.toString());
+        strip.thinkingArea.setCaretPosition(strip.thinkingAccumulator.length());
+        this.transcriptList.revalidate();
+        this.transcriptList.repaint();
+    }
+
     private void appendAssistantReplyDelta(AssistantStrip strip, String delta) {
         if (delta == null || delta.isEmpty()) {
             return;
@@ -929,8 +1153,12 @@ public final class AIAgentChatPanel extends JPanel {
         final JPanel column;
         final JLabel waitingIndicator;
         final StringBuilder textAccumulator = new StringBuilder();
+        final StringBuilder thinkingAccumulator = new StringBuilder();
         JEditorPane body;
         Timer renderTimer;
+        JPanel thinkingSection;
+        JTextArea thinkingArea;
+        boolean thinkingExpanded;
 
         AssistantStrip(JPanel root, JPanel column, JLabel waitingIndicator) {
             this.root = root;

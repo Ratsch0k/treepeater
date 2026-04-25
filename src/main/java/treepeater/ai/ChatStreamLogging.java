@@ -169,6 +169,9 @@ public final class ChatStreamLogging {
         if (m instanceof ChatStreamMessage.AssistantDelta ad) {
             int n = ad.text().length();
             line(Level.FINE, "RECV toward UI (assistant) | chars=" + n);
+        } else if (m instanceof ChatStreamMessage.ThinkingDelta td) {
+            int n = td.text().length();
+            line(Level.FINE, "RECV toward UI (thinking) | chars=" + n);
         } else if (m instanceof ChatStreamMessage.ToolApprovalRequest req) {
             if (JUL.isLoggable(Level.INFO) || Treepeater.api != null) {
                 line(

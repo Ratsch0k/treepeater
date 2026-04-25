@@ -22,6 +22,7 @@ import treepeater.ai.AgentMode;
 import treepeater.ai.AgentModeToolPolicy;
 import treepeater.ai.AgentToolContext;
 import treepeater.ai.AiModelOption;
+import treepeater.ai.LlmRequestOptions;
 import treepeater.ai.ChatToolExecutor;
 import treepeater.ai.ChatTooling;
 import treepeater.ai.HttpTargetTools;
@@ -60,7 +61,8 @@ public class AIToolbarTab implements AIChatHost {
     }
 
     @Override
-    public StreamingChatClient clientForSelectedModel(JComboBox<AiModelOption> modelCombo) {
+    public StreamingChatClient clientForSelectedModel(JComboBox<AiModelOption> modelCombo, LlmRequestOptions options) {
+        LlmRequestOptions o = options != null ? options : LlmRequestOptions.DEFAULTS;
         AiModelOption opt = (AiModelOption) modelCombo.getSelectedItem();
         if (opt == null || Treepeater.api == null) {
             throw new IllegalStateException("No model or API");
@@ -78,7 +80,9 @@ public class AIToolbarTab implements AIChatHost {
             if (model == null || model.isBlank()) {
                 throw new IllegalStateException("No Anthropic model id");
             }
-            return new AnthropicStreamingChatClient(new AnthropicClientConfig(apiKey, model));
+            return new AnthropicStreamingChatClient(
+                    new AnthropicClientConfig(
+                            apiKey, model, o.anthropicExtendedThinking(), o.anthropicOutputEffort()));
         }
         if (opt.kind() == AiModelOption.Kind.OPENAI) {
             String endpoint = settings.getLlmAzureOpenAiEndpoint();
@@ -93,7 +97,8 @@ public class AIToolbarTab implements AIChatHost {
             if (deployment == null || deployment.isBlank()) {
                 throw new IllegalStateException("No deployment name for Azure OpenAI");
             }
-            return new OpenAiStreamingChatClient(new OpenAiClientConfig(endpoint, apiKey, deployment));
+            return new OpenAiStreamingChatClient(
+                    new OpenAiClientConfig(endpoint, apiKey, deployment, o.openAiReasoningEffort()));
         }
         String baseUrl = settings.getLlmOllamaBaseUrl();
         if (baseUrl == null || baseUrl.isBlank()) {

@@ -2,17 +2,26 @@ package treepeater.ai;
 
 /**
  * Bidirectional stream item exchanged with a {@link StreamingChatClient} via a {@link ChatStreamSession}:
- * clients emit outbound variants ({@link AssistantDelta}, {@link ToolApprovalRequest}) and may wait for inbound
+ * clients emit outbound variants ({@link AssistantDelta}, {@link ThinkingDelta}, {@link ToolApprovalRequest}) and may
+ * wait for inbound
  * variants ({@link ToolApprovalResponse}) posted by the UI in reply.
  */
 public sealed interface ChatStreamMessage
         permits ChatStreamMessage.AssistantDelta,
+                ChatStreamMessage.ThinkingDelta,
                 ChatStreamMessage.ToolApprovalRequest,
                 ChatStreamMessage.ToolApprovalResponse {
 
     /** Incremental assistant reply text. */
     record AssistantDelta(String text) implements ChatStreamMessage {
         public AssistantDelta {
+            text = text != null ? text : "";
+        }
+    }
+
+    /** Incremental model reasoning / thinking text (when the provider exposes it). */
+    record ThinkingDelta(String text) implements ChatStreamMessage {
+        public ThinkingDelta {
             text = text != null ? text : "";
         }
     }

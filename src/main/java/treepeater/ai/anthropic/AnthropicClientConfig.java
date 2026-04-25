@@ -1,7 +1,22 @@
 package treepeater.ai.anthropic;
 
+import treepeater.ai.AnthropicOutputEffort;
+
 /**
- * Connection settings for {@link AnthropicStreamingChatClient} (API key and model id from
- * {@link treepeater.settings.TreepeaterSettings}).
+ * Settings for {@link AnthropicStreamingChatClient}: API key, model, extended thinking, and
+ * {@code output_config.effort}.
  */
-public record AnthropicClientConfig(String apiKey, String model) {}
+public record AnthropicClientConfig(
+        String apiKey, String model, boolean extendedThinking, AnthropicOutputEffort outputEffort) {
+    public AnthropicClientConfig {
+        if (apiKey == null) {
+            apiKey = "";
+        }
+        if (model == null) {
+            model = "";
+        }
+        if (outputEffort == null) {
+            outputEffort = AnthropicOutputEffort.MEDIUM;
+        }
+    }
+}

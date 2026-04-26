@@ -4,9 +4,11 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.Supplier;
 import javax.swing.JComponent;
 import java.lang.reflect.InvocationTargetException;
-import java.util.function.Supplier;
 
 import javax.swing.BoxLayout;
 import javax.swing.JComboBox;
@@ -16,8 +18,12 @@ import javax.swing.JTabbedPane;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
+import javax.swing.event.ChangeEvent;
+import javax.swing.event.ChangeListener;
 
 import treepeater.Treepeater;
+import treepeater.ai.AgentChatSession;
+import treepeater.ai.AgentChatWorkspace;
 import treepeater.ai.AgentMode;
 import treepeater.ai.AgentModeToolPolicy;
 import treepeater.ai.AgentToolContext;
@@ -39,6 +45,7 @@ import treepeater.icons.WandIcon;
 import treepeater.requestResponse.toolbar.ToolbarIconButton;
 import treepeater.requestResponse.toolbar.ToolbarTabTitle;
 import treepeater.settings.TreepeaterSettings;
+import treepeater.tree.RequestTreeNode;
 
 public class AIToolbarTab implements AIChatHost {
 
@@ -48,9 +55,12 @@ public class AIToolbarTab implements AIChatHost {
     private JTabbedPane chatTabPane;
     private int nextChatTabIndex = 1;
 
+    private final RequestTreeNode node;
     private final Supplier<AgentToolContext> agentToolContextSupplier;
+    private boolean blockTabPersist;
 
-    public AIToolbarTab(Supplier<AgentToolContext> agentToolContextSupplier) {
+    public AIToolbarTab(RequestTreeNode node, Supplier<AgentToolContext> agentToolContextSupplier) {
+        this.node = node;
         this.button = new ToolbarIconButton(new WandIcon());
         this.content = new JPanel(new BorderLayout());
 
@@ -58,6 +68,26 @@ public class AIToolbarTab implements AIChatHost {
         this.disabledInfoArea = null;
 
         this.content.add(this.buildContent(), BorderLayout.CENTER);
+    }
+
+    private void saveWorkspaceToNode() {
+        if (this.node == null || this.chatTabPane == null) {
+            return;
+        }
+        if (this.blockTabPersist) {
+            return;
+        }
+        int n = this.chatTabPane.getTabCount();
+        List<AgentChatSession> list = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            Component c = this.chatTabPane.getComponentAt(i);
+            if (c instanceof AIAgentChatPanel p) {
+                list.add(p.toSessionSnapshot(this.chatTabPane.getTitleAt(i)));
+            }
+        }
+        this.node.setAgentChatWorkspace(
+                new AgentChatWorkspace(
+                        list, this.chatTabPane.getSelectedIndex(), this.nextChatTabIndex));
     }
 
     @Override
@@ -221,7 +251,37 @@ public class AIToolbarTab implements AIChatHost {
 
         this.chatTabPane = new JTabbedPane();
         this.chatTabPane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
-        addNewChatTab();
+        AgentChatWorkspace ws = this.node != null ? this.node.getAgentChatWorkspace() : AgentChatWorkspace.EMPTY;
+        this.nextChatTabIndex = Math.max(1, ws.nextChatTabIndex());
+        this.blockTabPersist = true;
+        try {
+            if (ws.sessions().isEmpty()) {
+                this.addNewChatTab();
+            } else {
+                for (AgentChatSession s : ws.sessions()) {
+                    AIAgentChatPanel session = new AIAgentChatPanel(this, this::saveWorkspaceToNode);
+                    String title = s.title();
+                    int index = this.chatTabPane.getTabCount();
+                    this.chatTabPane.addTab(title, session);
+                    this.chatTabPane.setTabComponentAt(
+                            index, new AIAgentChatTabTitle(title, () -> this.closeAgentChat(session)));
+                    session.loadFromSession(s);
+                }
+                int sel = ws.selectedSessionIndex();
+                if (sel >= 0 && sel < this.chatTabPane.getTabCount()) {
+                    this.chatTabPane.setSelectedIndex(sel);
+                }
+            }
+        } finally {
+            this.blockTabPersist = false;
+        }
+        this.chatTabPane.addChangeListener(
+                new ChangeListener() {
+                    @Override
+                    public void stateChanged(ChangeEvent e) {
+                        AIToolbarTab.this.saveWorkspaceToNode();
+                    }
+                });
         panel.add(this.chatTabPane, BorderLayout.CENTER);
         return panel;
     }
@@ -230,12 +290,13 @@ public class AIToolbarTab implements AIChatHost {
         if (this.chatTabPane == null) {
             return;
         }
-        AIAgentChatPanel session = new AIAgentChatPanel(this);
+        AIAgentChatPanel session = new AIAgentChatPanel(this, this::saveWorkspaceToNode);
         String title = "Chat " + this.nextChatTabIndex++;
         int index = this.chatTabPane.getTabCount();
         this.chatTabPane.addTab(title, session);
         this.chatTabPane.setTabComponentAt(index, new AIAgentChatTabTitle(title, () -> this.closeAgentChat(session)));
         this.chatTabPane.setSelectedComponent(session);
+        this.saveWorkspaceToNode();
     }
 
     private void closeAgentChat(AIAgentChatPanel panel) {
@@ -249,6 +310,8 @@ public class AIToolbarTab implements AIChatHost {
         this.chatTabPane.remove(panel);
         if (this.chatTabPane.getTabCount() == 0) {
             addNewChatTab();
+        } else {
+            this.saveWorkspaceToNode();
         }
     }
 }

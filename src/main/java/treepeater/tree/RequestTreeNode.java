@@ -5,6 +5,7 @@ import javax.swing.tree.DefaultMutableTreeNode;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 import treepeater.Treepeater;
+import treepeater.ai.AgentChatWorkspace;
 import treepeater.requestResponse.RequestHistory;
 import treepeater.requestResponse.Status;
 import treepeater.settings.StatusRegistry;
@@ -19,12 +20,25 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
     private String notes = "";
     private HashSet<RequestTreeNodeListener> listener;
     private final RequestHistory history;
+    private AgentChatWorkspace agentChatWorkspace = AgentChatWorkspace.EMPTY;
 
     public RequestTreeNode(int id, Status status, String name, HttpRequest request, HttpResponse response, RequestHistory history) {
-        this(id, status, name, request, response, history, "");
+        this(id, status, name, request, response, history, "", AgentChatWorkspace.EMPTY);
     }
 
     public RequestTreeNode(int id, Status status, String name, HttpRequest request, HttpResponse response, RequestHistory history, String notes) {
+        this(id, status, name, request, response, history, notes, AgentChatWorkspace.EMPTY);
+    }
+
+    public RequestTreeNode(
+            int id,
+            Status status,
+            String name,
+            HttpRequest request,
+            HttpResponse response,
+            RequestHistory history,
+            String notes,
+            AgentChatWorkspace agentChatWorkspace) {
         super(name);
         this.id = id;
         this.status = status != null ? status : StatusRegistry.getDefault();
@@ -34,6 +48,7 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
         this.notes = notes != null ? notes : "";
         this.listener = new HashSet<>();
         this.history = history;
+        this.agentChatWorkspace = agentChatWorkspace != null ? agentChatWorkspace : AgentChatWorkspace.EMPTY;
     }
 
     public RequestTreeNode(int id, String name, HttpRequest request, HttpResponse response) {
@@ -49,6 +64,18 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
     }
 
     public RequestTreeNode(int id, Status status, String name, HttpRequest request, HttpResponse response, HashSet<RequestTreeNodeListener> l, String notes) {
+        this(id, status, name, request, response, l, notes, AgentChatWorkspace.EMPTY);
+    }
+
+    public RequestTreeNode(
+            int id,
+            Status status,
+            String name,
+            HttpRequest request,
+            HttpResponse response,
+            HashSet<RequestTreeNodeListener> l,
+            String notes,
+            AgentChatWorkspace agentChatWorkspace) {
         super(name);
         this.id = id;
         this.status = status != null ? status : StatusRegistry.getDefault();
@@ -58,6 +85,7 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
         this.notes = notes != null ? notes : "";
         this.listener = l;
         this.history = new RequestHistory();
+        this.agentChatWorkspace = agentChatWorkspace != null ? agentChatWorkspace : AgentChatWorkspace.EMPTY;
     }
 
     public RequestTreeNode(RequestTreeNode copy) {
@@ -71,6 +99,7 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
         this.notes = copy.notes != null ? copy.notes : "";
         this.listener = copy.listener;
         this.history = copy.history;
+        this.agentChatWorkspace = copy.agentChatWorkspace != null ? copy.agentChatWorkspace.copy() : AgentChatWorkspace.EMPTY;
     }
 
     public Status getStatus() {
@@ -144,6 +173,19 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
 
     public RequestHistory getHistory() {
         return this.history;
+    }
+
+    public AgentChatWorkspace getAgentChatWorkspace() {
+        return this.agentChatWorkspace != null ? this.agentChatWorkspace : AgentChatWorkspace.EMPTY;
+    }
+
+    public void setAgentChatWorkspace(AgentChatWorkspace workspace) {
+        AgentChatWorkspace next = workspace != null ? workspace : AgentChatWorkspace.EMPTY;
+        if (next.equals(this.agentChatWorkspace)) {
+            return;
+        }
+        this.agentChatWorkspace = next;
+        Treepeater.saveState();
     }
 
 }

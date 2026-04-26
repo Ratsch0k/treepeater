@@ -62,9 +62,11 @@ import com.formdev.flatlaf.FlatClientProperties;
 import burp.api.montoya.http.message.requests.HttpRequest;
 
 import treepeater.Treepeater;
+import treepeater.ai.AgentChatSession;
 import treepeater.ai.AgentMode;
 import treepeater.ai.AgentSystemPrompt;
 import treepeater.ai.AiModelOption;
+import treepeater.ai.AiModelRef;
 import treepeater.ai.AnthropicOutputEffort;
 import treepeater.ai.LlmRequestOptions;
 import treepeater.ai.OpenAiReasoningEffort;
@@ -74,6 +76,7 @@ import treepeater.ai.ChatMessage;
 import treepeater.ai.ChatRole;
 import treepeater.ai.ChatStreamMessage;
 import treepeater.ai.ChatStreamSession;
+import treepeater.ai.ChatToolCall;
 import treepeater.ai.ChatTooling;
 import treepeater.ai.AgentToolContext;
 import treepeater.ai.CoalescingChatStreamOutbound;
@@ -114,6 +117,8 @@ public final class AIAgentChatPanel extends JPanel {
     private final JButton modelOptionsButton;
     private final JPopupMenu modelOptionsMenu = new JPopupMenu();
     private LlmRequestOptions llmRequestOptions = LlmRequestOptions.DEFAULTS;
+    private final Runnable onPersistState;
+    private boolean blockPersist;
     private final List<ChatMessage> conversation = new ArrayList<>();
     private final List<AssistantStrip> renderedStrips = new ArrayList<>();
     private final AtomicReference<SwingWorker<List<ChatMessage>, Void>> activeChatWorker =
@@ -127,8 +132,13 @@ public final class AIAgentChatPanel extends JPanel {
     private boolean transcriptScrollCoalescePending;
 
     public AIAgentChatPanel(AIChatHost host) {
+        this(host, null);
+    }
+
+    public AIAgentChatPanel(AIChatHost host, Runnable onPersistState) {
         super(new BorderLayout());
         this.host = host;
+        this.onPersistState = onPersistState;
         setOpaque(false);
 
         this.transcriptList = new AITranscriptListPanel();
@@ -156,7 +166,12 @@ public final class AIAgentChatPanel extends JPanel {
                 new JComboBox<>(new DefaultComboBoxModel<>(new Vector<>(AiModelOption.defaultChoices())));
         this.modelCombo.setSelectedIndex(0);
         this.modelCombo.setMaximumRowCount(12);
-        this.modelCombo.addActionListener(e -> this.updateModelOptionsButtonVisibility());
+        this.modelCombo.addActionListener(
+                e -> {
+                    this.updateModelOptionsButtonVisibility();
+                    this.notifyPersist();
+                });
+        this.agentModeCombo.addActionListener(e -> this.notifyPersist());
 
         this.modelOptionsButton = new JButton(new GearIcon().withColor(UIManager.getColor("Label.foreground")));
         this.modelOptionsButton.putClientProperty(FlatClientProperties.STYLE, "background: $Colors.ui.background.2; border: 4,4,4,4,$ComboBox.buttonSeparatorColor,1,8;");
@@ -300,11 +315,14 @@ public final class AIAgentChatPanel extends JPanel {
                 }
                 final OpenAiReasoningEffort chosen = e;
                 item.addActionListener(
-                        a -> this.llmRequestOptions =
-                                new LlmRequestOptions(
-                                        chosen,
-                                        this.llmRequestOptions.anthropicOutputEffort(),
-                                        this.llmRequestOptions.anthropicExtendedThinking()));
+                        a -> {
+                            this.llmRequestOptions =
+                                    new LlmRequestOptions(
+                                            chosen,
+                                            this.llmRequestOptions.anthropicOutputEffort(),
+                                            this.llmRequestOptions.anthropicExtendedThinking());
+                            this.notifyPersist();
+                        });
                 effortMenu.add(item);
             }
             this.modelOptionsMenu.add(effortMenu);
@@ -320,11 +338,14 @@ public final class AIAgentChatPanel extends JPanel {
                 }
                 final AnthropicOutputEffort chosen = e;
                 item.addActionListener(
-                        a -> this.llmRequestOptions =
-                                new LlmRequestOptions(
-                                        this.llmRequestOptions.openAiReasoningEffort(),
-                                        chosen,
-                                        this.llmRequestOptions.anthropicExtendedThinking()));
+                        a -> {
+                            this.llmRequestOptions =
+                                    new LlmRequestOptions(
+                                            this.llmRequestOptions.openAiReasoningEffort(),
+                                            chosen,
+                                            this.llmRequestOptions.anthropicExtendedThinking());
+                            this.notifyPersist();
+                        });
                 effortMenu.add(item);
             }
             this.modelOptionsMenu.add(effortMenu);
@@ -333,11 +354,14 @@ public final class AIAgentChatPanel extends JPanel {
             JCheckBoxMenuItem thinkItem =
                     new JCheckBoxMenuItem("Extended thinking", this.llmRequestOptions.anthropicExtendedThinking());
             thinkItem.addActionListener(
-                    a -> this.llmRequestOptions =
-                            new LlmRequestOptions(
-                                    this.llmRequestOptions.openAiReasoningEffort(),
-                                    this.llmRequestOptions.anthropicOutputEffort(),
-                                    thinkItem.isSelected()));
+                    a -> {
+                        this.llmRequestOptions =
+                                new LlmRequestOptions(
+                                        this.llmRequestOptions.openAiReasoningEffort(),
+                                        this.llmRequestOptions.anthropicOutputEffort(),
+                                        thinkItem.isSelected());
+                        this.notifyPersist();
+                    });
             this.modelOptionsMenu.add(thinkItem);
         }
         if (this.modelOptionsMenu.getComponentCount() == 0) {
@@ -535,6 +559,7 @@ public final class AIAgentChatPanel extends JPanel {
                     if (AIAgentChatPanel.this.activeChatWorker.get() == this) {
                         AIAgentChatPanel.this.activeChatWorker.set(null);
                     }
+                    AIAgentChatPanel.this.notifyPersist();
                 }
             }
         };
@@ -558,6 +583,128 @@ public final class AIAgentChatPanel extends JPanel {
     private void setSendButtonWorking(boolean working) {
         this.sendButton.setText(working ? STOP_BUTTON_LABEL : SEND_BUTTON_LABEL);
         this.sendButton.setEnabled(true);
+    }
+
+    private void notifyPersist() {
+        if (this.blockPersist || this.onPersistState == null) {
+            return;
+        }
+        this.onPersistState.run();
+    }
+
+    public void loadFromSession(AgentChatSession session) {
+        this.blockPersist = true;
+        try {
+            this.conversation.clear();
+            this.conversation.addAll(session.conversation());
+            this.llmRequestOptions = session.llmRequestOptions();
+            this.agentModeCombo.setSelectedItem(session.agentMode());
+            this.applyModelFromRef(session.modelRef());
+            this.updateModelOptionsButtonVisibility();
+            this.clearTranscriptForReload();
+            this.rebuildTranscriptFromPersistedMessages();
+        } finally {
+            this.blockPersist = false;
+        }
+    }
+
+    public AgentChatSession toSessionSnapshot(String tabTitle) {
+        AiModelOption opt = (AiModelOption) this.modelCombo.getSelectedItem();
+        return new AgentChatSession(
+                tabTitle,
+                new ArrayList<>(this.conversation),
+                this.selectedAgentMode(),
+                AiModelRef.fromOption(opt),
+                this.llmRequestOptions);
+    }
+
+    private void applyModelFromRef(AiModelRef ref) {
+        AiModelOption want = ref.toModelOption();
+        javax.swing.DefaultComboBoxModel<AiModelOption> m =
+                (javax.swing.DefaultComboBoxModel<AiModelOption>) this.modelCombo.getModel();
+        for (int i = 0; i < m.getSize(); i++) {
+            if (optionsMatch(m.getElementAt(i), want)) {
+                this.modelCombo.setSelectedIndex(i);
+                return;
+            }
+        }
+        m.addElement(want);
+        this.modelCombo.setSelectedItem(want);
+    }
+
+    private static boolean optionsMatch(AiModelOption a, AiModelOption b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        if (a.kind() != b.kind()) {
+            return false;
+        }
+        return switch (a.kind()) {
+            case BURP -> true;
+            case OLLAMA -> java.util.Objects.equals(a.ollamaModel(), b.ollamaModel());
+            case ANTHROPIC -> java.util.Objects.equals(a.anthropicModel(), b.anthropicModel());
+            case OPENAI -> java.util.Objects.equals(a.openAiDeployment(), b.openAiDeployment());
+        };
+    }
+
+    private void clearTranscriptForReload() {
+        this.transcriptList.removeAll();
+        this.transcriptList.add(this.transcriptBottomGlue);
+        this.renderedStrips.clear();
+    }
+
+    private void rebuildTranscriptFromPersistedMessages() {
+        for (ChatMessage m : this.conversation) {
+            if (m.role() == ChatRole.SYSTEM) {
+                continue;
+            }
+            if (m.role() == ChatRole.USER) {
+                this.addMessageBubble("You", m.content());
+                continue;
+            }
+            if (m.role() == ChatRole.TOOL) {
+                continue;
+            }
+            if (m.role() == ChatRole.ASSISTANT) {
+                boolean hasText = m.content() != null && !m.content().isEmpty();
+                if (hasText) {
+                    this.appendRestoredAssistantText(m.content());
+                }
+                if (m.hasAssistantToolCalls()) {
+                    for (ChatToolCall tc : m.assistantToolCalls()) {
+                        this.appendRestoredToolCard(tc);
+                    }
+                }
+            }
+        }
+        this.transcriptList.revalidate();
+        this.transcriptList.repaint();
+        this.scrollTranscriptToBottom();
+    }
+
+    private void appendRestoredAssistantText(String text) {
+        AssistantStrip strip = this.createPlainAssistantStrip();
+        this.removeAssistantWaitingIndicator(strip);
+        this.ensureAssistantBody(strip);
+        strip.textAccumulator.append(text);
+        this.renderMarkdown(strip);
+        this.appendTranscriptRow(strip.root);
+    }
+
+    private void appendRestoredToolCard(ChatToolCall tc) {
+        ChatTooling tooling = this.host.chatTooling(this.selectedAgentMode());
+        HttpTargetTools.HumanToolUsage label =
+                HttpTargetTools.humanToolUsage(
+                        tc.name(), tc.argumentsJson(), tooling.currentHistoryIndexForToolStatus());
+        ChatStreamMessage.ToolApprovalRequest req =
+                new ChatStreamMessage.ToolApprovalRequest(
+                        tc.id(),
+                        tc.name(),
+                        tc.argumentsJson(),
+                        label.title(),
+                        label.detail(),
+                        false);
+        this.appendTranscriptRow(this.buildToolUsageCard(req));
     }
 
     private AgentMode selectedAgentMode() {

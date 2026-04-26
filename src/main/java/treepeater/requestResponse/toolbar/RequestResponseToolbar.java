@@ -48,7 +48,7 @@ public class RequestResponseToolbar extends JPanel {
 
         this.infoToolbarTab = new InfoToolbarTab();
         this.notesToolbarTab = new NotesToolbarTab(node);
-        this.magicToolbarTab = new AIToolbarTab(agentToolContextSupplier);
+        this.magicToolbarTab = new AIToolbarTab(node, agentToolContextSupplier);
 
         this.toolbarCardLayout = new CardLayout();
         this.toolbarPanel = new JPanel(this.toolbarCardLayout);

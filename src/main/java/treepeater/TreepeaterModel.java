@@ -153,7 +153,16 @@ public class TreepeaterModel implements RequestTreeNodeListener {
         RequestHistory history = new RequestHistory();
         history.addEntry(request.httpService().host(), request, response);
 
-        RequestTreeNode copy = new RequestTreeNode(this.requestCount, source.getStatus(), copyName, request, response, history, source.getNotes());
+        RequestTreeNode copy =
+                new RequestTreeNode(
+                        this.requestCount,
+                        source.getStatus(),
+                        copyName,
+                        request,
+                        response,
+                        history,
+                        source.getNotes(),
+                        source.getAgentChatWorkspace().copy());
         copy.addListener(this);
 
         int insertIndex = parent.getIndex(source) + 1;

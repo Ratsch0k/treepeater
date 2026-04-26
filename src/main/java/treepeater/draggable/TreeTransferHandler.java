@@ -13,6 +13,7 @@ import javax.swing.*;
 import javax.swing.tree.*;
 
 import treepeater.Treepeater;
+import treepeater.ai.AgentChatWorkspace;
 import treepeater.tree.RequestTree;
 import treepeater.tree.RequestTreeNode;
 
@@ -163,7 +164,18 @@ public class TreeTransferHandler extends TransferHandler {
         // Add data to model.
         for(int i = 0; i < nodes.length; i++) {
             RequestTreeNodeTransferable transferable = nodes[i];
-            RequestTreeNode node = new RequestTreeNode(transferable.id, transferable.status, transferable.name, transferable.request, transferable.response, transferable.listener, transferable.notes);
+            RequestTreeNode node =
+                    new RequestTreeNode(
+                            transferable.id,
+                            transferable.status,
+                            transferable.name,
+                            transferable.request,
+                            transferable.response,
+                            transferable.listener,
+                            transferable.notes,
+                            transferable.agentChatWorkspace != null
+                                    ? transferable.agentChatWorkspace
+                                    : AgentChatWorkspace.EMPTY);
 
             model.insertNodeInto(node, parent, index++);
         }
@@ -190,7 +202,16 @@ public class TreeTransferHandler extends TransferHandler {
             ArrayList<RequestTreeNodeTransferable> transferables = new ArrayList<>();
             
             for (RequestTreeNode treeNode : nodes) {
-                transferables.add(new RequestTreeNodeTransferable(treeNode.getId(), treeNode.getStatus(), treeNode.getName(), treeNode.getRequest(), treeNode.getResponse(), treeNode.getNotes(), treeNode.getListeners()));
+                transferables.add(
+                        new RequestTreeNodeTransferable(
+                                treeNode.getId(),
+                                treeNode.getStatus(),
+                                treeNode.getName(),
+                                treeNode.getRequest(),
+                                treeNode.getResponse(),
+                                treeNode.getNotes(),
+                                treeNode.getListeners(),
+                                treeNode.getAgentChatWorkspace()));
             }
 
             RequestTreeNodeTransferable[] transferableArray = transferables.toArray(new RequestTreeNodeTransferable[0]);

@@ -231,7 +231,8 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
         return b.build();
     }
 
-    private static FunctionParameters schemaToParameters(String jsonSchema) throws JsonProcessingException {
+    /** Package-private for tests; converts Treepeater JSON Schema strings to OpenAI function parameters. */
+    static FunctionParameters schemaToParameters(String jsonSchema) throws JsonProcessingException {
         final JsonNode n;
         try {
             n = JSON.readTree(jsonSchema);

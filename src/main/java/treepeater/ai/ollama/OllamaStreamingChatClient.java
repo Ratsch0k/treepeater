@@ -2,11 +2,13 @@ package treepeater.ai.ollama;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.github.ollama4j.Ollama;
@@ -154,10 +156,90 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
         return linked;
     }
 
-    private static Tools.Tool toOllamaTool(
-            ChatToolDefinition def, ChatTooling tooling, ChatStreamSession session) {
+    /**
+     * ollama4j {@link Tools.Parameters} only supports flat {@link Tools.Property} fields (type, description, enum).
+     * Nested JSON Schema ({@code items}, {@code oneOf}, …) is appended to {@code description} so local models still
+     * see the full operation shape where possible.
+     */
+    static Tools.Parameters ollamaParametersFromJsonSchema(String parametersJsonSchema) {
         Tools.Parameters parameters = new Tools.Parameters();
         parameters.setProperties(new HashMap<>());
+        parameters.setRequired(new ArrayList<>());
+        if (parametersJsonSchema == null || parametersJsonSchema.isBlank()) {
+            return parameters;
+        }
+        final JsonNode root;
+        try {
+            root = JSON.readTree(parametersJsonSchema);
+        } catch (Exception e) {
+            return parameters;
+        }
+        if (!root.isObject()) {
+            return parameters;
+        }
+        JsonNode req = root.get("required");
+        if (req != null && req.isArray()) {
+            List<String> r = new ArrayList<>();
+            req.forEach(
+                    n -> {
+                        if (n != null && n.isTextual()) {
+                            r.add(n.asText());
+                        }
+                    });
+            parameters.setRequired(r);
+        }
+        JsonNode props = root.get("properties");
+        if (props != null && props.isObject()) {
+            for (Iterator<String> it = props.fieldNames(); it.hasNext(); ) {
+                String name = it.next();
+                JsonNode spec = props.get(name);
+                if (spec == null || !spec.isObject()) {
+                    continue;
+                }
+                Tools.Property prop = new Tools.Property();
+                JsonNode t = spec.get("type");
+                prop.setType(t != null && t.isTextual() ? t.asText() : "string");
+                StringBuilder desc = new StringBuilder();
+                JsonNode d = spec.get("description");
+                if (d != null && d.isTextual()) {
+                    desc.append(d.asText());
+                }
+                JsonNode items = spec.get("items");
+                if (items != null) {
+                    if (desc.length() > 0) {
+                        desc.append(' ');
+                    }
+                    desc.append("JSON Schema items:");
+                    String itemsStr = items.toString();
+                    int cap = 6000;
+                    if (itemsStr.length() > cap) {
+                        itemsStr = itemsStr.substring(0, cap) + "…";
+                    }
+                    desc.append(itemsStr);
+                }
+                prop.setDescription(desc.toString());
+                JsonNode en = spec.get("enum");
+                if (en != null && en.isArray()) {
+                    List<String> vals = new ArrayList<>();
+                    en.forEach(
+                            n -> {
+                                if (n != null && n.isTextual()) {
+                                    vals.add(n.asText());
+                                }
+                            });
+                    if (!vals.isEmpty()) {
+                        prop.setEnumValues(vals);
+                    }
+                }
+                parameters.getProperties().put(name, prop);
+            }
+        }
+        return parameters;
+    }
+
+    private static Tools.Tool toOllamaTool(
+            ChatToolDefinition def, ChatTooling tooling, ChatStreamSession session) {
+        Tools.Parameters parameters = ollamaParametersFromJsonSchema(def.parametersJsonSchema());
 
         Tools.ToolSpec spec =
                 Tools.ToolSpec.builder()

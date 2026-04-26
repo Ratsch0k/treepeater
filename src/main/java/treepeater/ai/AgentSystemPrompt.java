@@ -22,7 +22,10 @@ public final class AgentSystemPrompt {
                     + "security assessment, not malicious use.\n"
             + "Help analyze and reason about HTTP requests and responses. When tools are available, "
                     + "prefer calling them to inspect or send traffic instead of inventing unseen traffic.\n"
-                    + "Give practical, reproducible guidance: what to change or observe, what it could mean, "
+            + "For **apply_http_request_semantic_changes**, never call it with empty arguments: the tool requires "
+                    + "a non-empty JSON array **operations** (see the tool definition). Example shape: "
+                    + HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES_EXAMPLE_ARGS + "\n"
+            + "Give practical, reproducible guidance: what to change or observe, what it could mean, "
                     + "and what to try next. Separate confirmed findings from hypotheses. Be concise and precise.";
 
     private AgentSystemPrompt() {}

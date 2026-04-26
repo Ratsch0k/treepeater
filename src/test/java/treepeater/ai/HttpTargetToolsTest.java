@@ -300,11 +300,13 @@ class HttpTargetToolsTest {
     }
 
     @Test
-    void definitions_allHaveNonEmptyNamesAndDescriptions() {
+    void definitions_allHaveNonEmptyNamesAndDescriptions() throws Exception {
         for (ChatToolDefinition def : HttpTargetTools.definitions()) {
             assertFalse(def.name().isBlank(), "tool name should not be blank");
             assertFalse(def.description().isBlank(), "description should not be blank for: " + def.name());
             assertFalse(def.parametersJsonSchema().isBlank(), "schema should not be blank for: " + def.name());
+            JsonNode schema = JSON.readTree(def.parametersJsonSchema());
+            assertTrue(schema.isObject(), "schema must parse as JSON object for: " + def.name());
         }
     }
 
@@ -833,6 +835,21 @@ class HttpTargetToolsTest {
     }
 
     // ===== apply_http_request_semantic_changes =====
+
+    @Test
+    void applySemantic_missingOperations_returnsStructuredHintAndExample() throws Exception {
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
+        AgentToolContext ctx = singleEntryCtx(request, null);
+        JsonNode result =
+                parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, "{}", ctx));
+
+        assertTrue(result.has("error"));
+        assertEquals(-1, result.get("op_index").asInt());
+        assertTrue(result.has("hint"));
+        assertTrue(result.has("example"));
+        assertEquals(
+                HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES_EXAMPLE_ARGS, result.get("example").asText());
+    }
 
     @Test
     void applySemantic_setHeader_invokesWithHeaderAndCommits() throws Exception {

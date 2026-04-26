@@ -162,11 +162,45 @@ public final class HttpTargetTools {
 
     private static final int MAX_SEMANTIC_OPERATIONS = 32;
 
+    /**
+     * Minimal valid payload example (also returned in structured errors when {@code operations} is missing or invalid).
+     */
+    public static final String APPLY_HTTP_REQUEST_SEMANTIC_CHANGES_EXAMPLE_ARGS =
+            "{\"operations\":[{\"type\":\"header\",\"action\":\"set\",\"key\":\"X-Test\",\"value\":\"1\"}]}";
+
+    private static final String SEMANTIC_ITEMS_ALLOF =
+            "["
+                    + "{\"if\":{\"properties\":{\"type\":{\"const\":\"header\"},\"action\":{\"const\":\"set\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"key\",\"value\"]}}"
+                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"header\"},\"action\":{\"const\":\"remove\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"key\"]}}"
+                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"cookie\"},\"action\":{\"const\":\"set\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"key\",\"value\"]}}"
+                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"cookie\"},\"action\":{\"const\":\"remove\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"key\"]}}"
+                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"json\"},\"action\":{\"const\":\"set\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"path\",\"value\"]}}"
+                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"json\"},\"action\":{\"const\":\"remove\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"path\"]}}"
+                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"xml\"},\"action\":{\"const\":\"set\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"path\",\"value\"]}}"
+                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"xml\"},\"action\":{\"const\":\"remove\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"path\"]}}"
+                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"method\"},\"action\":{\"const\":\"set\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"value\"],\"properties\":{\"value\":{\"type\":\"string\"}}}}"
+                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"url\"},\"action\":{\"const\":\"set\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"value\"],\"properties\":{\"value\":{\"type\":\"string\"}}}}"
+                    + "]";
+
+    private static final String SEMANTIC_OPERATION_ITEM_SCHEMA =
+            "{\"type\":\"object\",\"required\":[\"type\",\"action\"],"
+                    + "\"properties\":{"
+                    + "\"type\":{\"type\":\"string\",\"enum\":[\"header\",\"cookie\",\"json\",\"xml\",\"method\",\"url\"]},"
+                    + "\"action\":{\"type\":\"string\",\"enum\":[\"set\",\"remove\"]},"
+                    + "\"key\":{\"type\":\"string\",\"description\":\"Header/cookie name; must be empty for method/url when set.\"},"
+                    + "\"path\":{\"type\":\"string\",\"description\":\"JSON Pointer (type json) or XPath 1.0 (type xml).\"},"
+                    + "\"value\":{}"
+                    + "},"
+                    + "\"allOf\":"
+                    + SEMANTIC_ITEMS_ALLOF
+                    + ",\"additionalProperties\":false}";
+
     private static final String APPLY_SEMANTIC_CHANGES_SCHEMA =
-            """
-            {"type":"object","required":["operations"],"properties":{"operations":{"type":"array","minItems":1,"maxItems":%d,"items":{"type":"object","required":["type","action"],"properties":{"type":{"type":"string","enum":["header","cookie","json","xml","method","url"]},"action":{"type":"string","enum":["set","remove"]},"key":{"type":"string","description":"Header/cookie name; must be empty for method/url when set."},"path":{"type":"string","description":"JSON Pointer (type json) or XPath 1.0 (type xml)."},"value":{}},"additionalProperties":false}},"additionalProperties":false}\
-            """
-                    .formatted(MAX_SEMANTIC_OPERATIONS);
+            "{\"type\":\"object\",\"required\":[\"operations\"],\"properties\":{\"operations\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":"
+                    + MAX_SEMANTIC_OPERATIONS
+                    + ",\"items\":"
+                    + SEMANTIC_OPERATION_ITEM_SCHEMA
+                    + "}},\"additionalProperties\":false}";
 
     private HttpTargetTools() {}
 
@@ -222,14 +256,17 @@ public final class HttpTargetTools {
                         SET_BODY_SCHEMA),
                 new ChatToolDefinition(
                         APPLY_HTTP_REQUEST_SEMANTIC_CHANGES,
-                        "Applies a batch of typed changes to the **current** repeater request in one call. Each item has "
-                                + "`type` (header|cookie|json|xml|method|url) and `action` (set|remove). Use `action: "
-                                + "remove` to delete; use `action: set` with `value: null` to store a **literal JSON "
-                                + "null** in the body (json type). `path` is a JSON Pointer (RFC 6901) for type json, "
-                                + "or XPath 1.0 for type xml. For method and url with `set`, `key` must be empty. "
-                                + "Omit the `value` field entirely on `remove` (when present, the call is rejected). "
-                                + "If the body is not valid JSON or XML for that operation, the error includes "
-                                + "`op_index` and a hint to use read_http_message or set_http_request_body.",
+                        "Applies a batch of typed changes to the **current** repeater request in one call. **Required:** "
+                                + "top-level `operations` (non-empty array). Each element has `type` (header|cookie|json|"
+                                + "xml|method|url) and `action` (set|remove), plus `key` and/or `path` and/or `value` as "
+                                + "required by that combination (see JSON Schema). Use `action: remove` to delete; use "
+                                + "`action: set` with `value: null` to store a **literal JSON null** in the body (json "
+                                + "type). `path` is a JSON Pointer (RFC 6901) for type json, or XPath 1.0 for type xml. "
+                                + "For method and url with `set`, `key` must be empty. Omit the `value` field entirely "
+                                + "on `remove` (when present, the call is rejected). If the body is not valid JSON or XML "
+                                + "for that operation, the error includes `op_index` and a hint to use read_http_message "
+                                + "or set_http_request_body. Minimal example: "
+                                + APPLY_HTTP_REQUEST_SEMANTIC_CHANGES_EXAMPLE_ARGS,
                         APPLY_SEMANTIC_CHANGES_SCHEMA),
                 new ChatToolDefinition(
                         SEND_CURRENT_HTTP_REQUEST,
@@ -1019,15 +1056,25 @@ public final class HttpTargetTools {
         JsonNode opsNode = args.get("operations");
         if (opsNode == null || !opsNode.isArray()) {
             return new SemanticApplyResult(
-                    null, errorJson("missing or invalid operations array"));
+                    null,
+                    semanticOperationsShapeError(
+                            "missing or invalid operations array",
+                            "The tool arguments must include a JSON array field \"operations\" (see \"example\")."));
         }
         int n = opsNode.size();
         if (n == 0) {
-            return new SemanticApplyResult(null, errorJson("operations must not be empty"));
+            return new SemanticApplyResult(
+                    null,
+                    semanticOperationsShapeError(
+                            "operations must not be empty",
+                            "Include at least one operation object in \"operations\" (see \"example\")."));
         }
         if (n > MAX_SEMANTIC_OPERATIONS) {
             return new SemanticApplyResult(
-                    null, errorJson("at most " + MAX_SEMANTIC_OPERATIONS + " operations per call"));
+                    null,
+                    semanticOperationsShapeError(
+                            "at most " + MAX_SEMANTIC_OPERATIONS + " operations per call",
+                            "Split work into multiple apply_http_request_semantic_changes calls."));
         }
         for (int i = 0; i < n; i++) {
             JsonNode one = opsNode.get(i);
@@ -1047,6 +1094,18 @@ public final class HttpTargetTools {
             }
         }
         return new SemanticApplyResult(current[0], null);
+    }
+
+    /** Error payload when the top-level {@code operations} array is missing, wrong type, empty, or too large. */
+    private static String semanticOperationsShapeError(String message, String hint) {
+        ObjectNode n = JSON.createObjectNode();
+        n.put("error", message);
+        n.put("op_index", -1);
+        n.put("op_type", "");
+        n.put("hint", hint);
+        n.put("detail", "");
+        n.put("example", APPLY_HTTP_REQUEST_SEMANTIC_CHANGES_EXAMPLE_ARGS);
+        return write(n);
     }
 
     private static String applyHttpRequestSemanticChanges(AgentToolContext ctx, JsonNode args) {

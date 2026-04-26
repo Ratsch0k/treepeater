@@ -37,9 +37,26 @@ class HttpTargetToolsTest {
 
     @BeforeEach
     void setUpMocks() {
-        // RETURNS_MOCKS avoids the ClassCastException that arises when Mockito's inline
-        // mock maker tries to unpack byte... varargs into individual Byte elements.
-        byteArrayMock = mockStatic(ByteArray.class, RETURNS_MOCKS);
+        // Custom answer for static ByteArray.byteArray: Mockito may pass varargs as many
+        // Byte args or a single byte[]; RETURNS_MOCKS also leaves getBytes() unmapped.
+        byteArrayMock = mockStatic(ByteArray.class, inv -> {
+            if (!"byteArray".equals(inv.getMethod().getName())) {
+                return RETURNS_MOCKS.answer(inv);
+            }
+            Object[] r = inv.getArguments();
+            byte[] data;
+            if (r.length == 1 && r[0] instanceof byte[] arr) {
+                data = arr;
+            } else {
+                data = new byte[r.length];
+                for (int i = 0; i < r.length; i++) {
+                    data[i] = ((Number) r[i]).byteValue();
+                }
+            }
+            ByteArray ba = mock(ByteArray.class);
+            lenient().when(ba.getBytes()).thenReturn(data.clone());
+            return ba;
+        });
 
         httpServiceMock = mockStatic(HttpService.class);
         httpServiceMock.when(() -> HttpService.httpService(anyString(), anyInt(), anyBoolean()))
@@ -1233,6 +1250,31 @@ class HttpTargetToolsTest {
     void humanToolUsage_invalidArgs_doesNotThrow() {
         assertDoesNotThrow(() ->
                 HttpTargetTools.humanToolUsage(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, "INVALID{JSON", 0));
+    }
+
+    // ===== tryPreviewRequestMutation (in-memory, no editor commit) =====
+
+    @Test
+    void tryPreview_replace_changesBody() {
+        byte[] body = "a foo c".getBytes(StandardCharsets.UTF_8);
+        HttpRequest request = req("GET", "https://a/x", "/x", null, body);
+        HttpRequest out =
+                HttpTargetTools.tryPreviewRequestMutation(
+                        HttpTargetTools.REPLACE_IN_HTTP_REQUEST_BODY,
+                        "{\"old_text\":\"foo\",\"new_text\":\"bar\"}",
+                        request);
+        assertNotNull(out);
+        String text = new String(
+                out.body().getBytes() != null ? out.body().getBytes() : new byte[0], StandardCharsets.UTF_8);
+        assertTrue(text.contains("bar"), text);
+        assertFalse(text.contains("foo"), text);
+    }
+
+    @Test
+    void tryPreview_readTool_returnsNull() {
+        assertNull(
+                HttpTargetTools.tryPreviewRequestMutation(
+                        HttpTargetTools.READ_HTTP_MESSAGE, "{\"side\":\"request\"}", req("GET", "https://a/x", "/x", null, new byte[0])));
     }
 
     // ===== diagnostic =====

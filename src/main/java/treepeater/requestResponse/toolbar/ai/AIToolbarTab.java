@@ -131,6 +131,11 @@ public class AIToolbarTab implements AIChatHost {
     }
 
     @Override
+    public AgentToolContext agentToolContextForToolPreview() {
+        return this.agentToolContextSupplier != null ? this.agentToolContextSupplier.get() : null;
+    }
+
+    @Override
     public void runOnEdtAndWait(Runnable r) throws Exception {
         if (SwingUtilities.isEventDispatchThread()) {
             r.run();

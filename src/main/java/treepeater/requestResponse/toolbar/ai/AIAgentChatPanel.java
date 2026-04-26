@@ -59,6 +59,8 @@ import javax.swing.event.HyperlinkEvent;
 
 import com.formdev.flatlaf.FlatClientProperties;
 
+import burp.api.montoya.http.message.requests.HttpRequest;
+
 import treepeater.Treepeater;
 import treepeater.ai.AgentMode;
 import treepeater.ai.AgentSystemPrompt;
@@ -73,7 +75,10 @@ import treepeater.ai.ChatRole;
 import treepeater.ai.ChatStreamMessage;
 import treepeater.ai.ChatStreamSession;
 import treepeater.ai.ChatTooling;
+import treepeater.ai.AgentToolContext;
 import treepeater.ai.CoalescingChatStreamOutbound;
+import treepeater.ai.HttpTargetTools;
+import treepeater.ai.LineDiffer;
 import treepeater.components.RoundedPanel;
 import treepeater.components.StyledButton;
 import treepeater.icons.GearIcon;
@@ -85,6 +90,9 @@ import treepeater.settings.TreepeaterSettings;
  */
 public final class AIAgentChatPanel extends JPanel {
     private static final Object TOOL_USAGE_BORDER_MARK = new Object();
+
+    /** {@link JComponent#putClientProperty} key; value {@code "removed"} / {@code "added"} / {@code "meta"} for tool-card diff blocks (see {@link #refreshTranscriptRowTheme}). */
+    private static final String TOOL_CARD_DIFF_STYLE_KEY = "Treepeater.toolCardDiffStyle";
 
     private static final int INPUT_AREA_MIN_ROWS = 1;
     private static final int INPUT_AREA_MAX_ROWS = 14;
@@ -626,13 +634,12 @@ public final class AIAgentChatPanel extends JPanel {
             RoundedPanel toolCard =
                     req.requiresApproval()
                             ? buildToolApprovalCard(
-                                    req.humanTitle(),
-                                    req.humanDetail(),
+                                    req,
                                     approved ->
                                             session.postReply(
                                                     new ChatStreamMessage.ToolApprovalResponse(
                                                             req.toolCallId(), approved)))
-                            : buildToolUsageCard(req.humanTitle(), req.humanDetail());
+                            : buildToolUsageCard(req);
             appendTranscriptRow(toolCard);
             AssistantStrip nextStrip = createPlainAssistantStrip();
             this.transcriptActiveAssistantStrip.set(nextStrip);
@@ -773,15 +780,20 @@ public final class AIAgentChatPanel extends JPanel {
     }
 
     /**
-     * Tool usage card: {@code title} is the action summary; {@code detail} (when non-blank) describes what will change
-     * (e.g. new header value). Detail is omitted for heavy payloads such as full body replacement.
+     * Tool usage card: title is the action summary. For request mutations, diffs a preview of the tool against the
+     * current in-editor request (in memory only); otherwise shows {@code humanDetail} when non-blank.
      */
-    private RoundedPanel buildToolUsageCard(String title, String detail) {
-        String t = title != null ? title.trim() : "";
+    private RoundedPanel buildToolUsageCard(ChatStreamMessage.ToolApprovalRequest req) {
+        return buildToolUsageCardShell(req, null);
+    }
+
+    private RoundedPanel buildToolUsageCardShell(
+            ChatStreamMessage.ToolApprovalRequest req, Consumer<Boolean> onApprovalResolved) {
+        String t = req.humanTitle() != null ? req.humanTitle().trim() : "";
         if (t.isEmpty()) {
             t = "Working…";
         }
-        String d = detail != null ? detail.trim() : "";
+        String d = req.humanDetail() != null ? req.humanDetail().trim() : "";
 
         RoundedPanel card = new RoundedPanel();
         card.putClientProperty(TOOL_USAGE_BORDER_MARK, Boolean.TRUE);
@@ -808,14 +820,102 @@ public final class AIAgentChatPanel extends JPanel {
         }
         textCol.add(titleLabel);
 
-        if (!d.isEmpty()) {
+        JComponent detailComp = buildToolCardDetailFromPreview(req, lf, muted, d);
+        if (detailComp != null) {
             textCol.add(Box.createVerticalStrut(4));
-            textCol.add(buildToolCardDetailText(d, lf, muted));
+            textCol.add(detailComp);
             textCol.add(Box.createVerticalStrut(4));
         }
 
         card.add(textCol, BorderLayout.CENTER);
+        if (onApprovalResolved != null) {
+            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+            buttons.setOpaque(false);
+            StyledButton noBtn = new StyledButton("Cancel");
+            StyledButton okBtn = new StyledButton("OK");
+            noBtn.setStyle(StyledButton.Style.DEFAULT);
+            okBtn.setStyle(StyledButton.Style.AI);
+            AtomicBoolean resolved = new AtomicBoolean(false);
+            Runnable removeButtons =
+                    () -> {
+                        if (buttons.getParent() == card) {
+                            card.remove(buttons);
+                            card.revalidate();
+                            card.repaint();
+                        }
+                    };
+            Runnable resolveNo =
+                    () -> {
+                        if (resolved.compareAndSet(false, true)) {
+                            removeButtons.run();
+                            onApprovalResolved.accept(false);
+                        }
+                    };
+            Runnable resolveOk =
+                    () -> {
+                        if (resolved.compareAndSet(false, true)) {
+                            removeButtons.run();
+                            onApprovalResolved.accept(true);
+                        }
+                    };
+            noBtn.addActionListener(e -> resolveNo.run());
+            okBtn.addActionListener(e -> resolveOk.run());
+            buttons.add(noBtn);
+            buttons.add(Box.createHorizontalStrut(8));
+            buttons.add(okBtn);
+            card.add(buttons, BorderLayout.SOUTH);
+        }
         return card;
+    }
+
+    private JComponent buildToolCardDetailFromPreview(
+            ChatStreamMessage.ToolApprovalRequest req, Font lf, Color muted, String humanDetail) {
+        AgentToolContext actx = this.host.agentToolContextForToolPreview();
+        if (actx != null) {
+            try {
+                final HttpRequest[] beforeBox = {null};
+                this.host.runOnEdtAndWait(
+                        () -> {
+                            int i = actx.currentHistoryIndex();
+                            if (i < 0 || i >= actx.historySize()) {
+                                return;
+                            }
+                            beforeBox[0] = actx.requestForHistoryIndex().apply(i);
+                        });
+                HttpRequest beforeR = beforeBox[0];
+                if (beforeR != null) {
+                    HttpRequest afterR =
+                            HttpTargetTools.tryPreviewRequestMutation(
+                                    req.toolName(), req.argumentsJson(), beforeR);
+                    if (afterR != null) {
+                        String wBefore = HttpTargetTools.requestWireTextForDiff(beforeR);
+                        String wAfter = HttpTargetTools.requestWireTextForDiff(afterR);
+                        List<LineDiffer.UnifiedLineRow> unified = LineDiffer.unifiedLineDiffData(wBefore, wAfter);
+                        if (unified == null) {
+                            LineDiffer.LineDiffData data = LineDiffer.lineDiffData(wBefore, wAfter);
+                            if (!data.removed().isEmpty() || !data.added().isEmpty()) {
+                                return buildToolCardSplitDiffPanel(
+                                        LineDiffer.formatWithLineGutter(
+                                                LineDiffer.truncateDisplayRowsForToolCard(
+                                                        data.removed(), 6, 6)),
+                                        LineDiffer.formatWithLineGutter(
+                                                LineDiffer.truncateDisplayRowsForToolCard(
+                                                        data.added(), 6, 6)),
+                                        lf);
+                            }
+                        } else if (!unified.isEmpty()) {
+                            return buildToolCardUnifiedDiffPanel(
+                                    LineDiffer.truncateUnifiedForToolCard(unified, 6, 6), lf);
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        if (humanDetail != null && !humanDetail.isEmpty()) {
+            return buildToolCardDetailText(humanDetail, lf, muted);
+        }
+        return null;
     }
 
     /** Plain text; wraps at a target width in characters (roughly) so long change summaries do not force a wide card. */
@@ -843,47 +943,173 @@ public final class AIAgentChatPanel extends JPanel {
         return area;
     }
 
+    private static int toolCardDetailColumns(Font baseFont) {
+        if (baseFont != null) {
+            return Math.max(36, Math.min(64, (int) (baseFont.getSize2D() * 2.0)));
+        }
+        return 52;
+    }
+
+    /**
+     * Extra width for 1-based line number column, box-drawing separator, and space before request body text, on top
+     * of {@link #toolCardDetailColumns(Font)}.
+     */
+    private static int toolCardDiffTextColumns(Font baseFont) {
+        return toolCardDetailColumns(baseFont) + 5;
+    }
+
+    private static boolean isDarkLaf() {
+        return UIManager.getBoolean("laf.dark");
+    }
+
+    /** Red then green blocks; used when the LCS table is too large for a unified walk. */
+    private static JComponent buildToolCardSplitDiffPanel(String before, String after, Font baseFont) {
+        JPanel column = new JPanel();
+        column.setLayout(new BoxLayout(column, BoxLayout.PAGE_AXIS));
+        column.setOpaque(false);
+        column.setAlignmentX(Component.LEFT_ALIGNMENT);
+        if (before != null && !before.isEmpty()) {
+            column.add(
+                    buildToolCardDiffTextArea(
+                            before, true, baseFont, toolCardDiffTextColumns(baseFont)));
+        }
+        if (before != null
+                && !before.isEmpty()
+                && after != null
+                && !after.isEmpty()) {
+            column.add(Box.createVerticalStrut(4));
+        }
+        if (after != null && !after.isEmpty()) {
+            column.add(
+                    buildToolCardDiffTextArea(
+                            after, false, baseFont, toolCardDiffTextColumns(baseFont)));
+        }
+        return column;
+    }
+
+    /**
+     * Single column: old line, new line, and ellipses interleaved in file order (unified diff); hunk / omitted rows use
+     * a neutral style.
+     */
+    private static JComponent buildToolCardUnifiedDiffPanel(
+            List<LineDiffer.UnifiedLineRow> rows, Font baseFont) {
+        int w = LineDiffer.unifiedGutterWidth(rows);
+        int cols = toolCardDiffTextColumns(baseFont);
+        JPanel column = new JPanel();
+        column.setLayout(new BoxLayout(column, BoxLayout.PAGE_AXIS));
+        column.setOpaque(false);
+        column.setAlignmentX(Component.LEFT_ALIGNMENT);
+        for (LineDiffer.UnifiedLineRow r : rows) {
+            if (r instanceof LineDiffer.UnifiedLineRow.Old o) {
+                column.add(
+                        buildToolCardDiffTextArea(
+                                LineDiffer.formatGutterForUnifiedLine(w, o.line1Before(), o.text()),
+                                true,
+                                baseFont,
+                                cols));
+            } else if (r instanceof LineDiffer.UnifiedLineRow.New n) {
+                column.add(
+                        buildToolCardDiffTextArea(
+                                LineDiffer.formatGutterForUnifiedLine(w, n.line1After(), n.text()),
+                                false,
+                                baseFont,
+                                cols));
+            } else if (r instanceof LineDiffer.UnifiedLineRow.HunkSeparator) {
+                column.add(
+                        buildToolCardDiffMetaTextArea(
+                                LineDiffer.formatGutterForUnifiedHunk(w), baseFont, cols));
+            } else if (r instanceof LineDiffer.UnifiedLineRow.MiddleOmitted mo) {
+                column.add(
+                        buildToolCardDiffMetaTextArea(
+                                LineDiffer.formatGutterForUnifiedMiddleOmitted(w, mo.rowCount()),
+                                baseFont,
+                                cols));
+            }
+        }
+        return column;
+    }
+
+    private static JTextArea buildToolCardDiffMetaTextArea(String text, Font baseFont, int columns) {
+        JTextArea area = new JTextArea(text);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setEditable(false);
+        area.setFocusable(false);
+        area.setOpaque(true);
+        area.setBorder(BorderFactory.createEmptyBorder(2, 6, 2, 6));
+        area.setAlignmentX(Component.LEFT_ALIGNMENT);
+        float size = 12f;
+        if (baseFont != null) {
+            size = baseFont.getSize2D() - 1f;
+        }
+        area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, Math.max(10, (int) size)));
+        area.setRows(0);
+        area.setColumns(columns);
+        area.setMinimumSize(new Dimension(0, 0));
+        area.setBackground(toolCardDiffMetaBackground());
+        area.setForeground(toolCardDiffMetaForeground());
+        area.putClientProperty(TOOL_CARD_DIFF_STYLE_KEY, "meta");
+        return area;
+    }
+
+    private static JTextArea buildToolCardDiffTextArea(
+            String line, boolean originalDeleted, Font baseFont, int columns) {
+        JTextArea area = new JTextArea(line);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setEditable(false);
+        area.setFocusable(false);
+        area.setOpaque(true);
+        area.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
+        area.setAlignmentX(Component.LEFT_ALIGNMENT);
+        float size = 12f;
+        if (baseFont != null) {
+            size = baseFont.getSize2D() - 1f;
+        }
+        area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, Math.max(10, (int) size)));
+        area.setRows(0);
+        area.setColumns(columns);
+        area.setMinimumSize(new Dimension(0, 0));
+        if (originalDeleted) {
+            area.setBackground(toolCardDiffRedBackground());
+            area.setForeground(toolCardDiffRedForeground());
+            area.putClientProperty(TOOL_CARD_DIFF_STYLE_KEY, "removed");
+        } else {
+            area.setBackground(toolCardDiffGreenBackground());
+            area.setForeground(toolCardDiffGreenForeground());
+            area.putClientProperty(TOOL_CARD_DIFF_STYLE_KEY, "added");
+        }
+        return area;
+    }
+
+    private static Color toolCardDiffRedBackground() {
+        return isDarkLaf() ? new Color(64, 36, 36) : new Color(255, 230, 230);
+    }
+
+    private static Color toolCardDiffRedForeground() {
+        return isDarkLaf() ? new Color(255, 170, 170) : new Color(140, 30, 30);
+    }
+
+    private static Color toolCardDiffGreenBackground() {
+        return isDarkLaf() ? new Color(36, 64, 40) : new Color(230, 255, 230);
+    }
+
+    private static Color toolCardDiffGreenForeground() {
+        return isDarkLaf() ? new Color(170, 255, 190) : new Color(25, 100, 45);
+    }
+
+    private static Color toolCardDiffMetaBackground() {
+        return isDarkLaf() ? new Color(48, 48, 48) : new Color(245, 245, 245);
+    }
+
+    private static Color toolCardDiffMetaForeground() {
+        return isDarkLaf() ? new Color(160, 160, 160) : new Color(90, 90, 90);
+    }
+
     /** Status line plus Cancel / OK controls; {@code onResolved} receives {@code true} for OK and {@code false} for Cancel. */
     private RoundedPanel buildToolApprovalCard(
-            String title, String detail, Consumer<Boolean> onResolved) {
-        RoundedPanel card = buildToolUsageCard(title, detail);
-
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
-        buttons.setOpaque(false);
-        StyledButton noBtn = new StyledButton("Cancel");
-        StyledButton okBtn = new StyledButton("OK");
-        noBtn.setStyle(StyledButton.Style.DEFAULT);
-        okBtn.setStyle(StyledButton.Style.AI);
-        AtomicBoolean resolved = new AtomicBoolean(false);
-        Runnable removeButtons =
-                () -> {
-                    if (buttons.getParent() == card) {
-                        card.remove(buttons);
-                        card.revalidate();
-                        card.repaint();
-                    }
-                };
-        Runnable resolveNo =
-                () -> {
-                    if (resolved.compareAndSet(false, true)) {
-                        removeButtons.run();
-                        onResolved.accept(false);
-                    }
-                };
-        Runnable resolveOk =
-                () -> {
-                    if (resolved.compareAndSet(false, true)) {
-                        removeButtons.run();
-                        onResolved.accept(true);
-                    }
-                };
-        noBtn.addActionListener(e -> resolveNo.run());
-        okBtn.addActionListener(e -> resolveOk.run());
-        buttons.add(noBtn);
-        buttons.add(Box.createHorizontalStrut(8));
-        buttons.add(okBtn);
-        card.add(buttons, BorderLayout.SOUTH);
-        return card;
+            ChatStreamMessage.ToolApprovalRequest req, Consumer<Boolean> onResolved) {
+        return buildToolUsageCardShell(req, onResolved);
     }
 
     private static final int MARKDOWN_RENDER_DELAY_MS = 30;
@@ -1050,9 +1276,19 @@ public final class AIAgentChatPanel extends JPanel {
     }
 
     private void refreshTranscriptRowTheme(Component c) {
+        if (c instanceof JTextArea ta) {
+            Object style = ta.getClientProperty(TOOL_CARD_DIFF_STYLE_KEY);
+            if (style != null) {
+                applyToolCardDiffTextAreaForStyle(ta, style);
+                return;
+            }
+        }
         if (c instanceof RoundedPanel rp) {
             if (Boolean.TRUE.equals(rp.getClientProperty(TOOL_USAGE_BORDER_MARK))) {
                 applyToolUsageBorderOnlyTheme(rp);
+                for (Component child : rp.getComponents()) {
+                    this.refreshTranscriptRowTheme(child);
+                }
             } else {
                 applyMessageBubbleTheme(rp);
             }
@@ -1062,6 +1298,19 @@ public final class AIAgentChatPanel extends JPanel {
             for (Component child : co.getComponents()) {
                 this.refreshTranscriptRowTheme(child);
             }
+        }
+    }
+
+    private static void applyToolCardDiffTextAreaForStyle(JTextArea area, Object style) {
+        if ("removed".equals(style)) {
+            area.setBackground(toolCardDiffRedBackground());
+            area.setForeground(toolCardDiffRedForeground());
+        } else if ("added".equals(style)) {
+            area.setBackground(toolCardDiffGreenBackground());
+            area.setForeground(toolCardDiffGreenForeground());
+        } else if ("meta".equals(style)) {
+            area.setBackground(toolCardDiffMetaBackground());
+            area.setForeground(toolCardDiffMetaForeground());
         }
     }
 

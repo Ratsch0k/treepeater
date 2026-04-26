@@ -693,11 +693,13 @@ public final class HttpTargetTools {
         return req.withBody(ByteArray.byteArray(body));
     }
 
-    private static String replaceInHttpRequestBody(AgentToolContext ctx, JsonNode args) {
-        HttpRequest req = requireCurrentRequest(ctx);
+    private record HttpBodyAndReplaceStats(
+            HttpRequest request, int bytesBefore, int bytesAfter, int replacements) {}
+
+    private static HttpBodyAndReplaceStats replaceInHttpRequestBodyOnRequest(HttpRequest req, JsonNode args) {
         String oldText = argTextAny(args, "old_text", "oldText");
         if (oldText.isEmpty()) {
-            return errorJson("old_text must be non-empty");
+            throw new IllegalArgumentException("old_text must be non-empty");
         }
         String newText = "";
         JsonNode newNode = argFirst(args, "new_text", "newText");
@@ -716,29 +718,31 @@ public final class HttpTargetTools {
                 maxRep = 1;
             }
             if (maxRep > MAX_SUBSTRING_REPLACEMENTS) {
-                return errorJson("max_replacements too large");
+                throw new IllegalArgumentException("max_replacements too large");
             }
         }
 
         byte[] rawBytes = bytesFromByteArray(() -> req.body());
+        int before = rawBytes.length;
         String text = decodeUtf8Strict(rawBytes);
         if (text == null) {
-            return errorJson("request body is not valid UTF-8; use set_http_request_body with body_base64");
+            throw new IllegalArgumentException(
+                    "request body is not valid UTF-8; use set_http_request_body with body_base64");
         }
 
         if (!replaceAll) {
             int occ = countNonOverlappingMatches(text, oldText);
             if (occ == 0) {
-                return errorJson("old_text not found");
+                throw new IllegalArgumentException("old_text not found");
             }
             if (maxRep == 1 && occ > 1) {
-                return errorJson("old_text is not unique; narrow the match, increase max_replacements, or use replace_all");
+                throw new IllegalArgumentException(
+                        "old_text is not unique; narrow the match, increase max_replacements, or use replace_all");
             }
         } else if (!text.contains(oldText)) {
-            return errorJson("old_text not found");
+            throw new IllegalArgumentException("old_text not found");
         }
 
-        int before = rawBytes.length;
         String replaced;
         int replCount;
         if (replaceAll) {
@@ -764,16 +768,25 @@ public final class HttpTargetTools {
         }
 
         byte[] outBytes = replaced.getBytes(StandardCharsets.UTF_8);
-        HttpRequest updated = withBodyBytes(req, outBytes);
-        commitLiveRequest(ctx, updated);
+        return new HttpBodyAndReplaceStats(withBodyBytes(req, outBytes), before, outBytes.length, replCount);
+    }
 
-        ObjectNode o = JSON.createObjectNode();
-        o.put("ok", true);
-        o.put("current_history_index", ctx.currentHistoryIndex());
-        o.put("bytes_before", before);
-        o.put("bytes_after", outBytes.length);
-        o.put("replacements", replCount);
-        return write(o);
+    private static String replaceInHttpRequestBody(AgentToolContext ctx, JsonNode args) {
+        HttpRequest req = requireCurrentRequest(ctx);
+        try {
+            HttpBodyAndReplaceStats s = replaceInHttpRequestBodyOnRequest(req, args);
+            commitLiveRequest(ctx, s.request);
+
+            ObjectNode o = JSON.createObjectNode();
+            o.put("ok", true);
+            o.put("current_history_index", ctx.currentHistoryIndex());
+            o.put("bytes_before", s.bytesBefore);
+            o.put("bytes_after", s.bytesAfter);
+            o.put("replacements", s.replacements);
+            return write(o);
+        } catch (IllegalArgumentException e) {
+            return errorJson(e.getMessage());
+        }
     }
 
     private static int countNonOverlappingMatches(String text, String needle) {
@@ -792,29 +805,33 @@ public final class HttpTargetTools {
         return count;
     }
 
-    private static String patchHttpRequestBodyLines(AgentToolContext ctx, JsonNode args) {
-        HttpRequest req = requireCurrentRequest(ctx);
+    private record PatchedBody(
+            HttpRequest request, int linesTotalBefore, int lineSpan, int linesPatchedIn, int beforeBytes, int afterBytes) {}
+
+    private static PatchedBody patchHttpRequestBodyLinesOnRequest(HttpRequest req, JsonNode args) {
         int startLine = requiredPositiveInt(args, "start_line", "startLine");
         int endLine = requiredPositiveInt(args, "end_line", "endLine");
         if (endLine < startLine) {
-            return errorJson("end_line must be >= start_line");
+            throw new IllegalArgumentException("end_line must be >= start_line");
         }
         JsonNode contentNode = argFirst(args, "content");
         if (contentNode == null || contentNode.isNull()) {
-            return errorJson("missing content");
+            throw new IllegalArgumentException("missing content");
         }
         String content = contentNode.asText();
 
         byte[] rawBytes = bytesFromByteArray(() -> req.body());
+        int before = rawBytes.length;
         String text = decodeUtf8Strict(rawBytes);
         if (text == null) {
-            return errorJson("request body is not valid UTF-8; use set_http_request_body with body_base64");
+            throw new IllegalArgumentException(
+                    "request body is not valid UTF-8; use set_http_request_body with body_base64");
         }
 
         List<String> lines = new ArrayList<>(Arrays.asList(text.split("\\R", -1)));
         int n = lines.size();
         if (startLine > n || endLine > n) {
-            return errorJson("line range out of bounds (body has " + n + " line(s))");
+            throw new IllegalArgumentException("line range out of bounds (body has " + n + " line(s))");
         }
 
         int startIdx = startLine - 1;
@@ -828,19 +845,27 @@ public final class HttpTargetTools {
 
         String joined = String.join("\n", out);
         byte[] outBytes = joined.getBytes(StandardCharsets.UTF_8);
-        int before = rawBytes.length;
-        HttpRequest updated = withBodyBytes(req, outBytes);
-        commitLiveRequest(ctx, updated);
+        return new PatchedBody(
+                withBodyBytes(req, outBytes), n, endLine - startLine + 1, contentLines.size(), before, outBytes.length);
+    }
 
-        ObjectNode o = JSON.createObjectNode();
-        o.put("ok", true);
-        o.put("current_history_index", ctx.currentHistoryIndex());
-        o.put("lines_total_before", n);
-        o.put("lines_replaced_span", endLine - startLine + 1);
-        o.put("lines_patched_in", contentLines.size());
-        o.put("bytes_before", before);
-        o.put("bytes_after", outBytes.length);
-        return write(o);
+    private static String patchHttpRequestBodyLines(AgentToolContext ctx, JsonNode args) {
+        HttpRequest req = requireCurrentRequest(ctx);
+        try {
+            PatchedBody p = patchHttpRequestBodyLinesOnRequest(req, args);
+            commitLiveRequest(ctx, p.request);
+            ObjectNode o = JSON.createObjectNode();
+            o.put("ok", true);
+            o.put("current_history_index", ctx.currentHistoryIndex());
+            o.put("lines_total_before", p.linesTotalBefore);
+            o.put("lines_replaced_span", p.lineSpan);
+            o.put("lines_patched_in", p.linesPatchedIn);
+            o.put("bytes_before", p.beforeBytes);
+            o.put("bytes_after", p.afterBytes);
+            return write(o);
+        } catch (IllegalArgumentException e) {
+            return errorJson(e.getMessage());
+        }
     }
 
     private static int requiredPositiveInt(JsonNode args, String... keys) {
@@ -855,20 +880,18 @@ public final class HttpTargetTools {
         return i;
     }
 
-    private static String setHttpRequestBody(AgentToolContext ctx, JsonNode args) {
-        HttpRequest req = requireCurrentRequest(ctx);
+    private static byte[] newBodyBytesForSetRequest(JsonNode args) {
         JsonNode utf8Node = argFirst(args, "body_utf8", "bodyUtf8", "bodyUTF8");
         JsonNode b64Node = argFirst(args, "body_base64", "bodyBase64", "bodyB64");
         boolean hasUtf8 = utf8Node != null && !utf8Node.isNull();
         boolean hasB64 = b64Node != null && !b64Node.isNull();
         if (hasUtf8 && hasB64) {
-            return errorJson("provide either body_utf8 or body_base64, not both");
+            throw new IllegalArgumentException("provide either body_utf8 or body_base64, not both");
         }
         if (!hasUtf8 && !hasB64) {
-            return errorJson("provide body_utf8 or body_base64");
+            throw new IllegalArgumentException("provide body_utf8 or body_base64");
         }
 
-        byte[] bodyBytes;
         if (hasUtf8) {
             String text;
             if (utf8Node.isTextual()) {
@@ -879,31 +902,44 @@ public final class HttpTargetTools {
                 try {
                     text = JSON.writeValueAsString(utf8Node);
                 } catch (JsonProcessingException e) {
-                    return errorJson("could not serialize body_utf8 JSON");
+                    throw new IllegalArgumentException("could not serialize body_utf8 JSON");
                 }
             } else {
-                return errorJson("body_utf8 must be a string, JSON object/array, or number (use body_base64 for binary)");
+                throw new IllegalArgumentException(
+                        "body_utf8 must be a string, JSON object/array, or number (use body_base64 for binary)");
             }
-            bodyBytes = text.getBytes(StandardCharsets.UTF_8);
-        } else {
-            String b64 = b64Node.asText().replaceAll("\\s+", "");
-            try {
-                bodyBytes = Base64.getDecoder().decode(b64);
-            } catch (IllegalArgumentException e) {
-                return errorJson("invalid body_base64");
-            }
+            return text.getBytes(StandardCharsets.UTF_8);
         }
+        String b64 = b64Node.asText().replaceAll("\\s+", "");
+        try {
+            return Base64.getDecoder().decode(b64);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("invalid body_base64");
+        }
+    }
 
-        int before = bytesFromByteArray(() -> req.body()).length;
-        HttpRequest updated = withBodyBytes(req, bodyBytes);
-        commitLiveRequest(ctx, updated);
+    private static HttpRequest setHttpRequestBodyOnRequest(HttpRequest req, JsonNode args) {
+        return withBodyBytes(req, newBodyBytesForSetRequest(args));
+    }
 
-        ObjectNode o = JSON.createObjectNode();
-        o.put("ok", true);
-        o.put("current_history_index", ctx.currentHistoryIndex());
-        o.put("bytes_before", before);
-        o.put("bytes_after", bodyBytes.length);
-        return write(o);
+    private static String setHttpRequestBody(AgentToolContext ctx, JsonNode args) {
+        HttpRequest req = requireCurrentRequest(ctx);
+        try {
+            int before = bytesFromByteArray(() -> req.body()).length;
+            byte[] newB = newBodyBytesForSetRequest(args);
+            HttpRequest updated = withBodyBytes(req, newB);
+            int after = newB.length;
+            commitLiveRequest(ctx, updated);
+
+            ObjectNode o = JSON.createObjectNode();
+            o.put("ok", true);
+            o.put("current_history_index", ctx.currentHistoryIndex());
+            o.put("bytes_before", before);
+            o.put("bytes_after", after);
+            return write(o);
+        } catch (IllegalArgumentException e) {
+            return errorJson(e.getMessage());
+        }
     }
 
     /**
@@ -976,35 +1012,55 @@ public final class HttpTargetTools {
         return req.withService(service).withPath(path);
     }
 
-    private static String applyHttpRequestSemanticChanges(AgentToolContext ctx, JsonNode args) {
-        HttpRequest[] current = {requireCurrentRequest(ctx)};
+    private record SemanticApplyResult(HttpRequest request, String errorResultJson) {}
+
+    private static SemanticApplyResult applyHttpRequestSemanticChangesToRequest0(HttpRequest start, JsonNode args) {
+        HttpRequest[] current = {start};
         JsonNode opsNode = args.get("operations");
         if (opsNode == null || !opsNode.isArray()) {
-            return errorJson("missing or invalid operations array");
+            return new SemanticApplyResult(
+                    null, errorJson("missing or invalid operations array"));
         }
         int n = opsNode.size();
         if (n == 0) {
-            return errorJson("operations must not be empty");
+            return new SemanticApplyResult(null, errorJson("operations must not be empty"));
         }
         if (n > MAX_SEMANTIC_OPERATIONS) {
-            return errorJson("at most " + MAX_SEMANTIC_OPERATIONS + " operations per call");
+            return new SemanticApplyResult(
+                    null, errorJson("at most " + MAX_SEMANTIC_OPERATIONS + " operations per call"));
         }
         for (int i = 0; i < n; i++) {
             JsonNode one = opsNode.get(i);
             if (one == null || !one.isObject()) {
-                return semanticMutationError(
-                        i,
-                        "?",
-                        "invalid operation at index " + i,
-                        "each operation must be a JSON object with type and action",
-                        "read the tool description for apply_http_request_semantic_changes");
+                return new SemanticApplyResult(
+                        null,
+                        semanticMutationError(
+                                i,
+                                "?",
+                                "invalid operation at index " + i,
+                                "each operation must be a JSON object with type and action",
+                                "read the tool description for apply_http_request_semantic_changes"));
             }
             String err = applyOneSemanticOperation(current, i, (ObjectNode) one);
             if (err != null) {
-                return err;
+                return new SemanticApplyResult(null, err);
             }
         }
-        commitLiveRequest(ctx, current[0]);
+        return new SemanticApplyResult(current[0], null);
+    }
+
+    private static String applyHttpRequestSemanticChanges(AgentToolContext ctx, JsonNode args) {
+        SemanticApplyResult r =
+                applyHttpRequestSemanticChangesToRequest0(requireCurrentRequest(ctx), args);
+        if (r.errorResultJson() != null) {
+            return r.errorResultJson();
+        }
+        try {
+            commitLiveRequest(ctx, r.request());
+        } catch (Exception e) {
+            return errorJson(e.getMessage() != null ? e.getMessage() : "commit failed");
+        }
+        int n = args.get("operations") != null && args.get("operations").isArray() ? args.get("operations").size() : 0;
         ObjectNode o = JSON.createObjectNode();
         o.put("ok", true);
         o.put("operations_applied", n);
@@ -1768,6 +1824,51 @@ public final class HttpTargetTools {
             return singleLinePreview(JSON.writeValueAsString(val), 160);
         } catch (JsonProcessingException e) {
             return singleLinePreview(val.toString(), 160);
+        }
+    }
+
+    /**
+     * UTF-8 text of the full wire request (same address space as read/search) for line-based diffing in the tool
+     * card. Non-UTF-8 byte sequences yield a one-line placeholder.
+     */
+    public static String requestWireTextForDiff(HttpRequest r) {
+        if (r == null) {
+            return "";
+        }
+        byte[] raw = bytesFromByteArray(() -> r.toByteArray());
+        if (raw.length == 0) {
+            return "";
+        }
+        String t = decodeUtf8Strict(raw);
+        if (t == null) {
+            return "\u00abnon-UTF-8 wire, " + raw.length + " byte(s)\u00bb";
+        }
+        return t;
+    }
+
+    /**
+     * Preview-only mutation: same in-memory result as the corresponding tool, without updating the Repeater editor.
+     * Returns {@code null} for non-mutating tools, invalid arguments, or if the change cannot be applied.
+     */
+    public static HttpRequest tryPreviewRequestMutation(
+            String toolName, String argumentsJson, HttpRequest current) {
+        if (current == null) {
+            return null;
+        }
+        try {
+            JsonNode args = parseArgs(argumentsJson);
+            return switch (toolName) {
+                case REPLACE_IN_HTTP_REQUEST_BODY -> replaceInHttpRequestBodyOnRequest(current, args).request();
+                case PATCH_HTTP_REQUEST_BODY_LINES -> patchHttpRequestBodyLinesOnRequest(current, args).request();
+                case SET_HTTP_REQUEST_BODY -> setHttpRequestBodyOnRequest(current, args);
+                case APPLY_HTTP_REQUEST_SEMANTIC_CHANGES -> {
+                    SemanticApplyResult s = applyHttpRequestSemanticChangesToRequest0(current, args);
+                    yield s.errorResultJson() != null ? null : s.request();
+                }
+                default -> null;
+            };
+        } catch (Exception e) {
+            return null;
         }
     }
 

@@ -6,6 +6,7 @@ import javax.swing.JComboBox;
 
 import treepeater.Treepeater;
 import treepeater.ai.AgentMode;
+import treepeater.ai.AgentToolContext;
 import treepeater.ai.AiModelOption;
 import treepeater.ai.ChatTooling;
 import treepeater.ai.LlmRequestOptions;
@@ -24,6 +25,14 @@ public interface AIChatHost {
     Component dialogParent();
 
     void logError(Throwable t);
+
+    /**
+     * Repeater request/response access for the active tab, used to preview tool mutations in the tool card. May be
+     * {@code null} or return {@code null} when the host has no in-editor request.
+     */
+    default AgentToolContext agentToolContextForToolPreview() {
+        return null;
+    }
 
     static boolean isBurpAiEnabled() {
         return Treepeater.api != null && Treepeater.api.ai().isEnabled();

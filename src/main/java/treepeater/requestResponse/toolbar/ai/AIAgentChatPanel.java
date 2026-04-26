@@ -12,10 +12,20 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.event.ActionEvent;
+import java.awt.KeyboardFocusManager;
+import java.awt.Point;
+import java.awt.Rectangle;
+import java.awt.Window;
+import java.awt.event.KeyEvent;
+import java.awt.event.AdjustmentListener;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
+import java.awt.event.HierarchyEvent;
 import java.awt.event.InputEvent;
-import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -26,6 +36,8 @@ import java.util.function.Consumer;
 
 import javax.swing.AbstractAction;
 import javax.swing.ActionMap;
+import javax.swing.DefaultListCellRenderer;
+import javax.swing.DefaultListModel;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -38,6 +50,7 @@ import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JEditorPane;
 import javax.swing.JLabel;
+import javax.swing.JList;
 import javax.swing.JMenu;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -47,7 +60,9 @@ import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JViewport;
+import javax.swing.JWindow;
 import javax.swing.KeyStroke;
+import javax.swing.ListSelectionModel;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
@@ -56,6 +71,9 @@ import javax.swing.UIManager;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.event.HyperlinkEvent;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.DefaultEditorKit;
+import javax.swing.text.Document;
 
 import com.formdev.flatlaf.FlatClientProperties;
 
@@ -99,6 +117,8 @@ public final class AIAgentChatPanel extends JPanel {
 
     private static final int INPUT_AREA_MIN_ROWS = 1;
     private static final int INPUT_AREA_MAX_ROWS = 14;
+    private static final int HISTORY_MENTION_MAX_VISIBLE_ROWS = 8;
+    private static final int HISTORY_MENTION_PREFERRED_WIDTH = 320;
 
     private static final String SEND_BUTTON_LABEL = "Send";
     private static final String STOP_BUTTON_LABEL = "Stop";
@@ -116,6 +136,22 @@ public final class AIAgentChatPanel extends JPanel {
     private final JComboBox<AiModelOption> modelCombo;
     private final JButton modelOptionsButton;
     private final JPopupMenu modelOptionsMenu = new JPopupMenu();
+    /** In-input {@code @}-mention popup for repeater history; {@code -1} when none. */
+    private int historyMentionAt = -1;
+    /**
+     * Backup for the "@" position after {@link #dismissHistoryMentionPopup} clears
+     * {@link #historyMentionAt} in some focus/click orderings, so a list choice can still
+     * replace the correct character.
+     */
+    private int historyMentionReplaceAt = -1;
+    private static final String HISTORY_MENTION_IM_ENTER_ID = "Treepeater.historyMentionEnter";
+    /** Replaced by {@value #HISTORY_MENTION_IM_ENTER_ID} in {@code inputArea} while the mention is open. */
+    private Object historyMentionSavedImEnter;
+    private AbstractAction historyMentionEnterAction;
+    private JWindow historyMentionWindow;
+    private JList<AgentToolContext.HistoryEntryInfo> historyMentionList;
+    private JScrollPane historyMentionScroll;
+    private final DefaultListCellRenderer historyMentionListCell = new DefaultListCellRenderer();
     private LlmRequestOptions llmRequestOptions = LlmRequestOptions.DEFAULTS;
     private final Runnable onPersistState;
     private boolean blockPersist;
@@ -209,16 +245,31 @@ public final class AIAgentChatPanel extends JPanel {
                             @Override
                             public void insertUpdate(DocumentEvent e) {
                                 AIAgentChatPanel.this.scheduleAdjustInputAreaHeight();
+                                if (e.getLength() == 1) {
+                                    try {
+                                        String ins = e.getDocument().getText(e.getOffset(), e.getLength());
+                                        if ("@".equals(ins)
+                                                && AIAgentChatPanel.this.isAtMentionWordStart(
+                                                        e.getDocument(), e.getOffset())) {
+                                            AIAgentChatPanel.this.historyMentionAt = e.getOffset();
+                                        }
+                                    } catch (BadLocationException ex) {
+                                        // ignore
+                                    }
+                                }
+                                AIAgentChatPanel.this.onInputDocumentForHistoryMention();
                             }
 
                             @Override
                             public void removeUpdate(DocumentEvent e) {
                                 AIAgentChatPanel.this.scheduleAdjustInputAreaHeight();
+                                AIAgentChatPanel.this.onInputDocumentForHistoryMention();
                             }
 
                             @Override
                             public void changedUpdate(DocumentEvent e) {
                                 AIAgentChatPanel.this.scheduleAdjustInputAreaHeight();
+                                AIAgentChatPanel.this.onInputDocumentForHistoryMention();
                             }
                         });
         this.inputScroll
@@ -230,6 +281,7 @@ public final class AIAgentChatPanel extends JPanel {
                                 AIAgentChatPanel.this.scheduleAdjustInputAreaHeight();
                             }
                         });
+        this.installHistoryMentionPopupControls();
 
         this.agentModeCombo.setPreferredSize(new Dimension(80, this.agentModeCombo.getPreferredSize().height));
         this.modelCombo.setPreferredSize(new Dimension(100, this.modelCombo.getPreferredSize().height));
@@ -794,6 +846,509 @@ public final class AIAgentChatPanel extends JPanel {
             this.transcriptList.revalidate();
             this.transcriptList.repaint();
             scrollTranscriptToBottom();
+        }
+    }
+
+    private void installHistoryMentionPopupControls() {
+        this.inputArea.addCaretListener(
+                e -> {
+                    if (this.historyMentionAt < 0) {
+                        return;
+                    }
+                    if (!isHistoryMentionContextValid()) {
+                        dismissHistoryMentionPopup();
+                    } else if (this.historyMentionWindow != null
+                            && this.historyMentionWindow.isVisible()) {
+                        SwingUtilities.invokeLater(this::positionHistoryMentionWindow);
+                    }
+                });
+        this.inputArea.addFocusListener(
+                new FocusAdapter() {
+                    @Override
+                    public void focusLost(FocusEvent e) {
+                        if (e.isTemporary()) {
+                            return;
+                        }
+                        Component o = e.getOppositeComponent();
+                        if (o != null
+                                && historyMentionWindow != null
+                                && (o == historyMentionWindow
+                                        || SwingUtilities.isDescendingFrom(o, historyMentionWindow))) {
+                            return;
+                        }
+                        if (o == null) {
+                            /*
+                             * LAFs often set opposite to null; defer so a click on the list
+                             * can register as focus owner before we clear state.
+                             */
+                            SwingUtilities.invokeLater(
+                                    () -> {
+                                        if (AIAgentChatPanel.this.historyMentionAt < 0
+                                                && AIAgentChatPanel.this.historyMentionReplaceAt
+                                                        < 0) {
+                                            return;
+                                        }
+                                        Component f =
+                                                KeyboardFocusManager.getCurrentKeyboardFocusManager()
+                                                        .getPermanentFocusOwner();
+                                        if (f != null
+                                                && historyMentionWindow != null
+                                                && (f == historyMentionWindow
+                                                        || SwingUtilities.isDescendingFrom(
+                                                                f, historyMentionWindow))) {
+                                            return;
+                                        }
+                                        if (AIAgentChatPanel.this.inputArea.isFocusOwner()) {
+                                            return;
+                                        }
+                                        AIAgentChatPanel.this.dismissHistoryMentionPopup();
+                                    });
+                            return;
+                        }
+                        AIAgentChatPanel.this.dismissHistoryMentionPopup();
+                    }
+                });
+        KeyboardFocusManager.getCurrentKeyboardFocusManager()
+                .addKeyEventDispatcher(this::dispatchHistoryMentionKeyEvent);
+        AdjustmentListener scrollListener =
+                e -> {
+                    if (e.getValueIsAdjusting()) {
+                        return;
+                    }
+                    if (AIAgentChatPanel.this.historyMentionAt >= 0
+                            && AIAgentChatPanel.this.historyMentionWindow != null
+                            && AIAgentChatPanel.this.historyMentionWindow.isVisible()) {
+                        SwingUtilities.invokeLater(
+                                AIAgentChatPanel.this::positionHistoryMentionWindow);
+                    }
+                };
+        this.inputScroll.getVerticalScrollBar().addAdjustmentListener(scrollListener);
+        this.inputScroll.getHorizontalScrollBar().addAdjustmentListener(scrollListener);
+        this.inputArea.addHierarchyListener(
+                e -> {
+                    if ((e.getChangeFlags() & HierarchyEvent.DISPLAYABILITY_CHANGED) != 0) {
+                        if (!this.inputArea.isDisplayable()) {
+                            this.dismissHistoryMentionPopup();
+                        }
+                    }
+                });
+    }
+
+    private boolean isAtMentionWordStart(Document d, int at) {
+        try {
+            if (at <= 0) {
+                return true;
+            }
+            return Character.isWhitespace(d.getText(at - 1, 1).charAt(0));
+        } catch (BadLocationException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Defer to the end of the EDT so the caret has caught up to the last insert, and the text area
+     * has had a chance to position the caret after {@code "@"} (the document listener can run
+     * before the caret is updated, which would reject the mention every time).
+     */
+    private void onInputDocumentForHistoryMention() {
+        SwingUtilities.invokeLater(this::updateHistoryMentionFromInputDocument);
+    }
+
+    private void updateHistoryMentionFromInputDocument() {
+        if (this.historyMentionAt < 0) {
+            return;
+        }
+        if (!isHistoryMentionContextValid()) {
+            dismissHistoryMentionPopup();
+        } else {
+            refreshAndShowHistoryMentionPopup();
+        }
+    }
+
+    private boolean isHistoryMentionContextValid() {
+        if (this.historyMentionAt < 0) {
+            return false;
+        }
+        Document d = this.inputArea.getDocument();
+        int len = d.getLength();
+        int at = this.historyMentionAt;
+        if (at < 0 || at >= len) {
+            return false;
+        }
+        try {
+            if (!d.getText(at, 1).equals("@")) {
+                return false;
+            }
+            if (len != at + 1) {
+                return false;
+            }
+        } catch (BadLocationException e) {
+            return false;
+        }
+        int caret = this.inputArea.getCaretPosition();
+        return caret >= at && caret <= at + 1;
+    }
+
+    private void ensureHistoryMentionWindow() {
+        if (this.historyMentionWindow != null) {
+            return;
+        }
+        Window owner = SwingUtilities.getWindowAncestor(this);
+        this.historyMentionWindow = owner != null ? new JWindow(owner) : new JWindow();
+        /*
+         * Children must be able to be focusable so focusLost on the text area can report the
+         * list as the opposite component. setFocusableWindowState(false) made all children
+         * non-focusable, so clicks dismissed the mention before the list ran.
+         */
+        this.historyMentionWindow.setFocusableWindowState(true);
+        this.historyMentionWindow.setAutoRequestFocus(false);
+        this.historyMentionWindow.setAlwaysOnTop(true);
+        this.historyMentionList = new JList<>();
+        this.historyMentionList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        this.historyMentionList.setCellRenderer(
+                (list, value, index, isSelected, cellHasFocus) -> {
+                    String line =
+                            value != null
+                                    ? formatHistoryMentionLine((AgentToolContext.HistoryEntryInfo) value)
+                                    : "";
+                    return this.historyMentionListCell.getListCellRendererComponent(
+                            list, line, index, isSelected, cellHasFocus);
+                });
+        this.historyMentionList.setFixedCellHeight(20);
+        this.historyMentionList.addMouseListener(
+                new MouseAdapter() {
+                    @Override
+                    public void mousePressed(MouseEvent e) {
+                        if (!SwingUtilities.isLeftMouseButton(e)) {
+                            return;
+                        }
+                        int atSnap =
+                                AIAgentChatPanel.this.historyMentionAt >= 0
+                                        ? AIAgentChatPanel.this.historyMentionAt
+                                        : AIAgentChatPanel.this.historyMentionReplaceAt;
+                        if (atSnap < 0) {
+                            return;
+                        }
+                        int i = AIAgentChatPanel.this.historyMentionList.locationToIndex(e.getPoint());
+                        if (i < 0) {
+                            return;
+                        }
+                        AIAgentChatPanel.this.historyMentionList.setSelectedIndex(i);
+                        Object v = AIAgentChatPanel.this.historyMentionList.getModel().getElementAt(i);
+                        if (v instanceof AgentToolContext.HistoryEntryInfo info) {
+                            AIAgentChatPanel.this.insertHistoryMentionText(info, atSnap);
+                        }
+                    }
+                });
+        this.historyMentionScroll = new JScrollPane(this.historyMentionList);
+        this.historyMentionScroll.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
+        JPanel root = new JPanel(new BorderLayout());
+        Color line = UIManager.getColor("Component.borderColor");
+        if (line == null) {
+            line = UIManager.getColor("Separator.foreground");
+        }
+        if (line != null) {
+            root.setBorder(BorderFactory.createLineBorder(line, 1));
+        }
+        this.historyMentionWindow.setContentPane(root);
+    }
+
+    private static String formatHistoryMentionLine(AgentToolContext.HistoryEntryInfo e) {
+        String t = e.time() == null ? "" : e.time();
+        String u = e.targetLabel() == null ? "" : e.targetLabel();
+        if (u.isEmpty()) {
+            if (t.isEmpty()) {
+                return "#" + e.index();
+            }
+            return "#" + e.index() + "  " + t;
+        }
+        return "#" + e.index() + "  " + t + (t.isEmpty() ? "  " : "  ") + u;
+    }
+
+    private static String formatHistoryMentionForInsert(AgentToolContext.HistoryEntryInfo e) {
+        return "history #" + e.index() + " ";
+    }
+
+    private void fillHistoryMentionFromHost() {
+        Container root = (Container) this.historyMentionWindow.getContentPane();
+        root.removeAll();
+        AgentToolContext ctx = this.host.agentToolContextForToolPreview();
+        if (ctx == null || ctx.historySize() == 0) {
+            JLabel empty = new JLabel("No request history in this tab");
+            empty.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
+            root.add(empty, BorderLayout.CENTER);
+            return;
+        }
+        DefaultListModel<AgentToolContext.HistoryEntryInfo> m = new DefaultListModel<>();
+        for (AgentToolContext.HistoryEntryInfo row : ctx.historyEntries()) {
+            m.addElement(row);
+        }
+        this.historyMentionList.setModel(m);
+        this.historyMentionList.setSelectedIndex(0);
+        int vis = Math.min(HISTORY_MENTION_MAX_VISIBLE_ROWS, Math.max(1, m.getSize()));
+        this.historyMentionList.setVisibleRowCount(vis);
+        this.historyMentionScroll.setViewportView(this.historyMentionList);
+        int approxH = Math.min(200, 20 * vis + 8);
+        this.historyMentionScroll.setPreferredSize(
+                new Dimension(HISTORY_MENTION_PREFERRED_WIDTH, approxH));
+        root.add(this.historyMentionScroll, BorderLayout.CENTER);
+    }
+
+    private void refreshAndShowHistoryMentionPopup() {
+        this.ensureHistoryMentionWindow();
+        this.historyMentionReplaceAt = this.historyMentionAt;
+        this.fillHistoryMentionFromHost();
+        this.historyMentionWindow.pack();
+        this.positionHistoryMentionWindow();
+        this.historyMentionWindow.setVisible(true);
+        this.installHistoryMentionEnterKeyOverride();
+    }
+
+    /**
+     * {@link JTextArea} maps Enter to {@link DefaultEditorKit#insertBreakAction} in the
+     * focus {@link InputMap}; that path can bypass our {@link KeyEventDispatcher} so Enter
+     * never completed the mention. We shadow that binding only while the popup is up.
+     */
+    private void installHistoryMentionEnterKeyOverride() {
+        KeyStroke enterKs = KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0, false);
+        InputMap im = this.inputArea.getInputMap(JComponent.WHEN_FOCUSED);
+        Object current = im.get(enterKs);
+        if (!HISTORY_MENTION_IM_ENTER_ID.equals(current)) {
+            this.historyMentionSavedImEnter = current;
+        }
+        if (this.historyMentionEnterAction == null) {
+            this.historyMentionEnterAction =
+                    new AbstractAction() {
+                        @Override
+                        public void actionPerformed(ActionEvent e) {
+                            AIAgentChatPanel.this.onHistoryMentionEnterFromInputMap(e);
+                        }
+                    };
+        }
+        im.put(enterKs, HISTORY_MENTION_IM_ENTER_ID);
+        this.inputArea.getActionMap().put(HISTORY_MENTION_IM_ENTER_ID, this.historyMentionEnterAction);
+    }
+
+    private void onHistoryMentionEnterFromInputMap(ActionEvent e) {
+        if (this.historyMentionAt < 0
+                || this.historyMentionWindow == null
+                || !this.historyMentionWindow.isVisible()) {
+            this.uninstallHistoryMentionEnterKeyOverride();
+            javax.swing.Action insertBreak =
+                    this.inputArea.getActionMap().get(DefaultEditorKit.insertBreakAction);
+            if (insertBreak != null) {
+                insertBreak.actionPerformed(
+                        new ActionEvent(
+                                this.inputArea, ActionEvent.ACTION_PERFORMED, e.getActionCommand(), e.getWhen(), e.getModifiers()));
+            }
+            return;
+        }
+        int n =
+                this.historyMentionList != null && this.historyMentionList.getModel() != null
+                        ? this.historyMentionList.getModel().getSize()
+                        : 0;
+        if (n <= 0) {
+            dismissHistoryMentionPopup();
+        } else {
+            applySelectedHistoryMention();
+        }
+    }
+
+    private void uninstallHistoryMentionEnterKeyOverride() {
+        KeyStroke enterKs = KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0, false);
+        InputMap im = this.inputArea.getInputMap(JComponent.WHEN_FOCUSED);
+        if (HISTORY_MENTION_IM_ENTER_ID.equals(im.get(enterKs))) {
+            if (this.historyMentionSavedImEnter != null) {
+                im.put(enterKs, this.historyMentionSavedImEnter);
+            } else {
+                im.remove(enterKs);
+            }
+        }
+        this.inputArea.getActionMap().remove(HISTORY_MENTION_IM_ENTER_ID);
+        this.historyMentionSavedImEnter = null;
+    }
+
+    private void positionHistoryMentionWindow() {
+        if (this.historyMentionAt < 0 || this.historyMentionWindow == null) {
+            return;
+        }
+        try {
+            @SuppressWarnings("deprecation")
+            Rectangle r0 = this.inputArea.modelToView(this.historyMentionAt);
+            this.historyMentionWindow.setSize(this.historyMentionWindow.getPreferredSize());
+            int gap = 4;
+            int w = this.historyMentionWindow.getWidth();
+            int h = this.historyMentionWindow.getHeight();
+            Point topLeft = new Point(r0.x, r0.y - h - gap);
+            SwingUtilities.convertPointToScreen(topLeft, this.inputArea);
+            java.awt.Toolkit tk = java.awt.Toolkit.getDefaultToolkit();
+            java.awt.Dimension screen = tk.getScreenSize();
+            if (topLeft.y < 0) {
+                Point below = new Point(r0.x, r0.y + r0.height + gap);
+                SwingUtilities.convertPointToScreen(below, this.inputArea);
+                topLeft = below;
+            }
+            if (topLeft.x + w > screen.width) {
+                topLeft.x = Math.max(0, screen.width - w);
+            }
+            if (topLeft.y + h > screen.height) {
+                topLeft.y = Math.max(0, screen.height - h);
+            }
+            if (topLeft.x < 0) {
+                topLeft.x = 0;
+            }
+            this.historyMentionWindow.setLocation(topLeft);
+        } catch (BadLocationException e) {
+            this.dismissHistoryMentionPopup();
+        }
+    }
+
+    /**
+     * Pre-dispatch for list navigation. {@link #installHistoryMentionEnterKeyOverride} only applies
+     * when the {@link #inputArea} has focus, so when the list has the caret we handle Enter here.
+     */
+    private boolean dispatchHistoryMentionKeyEvent(KeyEvent e) {
+        if (e.getID() != KeyEvent.KEY_PRESSED) {
+            return false;
+        }
+        if (this.historyMentionAt < 0
+                || this.historyMentionWindow == null
+                || !this.historyMentionWindow.isVisible()) {
+            return false;
+        }
+        if (e.isControlDown() || e.isMetaDown()) {
+            return false;
+        }
+        Component focus = KeyboardFocusManager.getCurrentKeyboardFocusManager().getPermanentFocusOwner();
+        if (focus == null) {
+            return false;
+        }
+        if (focus != this.inputArea
+                && (this.historyMentionWindow == null
+                        || !SwingUtilities.isDescendingFrom(focus, this.historyMentionWindow))) {
+            return false;
+        }
+        int code = e.getKeyCode();
+        int n =
+                this.historyMentionList != null && this.historyMentionList.getModel() != null
+                        ? this.historyMentionList.getModel().getSize()
+                        : 0;
+        if (code == KeyEvent.VK_ENTER) {
+            if (n <= 0) {
+                if (this.historyMentionWindow != null
+                        && focus != this.inputArea
+                        && SwingUtilities.isDescendingFrom(focus, this.historyMentionWindow)) {
+                    e.consume();
+                    dismissHistoryMentionPopup();
+                    return true;
+                }
+                return false;
+            }
+            if (focus == this.inputArea) {
+                return false;
+            }
+            e.consume();
+            applySelectedHistoryMention();
+            return true;
+        }
+        if (code == KeyEvent.VK_ESCAPE) {
+            e.consume();
+            dismissHistoryMentionPopup();
+            return true;
+        }
+        if (n <= 0) {
+            return false;
+        }
+        if (code == KeyEvent.VK_TAB) {
+            e.consume();
+            applySelectedHistoryMention();
+            return true;
+        }
+        if (code == KeyEvent.VK_UP) {
+            e.consume();
+            int i = this.historyMentionList.getSelectedIndex();
+            if (i < 0) {
+                i = 0;
+            } else {
+                i = Math.max(0, i - 1);
+            }
+            this.historyMentionList.setSelectedIndex(i);
+            this.historyMentionList.ensureIndexIsVisible(i);
+            return true;
+        }
+        if (code == KeyEvent.VK_DOWN) {
+            e.consume();
+            int i = this.historyMentionList.getSelectedIndex();
+            if (i < 0) {
+                i = 0;
+            } else {
+                i = Math.min(n - 1, i + 1);
+            }
+            this.historyMentionList.setSelectedIndex(i);
+            this.historyMentionList.ensureIndexIsVisible(i);
+            return true;
+        }
+        return false;
+    }
+
+    private void applySelectedHistoryMention() {
+        if (this.historyMentionList == null) {
+            return;
+        }
+        int n = this.historyMentionList.getModel().getSize();
+        if (n == 0) {
+            return;
+        }
+        int i = this.historyMentionList.getSelectedIndex();
+        if (i < 0) {
+            i = 0;
+        }
+        Object v = this.historyMentionList.getModel().getElementAt(i);
+        if (!(v instanceof AgentToolContext.HistoryEntryInfo info)) {
+            return;
+        }
+        int at =
+                this.historyMentionAt >= 0
+                        ? this.historyMentionAt
+                        : this.historyMentionReplaceAt;
+        insertHistoryMentionText(info, at);
+    }
+
+    private void insertHistoryMentionText(AgentToolContext.HistoryEntryInfo info, int at) {
+        if (at < 0) {
+            at = this.historyMentionAt >= 0 ? this.historyMentionAt : this.historyMentionReplaceAt;
+        }
+        if (at < 0) {
+            return;
+        }
+        try {
+            Document d = this.inputArea.getDocument();
+            if (at > d.getLength() - 1) {
+                dismissHistoryMentionPopup();
+                return;
+            }
+            if (!d.getText(at, 1).equals("@")) {
+                dismissHistoryMentionPopup();
+                return;
+            }
+            String ins = formatHistoryMentionForInsert(info);
+            d.remove(at, 1);
+            d.insertString(at, ins, null);
+            this.inputArea.setCaretPosition(at + ins.length());
+            dismissHistoryMentionPopup();
+            this.inputArea.requestFocusInWindow();
+        } catch (BadLocationException e) {
+            this.host.logError(e);
+            dismissHistoryMentionPopup();
+        }
+    }
+
+    private void dismissHistoryMentionPopup() {
+        this.uninstallHistoryMentionEnterKeyOverride();
+        this.historyMentionAt = -1;
+        this.historyMentionReplaceAt = -1;
+        if (this.historyMentionWindow != null) {
+            this.historyMentionWindow.setVisible(false);
         }
     }
 

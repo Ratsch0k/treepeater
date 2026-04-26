@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
@@ -38,6 +39,7 @@ public class TreepeaterPersistence {
     private final Persistence persistence;
 
     private static final String PERSISTENCE_ROOT = "treepeater_v1";
+    private static final String PERSISTENCE_GLOBAL_UI = "globalUi";
     private static final String PERSISTENCE_TREE = "tree";
     private static final String PERSISTENCE_TABS = "tabs";
     private static final String PERSISTENCE_CHILDREN = "children";
@@ -104,6 +106,9 @@ public class TreepeaterPersistence {
     private static final String PERSISTENCE_TOOL_CALL_NAME = "toolName";
     private static final String PERSISTENCE_TOOL_CALL_ARGS = "toolArgsJson";
 
+    private record LegacyNodeUiData(String notes, AgentChatWorkspace workspace) {
+    }
+
     public TreepeaterPersistence(Persistence persistence) {
         this.persistence = persistence;
     }
@@ -123,6 +128,11 @@ public class TreepeaterPersistence {
             root.setInteger(PERSISTENCE_ACTIVE_NODE, -1);
         }
         root.setChildObject(PERSISTENCE_TABS, saveTabs(model.getTabs()));
+
+        PersistedObject globalUi = PersistedObject.persistedObject();
+        globalUi.setString(PERSISTENCE_NOTES, model.getGlobalNotes());
+        globalUi.setChildObject(PERSISTENCE_AGENT_CHATS, saveAgentChatWorkspace(model.getGlobalAgentChatWorkspace()));
+        root.setChildObject(PERSISTENCE_GLOBAL_UI, globalUi);
 
         extensionData.setChildObject(PERSISTENCE_ROOT, root);
 
@@ -206,11 +216,9 @@ public class TreepeaterPersistence {
         nodeObject.setInteger(PERSISTENCE_ID, node.getId());
         nodeObject.setString(PERSISTENCE_STATUS, node.getStatus().getStatus());
         nodeObject.setString(PERSISTENCE_NAME, node.getName());
-        nodeObject.setString(PERSISTENCE_NOTES, node.getNotes());
         nodeObject.setHttpRequest(PERSISTENCE_REQUEST, node.getRequest());
         nodeObject.setHttpResponse(PERSISTENCE_RESPONSE, node.getResponse());
         nodeObject.setChildObject(PERSISTENCE_HISTORY, saveHistory(node.getHistory()));
-        this.saveAgentChatWorkspaceIfAny(node, nodeObject);
 
         nodeObject.setInteger(PERSISTENCE_SIZE, node.getChildCount());
         for (int idx = 0; idx < node.getChildCount(); idx++) {
@@ -257,8 +265,9 @@ public class TreepeaterPersistence {
 
         Integer requestCount = root.getInteger(PERSISTENCE_REQUEST_COUNT);
 
-        RequestTree tree = this.loadTree(root.getChildObject(PERSISTENCE_TREE));
-    
+        Map<Integer, LegacyNodeUiData> legacyUiByNodeId = new HashMap<>();
+        RequestTree tree = this.loadTree(root.getChildObject(PERSISTENCE_TREE), legacyUiByNodeId);
+
         // Go though the entire tree and build a map that maps each node ID to the actual request node
         HashMap<Integer, RequestTreeNode> nodeMap = this.buildNodeIdMap(tree);
 
@@ -270,9 +279,24 @@ public class TreepeaterPersistence {
             activeNode = nodeMap.get(activeNodeId);
         }
 
-        TreepeaterModel model = new TreepeaterModel(tree, tabs, activeNode, requestCount.intValue());
+        String globalNotes = "";
+        AgentChatWorkspace globalWs = AgentChatWorkspace.EMPTY;
+        PersistedObject globalUi = root.getChildObject(PERSISTENCE_GLOBAL_UI);
+        if (globalUi != null) {
+            String p = globalUi.getString(PERSISTENCE_NOTES);
+            globalNotes = p != null ? p : "";
+            if (globalUi.childObjectKeys().contains(PERSISTENCE_AGENT_CHATS)) {
+                globalWs = this.loadAgentChatWorkspace(globalUi.getChildObject(PERSISTENCE_AGENT_CHATS));
+            }
+        } else if (activeNode != null) {
+            LegacyNodeUiData leg = legacyUiByNodeId.get(activeNode.getId());
+            if (leg != null) {
+                globalNotes = leg.notes() != null ? leg.notes() : "";
+                globalWs = leg.workspace() != null ? leg.workspace() : AgentChatWorkspace.EMPTY;
+            }
+        }
 
-        return model;
+        return new TreepeaterModel(tree, tabs, activeNode, requestCount.intValue(), globalNotes, globalWs);
     }
 
     public boolean hasStatusRegistry() {
@@ -345,25 +369,30 @@ public class TreepeaterPersistence {
         throw new IllegalStateException("Invalid persisted status (missing color data): " + id);
     }
 
-    private RequestTree loadTree(PersistedObject treeObject) {
+    private RequestTree loadTree(PersistedObject treeObject, Map<Integer, LegacyNodeUiData> legacyUiByNodeId) {
         RequestTree tree = new RequestTree();
 
-        // This will be the root and empty treepeater node. Don't actually load this
-        PersistedObject rootChild = treeObject.getChildObject(PERSISTENCE_CHILDREN);
+        if (treeObject == null) {
+            return tree;
+        }
 
-        // Do a depth-first traversal through the tree and slowly load each node
+        PersistedObject rootChild = treeObject.getChildObject(PERSISTENCE_CHILDREN);
+        if (rootChild == null) {
+            return tree;
+        }
+
         int childCount = rootChild.getInteger(PERSISTENCE_SIZE).intValue();
 
         for (int idx = 0; idx < childCount; idx++) {
             PersistedObject childObject = rootChild.getChildObject(PERSISTENCE_CHILDREN + "_" + idx);
-            RequestTreeNode child = this.loadTreeNode(childObject);
+            RequestTreeNode child = this.loadTreeNode(childObject, legacyUiByNodeId);
             tree.insertRootNode(child);
         }
 
         return tree;
     }
 
-    private RequestTreeNode loadTreeNode(PersistedObject nodeObject) {
+    private RequestTreeNode loadTreeNode(PersistedObject nodeObject, Map<Integer, LegacyNodeUiData> legacyUiByNodeId) {
         int id = nodeObject.getInteger(PERSISTENCE_ID).intValue();
         String name = nodeObject.getString(PERSISTENCE_NAME);
         String statusId = nodeObject.getString(PERSISTENCE_STATUS);
@@ -378,18 +407,18 @@ public class TreepeaterPersistence {
 
         String notesPersisted = nodeObject.getString(PERSISTENCE_NOTES);
         String notes = notesPersisted != null ? notesPersisted : "";
-
         AgentChatWorkspace agentWs = AgentChatWorkspace.EMPTY;
         if (nodeObject.childObjectKeys().contains(PERSISTENCE_AGENT_CHATS)) {
             agentWs = this.loadAgentChatWorkspace(nodeObject.getChildObject(PERSISTENCE_AGENT_CHATS));
         }
+        legacyUiByNodeId.put(id, new LegacyNodeUiData(notes, agentWs));
 
-        RequestTreeNode node = new RequestTreeNode(id, status, name, request, response, history, notes, agentWs);
+        RequestTreeNode node = new RequestTreeNode(id, status, name, request, response, history);
 
         int childCount = nodeObject.getInteger(PERSISTENCE_SIZE).intValue();
         for (int idx = 0; idx < childCount; idx++) {
             PersistedObject childObject = nodeObject.getChildObject(PERSISTENCE_CHILDREN + "_" + idx);
-            RequestTreeNode child = this.loadTreeNode(childObject);
+            RequestTreeNode child = this.loadTreeNode(childObject, legacyUiByNodeId);
             node.add(child);
         }
 
@@ -440,23 +469,16 @@ public class TreepeaterPersistence {
      * @param tree The RequestTree to traverse.
      * @return HashMap mapping node IDs to their corresponding RequestTreeNode.
      */
-    private void saveAgentChatWorkspaceIfAny(RequestTreeNode node, PersistedObject nodeObject) {
-        AgentChatWorkspace ws = node.getAgentChatWorkspace();
-        if (ws == null || ws.sessions().isEmpty()) {
-            return;
-        }
-        nodeObject.setChildObject(PERSISTENCE_AGENT_CHATS, saveAgentChatWorkspace(ws));
-    }
-
     private PersistedObject saveAgentChatWorkspace(AgentChatWorkspace ws) {
+        AgentChatWorkspace w = ws != null ? ws : AgentChatWorkspace.EMPTY;
         PersistedObject o = PersistedObject.persistedObject();
         o.setInteger(PERSISTENCE_AGENT_CHATS_VERSION, AGENT_CHATS_VERSION);
-        o.setInteger(PERSISTENCE_AGENT_SELECTED_TAB, ws.selectedSessionIndex());
-        o.setInteger(PERSISTENCE_AGENT_NEXT_TAB_INDEX, ws.nextChatTabIndex());
-        int n = ws.sessions().size();
+        o.setInteger(PERSISTENCE_AGENT_SELECTED_TAB, w.selectedSessionIndex());
+        o.setInteger(PERSISTENCE_AGENT_NEXT_TAB_INDEX, w.nextChatTabIndex());
+        int n = w.sessions().size();
         o.setInteger(PERSISTENCE_SIZE, n);
         for (int i = 0; i < n; i++) {
-            o.setChildObject(PERSISTENCE_AGENT_SESSION + "_" + i, saveAgentSession(ws.sessions().get(i)));
+            o.setChildObject(PERSISTENCE_AGENT_SESSION + "_" + i, saveAgentSession(w.sessions().get(i)));
         }
         return o;
     }

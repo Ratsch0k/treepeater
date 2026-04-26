@@ -10,6 +10,7 @@ import javax.swing.tree.TreeNode;
 import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
+import treepeater.ai.AgentChatWorkspace;
 import treepeater.requestResponse.RequestHistory;
 
 import treepeater.tree.RequestTree;
@@ -22,16 +23,32 @@ public class TreepeaterModel implements RequestTreeNodeListener {
     private RequestTreeNode activeNode;
     private int requestCount;
 
+    private String globalNotes = "";
+    private AgentChatWorkspace globalAgentChatWorkspace = AgentChatWorkspace.EMPTY;
+
     private Set<TreepeaterModelListener> listeners;
 
     public TreepeaterModel(RequestTree tree, LinkedList<RequestTreeNode> tabs, RequestTreeNode activeNode, int requestCount) {
+        this(tree, tabs, activeNode, requestCount, "", AgentChatWorkspace.EMPTY);
+    }
+
+    public TreepeaterModel(
+            RequestTree tree,
+            LinkedList<RequestTreeNode> tabs,
+            RequestTreeNode activeNode,
+            int requestCount,
+            String globalNotes,
+            AgentChatWorkspace globalAgentChatWorkspace) {
         this.tree = tree;
         this.tabs = tabs;
         this.activeNode = activeNode;
         this.requestCount = requestCount;
+        this.globalNotes = globalNotes != null ? globalNotes : "";
+        this.globalAgentChatWorkspace =
+                globalAgentChatWorkspace != null ? globalAgentChatWorkspace : AgentChatWorkspace.EMPTY;
         this.listeners = new HashSet<>();
-        
-        this.listenToAllNodes((RequestTreeNode)this.tree.getTreeModel().getRoot());
+
+        this.listenToAllNodes((RequestTreeNode) this.tree.getTreeModel().getRoot());
     }
 
     public TreepeaterModel() {
@@ -39,7 +56,35 @@ public class TreepeaterModel implements RequestTreeNodeListener {
         this.tabs = new LinkedList<>();
         this.requestCount = 0;
         this.activeNode = null;
+        this.globalNotes = "";
+        this.globalAgentChatWorkspace = AgentChatWorkspace.EMPTY;
         this.listeners = new HashSet<>();
+    }
+
+    public String getGlobalNotes() {
+        return this.globalNotes != null ? this.globalNotes : "";
+    }
+
+    public void setGlobalNotes(String notes) {
+        String next = notes != null ? notes : "";
+        if (next.equals(this.globalNotes)) {
+            return;
+        }
+        this.globalNotes = next;
+        Treepeater.saveState();
+    }
+
+    public AgentChatWorkspace getGlobalAgentChatWorkspace() {
+        return this.globalAgentChatWorkspace != null ? this.globalAgentChatWorkspace : AgentChatWorkspace.EMPTY;
+    }
+
+    public void setGlobalAgentChatWorkspace(AgentChatWorkspace workspace) {
+        AgentChatWorkspace next = workspace != null ? workspace : AgentChatWorkspace.EMPTY;
+        if (next.equals(this.globalAgentChatWorkspace)) {
+            return;
+        }
+        this.globalAgentChatWorkspace = next;
+        Treepeater.saveState();
     }
 
     private void listenToAllNodes(RequestTreeNode node) {
@@ -160,9 +205,7 @@ public class TreepeaterModel implements RequestTreeNodeListener {
                         copyName,
                         request,
                         response,
-                        history,
-                        source.getNotes(),
-                        source.getAgentChatWorkspace().copy());
+                        history);
         copy.addListener(this);
 
         int insertIndex = parent.getIndex(source) + 1;

@@ -16,10 +16,10 @@ import javax.swing.UIManager;
 
 import treepeater.ai.AgentToolContext;
 import treepeater.Treepeater;
+import treepeater.TreepeaterModel;
 import treepeater.icons.DoubleArrowLeftIcon;
 import treepeater.requestResponse.RequestResponsePanelUi;
 import treepeater.requestResponse.toolbar.ai.AIToolbarTab;
-import treepeater.tree.RequestTreeNode;
 
 /**
  * Narrow vertical strip of actions to the right of the request/response editors.
@@ -38,7 +38,7 @@ public class RequestResponseToolbar extends JPanel {
 
     private final List<RequestResponseToolbarListener> toolbarListeners = new CopyOnWriteArrayList<>();
 
-    public RequestResponseToolbar(RequestTreeNode node, Supplier<AgentToolContext> agentToolContextSupplier) {
+    public RequestResponseToolbar(TreepeaterModel model, Supplier<AgentToolContext> agentToolContextSupplier) {
         super(new BorderLayout());
         setBorder(
                 BorderFactory.createCompoundBorder(
@@ -47,8 +47,8 @@ public class RequestResponseToolbar extends JPanel {
 
 
         this.infoToolbarTab = new InfoToolbarTab();
-        this.notesToolbarTab = new NotesToolbarTab(node);
-        this.magicToolbarTab = new AIToolbarTab(node, agentToolContextSupplier);
+        this.notesToolbarTab = new NotesToolbarTab(model);
+        this.magicToolbarTab = new AIToolbarTab(model, agentToolContextSupplier);
 
         this.toolbarCardLayout = new CardLayout();
         this.toolbarPanel = new JPanel(this.toolbarCardLayout);

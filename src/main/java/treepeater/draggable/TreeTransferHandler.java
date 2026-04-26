@@ -13,7 +13,6 @@ import javax.swing.*;
 import javax.swing.tree.*;
 
 import treepeater.Treepeater;
-import treepeater.ai.AgentChatWorkspace;
 import treepeater.tree.RequestTree;
 import treepeater.tree.RequestTreeNode;
 
@@ -171,11 +170,7 @@ public class TreeTransferHandler extends TransferHandler {
                             transferable.name,
                             transferable.request,
                             transferable.response,
-                            transferable.listener,
-                            transferable.notes,
-                            transferable.agentChatWorkspace != null
-                                    ? transferable.agentChatWorkspace
-                                    : AgentChatWorkspace.EMPTY);
+                            transferable.listener);
 
             model.insertNodeInto(node, parent, index++);
         }
@@ -209,9 +204,7 @@ public class TreeTransferHandler extends TransferHandler {
                                 treeNode.getName(),
                                 treeNode.getRequest(),
                                 treeNode.getResponse(),
-                                treeNode.getNotes(),
-                                treeNode.getListeners(),
-                                treeNode.getAgentChatWorkspace()));
+                                treeNode.getListeners()));
             }
 
             RequestTreeNodeTransferable[] transferableArray = transferables.toArray(new RequestTreeNodeTransferable[0]);

@@ -1,7 +1,10 @@
 package treepeater;
 import java.awt.BorderLayout;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.event.ActionEvent;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.util.HashMap;
 import java.util.List;
 
@@ -13,21 +16,48 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
+import javax.swing.event.ChangeEvent;
+import javax.swing.event.ChangeListener;
 import javax.swing.event.TreeModelEvent;
 import javax.swing.event.TreeModelListener;
+import javax.swing.plaf.basic.BasicSplitPaneDivider;
+import javax.swing.plaf.basic.BasicSplitPaneUI;
 
-import treepeater.tree.RequestTreeNode;
-import treepeater.draggable.RequestTreeNodeSimple;
+import treepeater.ai.AgentToolContext;
+import treepeater.icons.DoubleArrowLeftIcon;
+import treepeater.icons.DoubleArrowRightIcon;
 import treepeater.requestResponse.RequestResponsePanel;
 import treepeater.requestResponse.RequestResponseTab;
+import treepeater.requestResponse.toolbar.RequestResponseToolbar;
+import treepeater.requestResponse.toolbar.RequestResponseToolbarListener;
+import treepeater.tree.RequestTreeNode;
+import treepeater.draggable.RequestTreeNodeSimple;
 
-public class TreepeaterUI extends JSplitPane {
+public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarListener {
     private static final Dimension MIN_LEFT_PANEL_SIZE = new Dimension(240, 0);
+
+    private static final int EXPAND_PANEL_MIN_OPEN_WIDTH = 120;
+
+    private static int expandSplitDividerSizeWhenOpen() {
+        int s = UIManager.getInt("SplitPane.dividerSize");
+        return s > 0 ? s : 8;
+    }
 
     JTabbedPane requestResponseTabbedPane;
     TreepeaterModel model;
     HashMap<RequestTreeNode, RequestResponsePanel> tabMap;
     private boolean treePanelActive;
+
+    private final RequestResponseToolbar sideToolbar;
+    private final JSplitPane expandSplitPane;
+    private final JPanel expandPanel;
+    private final JPanel mainContent;
+    private boolean expandPanelOpen;
+    private double expandSplitEditorWidthFraction = 0.78;
+
+    private RequestResponsePanel panelBoundForInfo;
 
     public TreepeaterUI(TreepeaterModel model) {
         super(JSplitPane.HORIZONTAL_SPLIT);
@@ -35,8 +65,28 @@ public class TreepeaterUI extends JSplitPane {
         this.model = model;
         this.requestResponseTabbedPane = new JTabbedPane();
         this.requestResponseTabbedPane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
-        this.setRightComponent(this.requestResponseTabbedPane);
         this.tabMap = new HashMap<>();
+
+        this.sideToolbar = new RequestResponseToolbar(this.model, this::agentToolContextForSelectedTab);
+        this.sideToolbar.addToolbarListener(this);
+        this.expandPanel = this.sideToolbar.getToolbarPanel();
+
+        this.expandSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, this.requestResponseTabbedPane, this.expandPanel);
+        this.expandSplitPane.setResizeWeight(1.0);
+        this.expandSplitPane.setOneTouchExpandable(false);
+        this.expandSplitPane.setContinuousLayout(true);
+        this.syncExpandSplitInteraction();
+
+        this.mainContent = new JPanel(new BorderLayout());
+        this.mainContent.add(this.expandSplitPane, BorderLayout.CENTER);
+        this.mainContent.add(this.sideToolbar, BorderLayout.LINE_END);
+
+        this.installExpandSplitInitiallyCollapsed();
+
+        JPanel rightWrap = new JPanel(new BorderLayout());
+        rightWrap.add(this.mainContent, BorderLayout.CENTER);
+
+        this.setRightComponent(rightWrap);
 
         this.setDividerLocation(0.3);
         this.resetToPreferredSizes();
@@ -56,6 +106,15 @@ public class TreepeaterUI extends JSplitPane {
         if (model.getActiveNode() != null) {
             this.openTab(model.getActiveNode());
         }
+
+        this.requestResponseTabbedPane.addChangeListener(
+                new ChangeListener() {
+                    @Override
+                    public void stateChanged(ChangeEvent e) {
+                        TreepeaterUI.this.onRequestResponseTabSelectionChanged();
+                    }
+                });
+        this.onRequestResponseTabSelectionChanged();
 
         model.getTree().getTreeModel().addTreeModelListener(new TreeModelListener() {
 
@@ -104,6 +163,118 @@ public class TreepeaterUI extends JSplitPane {
                 TreepeaterUI.this.addTab(node);
             }
         });
+
+        this.sideToolbar.applyLocalTheme();
+    }
+
+    private AgentToolContext agentToolContextForSelectedTab() {
+        RequestResponsePanel p = this.getSelectedRequestResponsePanel();
+        return p != null ? p.buildAgentToolContextForAi() : null;
+    }
+
+    private RequestResponsePanel getSelectedRequestResponsePanel() {
+        Component c = this.requestResponseTabbedPane.getSelectedComponent();
+        return c instanceof RequestResponsePanel p ? p : null;
+    }
+
+    private void onRequestResponseTabSelectionChanged() {
+        if (this.panelBoundForInfo != null) {
+            this.panelBoundForInfo.removeRequestResponseChangeListener(this.sideToolbar.getInfoToolbarTab());
+            this.panelBoundForInfo = null;
+        }
+        RequestResponsePanel p = this.getSelectedRequestResponsePanel();
+        if (p != null) {
+            p.addRequestResponseChangeListener(this.sideToolbar.getInfoToolbarTab());
+            p.refreshToolbarLinkedInfo();
+            this.panelBoundForInfo = p;
+        } else {
+            this.sideToolbar.getInfoToolbarTab().clearDisplay();
+        }
+    }
+
+    @Override
+    public void onToolbarOpen() {
+        this.toggleExpandPanel();
+    }
+
+    @Override
+    public void onToolbarClose() {
+        this.toggleExpandPanel();
+    }
+
+    private void installExpandSplitInitiallyCollapsed() {
+        this.expandSplitPane.addComponentListener(
+                new ComponentAdapter() {
+                    private boolean laidOut;
+
+                    @Override
+                    public void componentResized(ComponentEvent e) {
+                        if (this.laidOut || TreepeaterUI.this.expandSplitPane.getWidth() < 32) {
+                            return;
+                        }
+                        this.laidOut = true;
+                        TreepeaterUI.this.expandSplitPane.setDividerLocation(1.0d);
+                        TreepeaterUI.this.syncExpandSplitInteraction();
+                        TreepeaterUI.this.expandSplitPane.removeComponentListener(this);
+                    }
+                });
+    }
+
+    private void syncExpandSplitInteraction() {
+        this.applyExpandPanelMinSizeForState();
+        this.applyExpandDividerInteractionState();
+    }
+
+    private void applyExpandPanelMinSizeForState() {
+        int minW = this.expandPanelOpen ? EXPAND_PANEL_MIN_OPEN_WIDTH : 0;
+        this.expandPanel.setMinimumSize(new Dimension(minW, 0));
+        this.expandSplitPane.revalidate();
+    }
+
+    private void applyExpandDividerInteractionState() {
+        if (this.expandPanelOpen) {
+            this.expandSplitPane.setDividerSize(expandSplitDividerSizeWhenOpen());
+        } else {
+            this.expandSplitPane.setDividerSize(0);
+        }
+        if (!(this.expandSplitPane.getUI() instanceof BasicSplitPaneUI)) {
+            return;
+        }
+        BasicSplitPaneDivider divider = ((BasicSplitPaneUI) this.expandSplitPane.getUI()).getDivider();
+        if (divider == null) {
+            return;
+        }
+        divider.setEnabled(this.expandPanelOpen);
+    }
+
+    private void toggleExpandPanel() {
+        if (this.expandPanelOpen) {
+            int w = this.expandSplitPane.getWidth();
+            if (w > 0) {
+                double editorFrac = this.expandSplitPane.getDividerLocation() / (double) w;
+                this.expandSplitEditorWidthFraction = Math.max(0.35d, Math.min(0.96d, editorFrac));
+            }
+            this.sideToolbar.getExpandButton().setIcon(new DoubleArrowLeftIcon().withSize(24, 24).withColor(UIManager.getColor("Label.foreground")));
+            this.expandPanelOpen = false;
+            this.expandSplitPane.setResizeWeight(1.0);
+            this.syncExpandSplitInteraction();
+            SwingUtilities.invokeLater(() -> this.expandSplitPane.setDividerLocation(1.0d));
+        } else {
+            this.sideToolbar.getExpandButton().setIcon(new DoubleArrowRightIcon().withSize(24, 24).withColor(UIManager.getColor("Label.foreground")));
+            this.expandPanelOpen = true;
+            this.expandSplitPane.setResizeWeight(0.78);
+            this.syncExpandSplitInteraction();
+            SwingUtilities.invokeLater(() -> this.expandSplitPane.setDividerLocation(this.expandSplitEditorWidthFraction));
+        }
+    }
+
+    @Override
+    public void updateUI() {
+        super.updateUI();
+        if (this.sideToolbar != null) {
+            this.sideToolbar.applyLocalTheme();
+        }
+        SwingUtilities.invokeLater(this::applyExpandDividerInteractionState);
     }
 
     private void openTab(RequestTreeNode node) {
@@ -138,7 +309,7 @@ public class TreepeaterUI extends JSplitPane {
             Treepeater.api.logging().logToError("No tab found for node " + node.getId());
             return;
         }
-        this.requestResponseTabbedPane.remove(requestResponsePanel);;
+        this.requestResponseTabbedPane.remove(requestResponsePanel);
         this.tabMap.remove(node);
     }
 

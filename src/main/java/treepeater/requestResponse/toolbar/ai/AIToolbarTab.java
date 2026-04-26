@@ -22,6 +22,7 @@ import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
 
 import treepeater.Treepeater;
+import treepeater.TreepeaterModel;
 import treepeater.ai.AgentChatSession;
 import treepeater.ai.AgentChatWorkspace;
 import treepeater.ai.AgentMode;
@@ -45,7 +46,6 @@ import treepeater.icons.WandIcon;
 import treepeater.requestResponse.toolbar.ToolbarIconButton;
 import treepeater.requestResponse.toolbar.ToolbarTabTitle;
 import treepeater.settings.TreepeaterSettings;
-import treepeater.tree.RequestTreeNode;
 
 public class AIToolbarTab implements AIChatHost {
 
@@ -55,12 +55,12 @@ public class AIToolbarTab implements AIChatHost {
     private JTabbedPane chatTabPane;
     private int nextChatTabIndex = 1;
 
-    private final RequestTreeNode node;
+    private final TreepeaterModel model;
     private final Supplier<AgentToolContext> agentToolContextSupplier;
     private boolean blockTabPersist;
 
-    public AIToolbarTab(RequestTreeNode node, Supplier<AgentToolContext> agentToolContextSupplier) {
-        this.node = node;
+    public AIToolbarTab(TreepeaterModel model, Supplier<AgentToolContext> agentToolContextSupplier) {
+        this.model = model;
         this.button = new ToolbarIconButton(new WandIcon());
         this.content = new JPanel(new BorderLayout());
 
@@ -70,8 +70,8 @@ public class AIToolbarTab implements AIChatHost {
         this.content.add(this.buildContent(), BorderLayout.CENTER);
     }
 
-    private void saveWorkspaceToNode() {
-        if (this.node == null || this.chatTabPane == null) {
+    private void saveWorkspaceToModel() {
+        if (this.model == null || this.chatTabPane == null) {
             return;
         }
         if (this.blockTabPersist) {
@@ -85,7 +85,7 @@ public class AIToolbarTab implements AIChatHost {
                 list.add(p.toSessionSnapshot(this.chatTabPane.getTitleAt(i)));
             }
         }
-        this.node.setAgentChatWorkspace(
+        this.model.setGlobalAgentChatWorkspace(
                 new AgentChatWorkspace(
                         list, this.chatTabPane.getSelectedIndex(), this.nextChatTabIndex));
     }
@@ -251,7 +251,7 @@ public class AIToolbarTab implements AIChatHost {
 
         this.chatTabPane = new JTabbedPane();
         this.chatTabPane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
-        AgentChatWorkspace ws = this.node != null ? this.node.getAgentChatWorkspace() : AgentChatWorkspace.EMPTY;
+        AgentChatWorkspace ws = this.model != null ? this.model.getGlobalAgentChatWorkspace() : AgentChatWorkspace.EMPTY;
         this.nextChatTabIndex = Math.max(1, ws.nextChatTabIndex());
         this.blockTabPersist = true;
         try {
@@ -259,7 +259,7 @@ public class AIToolbarTab implements AIChatHost {
                 this.addNewChatTab();
             } else {
                 for (AgentChatSession s : ws.sessions()) {
-                    AIAgentChatPanel session = new AIAgentChatPanel(this, this::saveWorkspaceToNode);
+                    AIAgentChatPanel session = new AIAgentChatPanel(this, this::saveWorkspaceToModel);
                     String title = s.title();
                     int index = this.chatTabPane.getTabCount();
                     this.chatTabPane.addTab(title, session);
@@ -279,7 +279,7 @@ public class AIToolbarTab implements AIChatHost {
                 new ChangeListener() {
                     @Override
                     public void stateChanged(ChangeEvent e) {
-                        AIToolbarTab.this.saveWorkspaceToNode();
+                        AIToolbarTab.this.saveWorkspaceToModel();
                     }
                 });
         panel.add(this.chatTabPane, BorderLayout.CENTER);
@@ -290,13 +290,13 @@ public class AIToolbarTab implements AIChatHost {
         if (this.chatTabPane == null) {
             return;
         }
-        AIAgentChatPanel session = new AIAgentChatPanel(this, this::saveWorkspaceToNode);
+        AIAgentChatPanel session = new AIAgentChatPanel(this, this::saveWorkspaceToModel);
         String title = "Chat " + this.nextChatTabIndex++;
         int index = this.chatTabPane.getTabCount();
         this.chatTabPane.addTab(title, session);
         this.chatTabPane.setTabComponentAt(index, new AIAgentChatTabTitle(title, () -> this.closeAgentChat(session)));
         this.chatTabPane.setSelectedComponent(session);
-        this.saveWorkspaceToNode();
+        this.saveWorkspaceToModel();
     }
 
     private void closeAgentChat(AIAgentChatPanel panel) {
@@ -311,7 +311,7 @@ public class AIToolbarTab implements AIChatHost {
         if (this.chatTabPane.getTabCount() == 0) {
             addNewChatTab();
         } else {
-            this.saveWorkspaceToNode();
+            this.saveWorkspaceToModel();
         }
     }
 }

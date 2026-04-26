@@ -65,17 +65,53 @@ public final class MarkdownRenderer {
         css.append("body { font-family: '").append(fontFamily).append("', sans-serif; ")
                 .append("font-size: ").append(fontSize).append("pt; ")
                 .append("color: ").append(fgHex).append("; ")
-                .append("margin: 0; padding: 0; }");
-        css.append("p { margin-top: 4px; margin-bottom: 4px; }");
+                // HTMLEditorKit list views often omit line wrapping unless the box can break long tokens.
+                .append("margin: 0; padding: 0; word-wrap: break-word; }");
+        css.append("p { margin-top: 4px; margin-bottom: 4px; word-wrap: break-word; }");
         css.append("h1 { font-size: ").append(h1).append("pt; margin-top: 10px; margin-bottom: 4px; }");
         css.append("h2 { font-size: ").append(h2).append("pt; margin-top: 8px; margin-bottom: 4px; }");
         css.append("h3 { font-size: ").append(h3).append("pt; margin-top: 6px; margin-bottom: 4px; }");
         css.append("h4, h5, h6 { margin-top: 6px; margin-bottom: 4px; }");
         css.append("pre { font-family: monospace; background-color: ").append(codeBgHex)
                 .append("; padding: 8px; margin-top: 6px; margin-bottom: 6px; }");
-        css.append("code { font-family: monospace; }");
-        css.append("blockquote { margin-left: 4px; padding-left: 10px; color: ").append(mutedHex).append("; }");
-        css.append("ul, ol { margin-top: 4px; margin-bottom: 4px; }");
+        css.append("code { font-family: monospace; word-wrap: break-word; }");
+        css.append("blockquote { margin-left: 4px; padding-left: 10px; color: ")
+                .append(mutedHex).append("; word-wrap: break-word; }");
+        // HTMLEditorKit's built-in default.css (not Web CSS) indents ul/ol with margin-left-ltr: 50 and ul
+        // with -bullet-gap: 10. Padding/margin in normal CSS does not override those properties, so changing
+        // padding-left here had no visible effect. Halve the JDK defaults (50→25, 10→5, nested 25→12).
+        int listLeftRtlHalf = 25;
+        int listNestedLtrHalf = 12;
+        int listBulletGapHalf = 5;
+        css.append("ul { margin-top: 4px; margin-bottom: 4px; margin-left-ltr: ")
+                .append(listLeftRtlHalf)
+                .append("; margin-right-rtl: ")
+                .append(listLeftRtlHalf)
+                .append("; -bullet-gap: ")
+                .append(listBulletGapHalf)
+                .append("; list-style-type: disc; word-wrap: break-word; }");
+        css.append("ol { margin-top: 4px; margin-bottom: 4px; margin-left-ltr: ")
+                .append(listLeftRtlHalf)
+                .append("; margin-right-rtl: ")
+                .append(listLeftRtlHalf)
+                .append("; list-style-type: decimal; word-wrap: break-word; }");
+        css.append("ul li ul, ul li menu { list-style-type: circle; margin-left-ltr: ")
+                .append(listNestedLtrHalf)
+                .append("; margin-right-rtl: ")
+                .append(listNestedLtrHalf)
+                .append("; }");
+        css.append("ol li ol { margin-left-ltr: ")
+                .append(listNestedLtrHalf)
+                .append("; margin-right-rtl: ")
+                .append(listNestedLtrHalf)
+                .append("; }");
+        css.append("ul li ul li ul, ul li ul li menu, ol li ol li ol { list-style-type: square; margin-left-ltr: ")
+                .append(listNestedLtrHalf)
+                .append("; margin-right-rtl: ")
+                .append(listNestedLtrHalf)
+                .append("; }");
+        // Loose lists use <p> inside <li>; tight lists use text directly in <li> — both need explicit wrapping.
+        css.append("li { word-wrap: break-word; }");
         css.append("a { color: ").append(linkHex).append("; }");
         css.append("table { border-collapse: collapse; margin-top: 6px; margin-bottom: 6px; }");
         css.append("th, td { border: 1px solid ").append(mutedHex)

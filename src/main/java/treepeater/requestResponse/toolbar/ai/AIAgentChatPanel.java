@@ -28,7 +28,13 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.regex.MatchResult;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.Vector;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -59,6 +65,7 @@ import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
+import javax.swing.JTextPane;
 import javax.swing.JViewport;
 import javax.swing.JWindow;
 import javax.swing.KeyStroke;
@@ -71,9 +78,16 @@ import javax.swing.UIManager;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.event.HyperlinkEvent;
+import javax.swing.text.AbstractDocument;
+import javax.swing.text.AttributeSet;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.DefaultEditorKit;
 import javax.swing.text.Document;
+import javax.swing.text.DocumentFilter;
+import javax.swing.text.Element;
+import javax.swing.text.SimpleAttributeSet;
+import javax.swing.text.StyleConstants;
+import javax.swing.text.StyledDocument;
 
 import com.formdev.flatlaf.FlatClientProperties;
 
@@ -96,6 +110,8 @@ import treepeater.ai.ChatStreamMessage;
 import treepeater.ai.ChatStreamSession;
 import treepeater.ai.ChatToolCall;
 import treepeater.ai.ChatTooling;
+import treepeater.ai.AgentTabMention;
+import treepeater.ai.RepeaterTabQueryMatcher;
 import treepeater.ai.AgentToolContext;
 import treepeater.ai.CoalescingChatStreamOutbound;
 import treepeater.ai.HttpTargetTools;
@@ -120,6 +136,144 @@ public final class AIAgentChatPanel extends JPanel {
     private static final int HISTORY_MENTION_MAX_VISIBLE_ROWS = 8;
     private static final int HISTORY_MENTION_PREFERRED_WIDTH = 320;
 
+    /** Attribute on {@link StyledDocument} character runs for an embedded tab mention. */
+    private static final String REQUEST_NODE_MENTION_ATTR = "Treepeater.requestNodeId";
+
+    private static final Pattern REQUEST_NODE_ID_TOKEN = Pattern.compile("request_node_id:(\\d+)(\\s*)");
+
+    /**
+     * Contiguous character range that shares one {@link #REQUEST_NODE_MENTION_ATTR} id, or {@code null}.
+     */
+    private static int[] findMentionRunBounds(StyledDocument sd, int p, int docLen) {
+        if (p < 0 || p >= docLen) {
+            return null;
+        }
+        Element el0 = sd.getCharacterElement(p);
+        Object ido = el0.getAttributes().getAttribute(REQUEST_NODE_MENTION_ATTR);
+        if (!(ido instanceof Integer id)) {
+            return null;
+        }
+        int lo = el0.getStartOffset();
+        int hi = el0.getEndOffset();
+        while (lo > 0) {
+            Element l = sd.getCharacterElement(lo - 1);
+            Object o = l.getAttributes().getAttribute(REQUEST_NODE_MENTION_ATTR);
+            if (o instanceof Integer j && j.equals(id)) {
+                int ls = l.getStartOffset();
+                if (ls < lo) {
+                    lo = ls;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        while (hi < docLen) {
+            Element h = sd.getCharacterElement(hi);
+            Object o = h.getAttributes().getAttribute(REQUEST_NODE_MENTION_ATTR);
+            if (o instanceof Integer j && j.equals(id)) {
+                int he = h.getEndOffset();
+                if (he > hi) {
+                    hi = he;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        return new int[] {lo, Math.min(hi, docLen)};
+    }
+
+    /**
+     * If {@code [offset, offset+length)} intersects a tab mention, expand to full mention run(s) so the
+     * user cannot delete only part of a chip.
+     *
+     * @return {@code { start, length }} to pass to {@link DocumentFilter.FilterBypass#remove}
+     */
+    private static int[] expandDeleteForTabMentions(StyledDocument sd, int offset, int length) {
+        int docLen = sd.getLength();
+        if (length <= 0) {
+            return new int[] {offset, 0};
+        }
+        if (offset < 0) {
+            offset = 0;
+        }
+        if (offset >= docLen) {
+            return new int[] {offset, 0};
+        }
+        int e = offset + length;
+        if (e > docLen) {
+            e = docLen;
+        }
+        if (e <= offset) {
+            return new int[] {offset, 0};
+        }
+        int s = offset;
+        int endEx = e;
+        boolean changed;
+        int guard = 0;
+        do {
+            changed = false;
+            for (int p = s; p < endEx; p++) {
+                int[] run = findMentionRunBounds(sd, p, docLen);
+                if (run == null) {
+                    continue;
+                }
+                int rs = run[0];
+                int re = run[1];
+                if (rs < s) {
+                    s = rs;
+                    changed = true;
+                }
+                if (re > endEx) {
+                    endEx = re;
+                    changed = true;
+                }
+            }
+        } while (changed && ++guard < 32);
+        return new int[] {s, endEx - s};
+    }
+
+    /**
+     * {@code true} if an insert at {@code offset} would split a tab-mention (strictly between the run’s
+     * start and end, exclusive end of the run).
+     */
+    private static boolean isInsertOffsetInsideMention(StyledDocument sd, int offset) {
+        int docLen = sd.getLength();
+        if (offset <= 0 || offset > docLen) {
+            return false;
+        }
+        int[] run = findMentionRunBounds(sd, offset, docLen);
+        if (run == null) {
+            return false;
+        }
+        int lo = run[0];
+        int hi = run[1];
+        return lo < offset && offset < hi;
+    }
+
+    /**
+     * {@code true} if an insert at {@code offset} is immediately after the last character of a
+     * tab-mention (offset equals the run’s exclusive end). New text at that position would
+     * otherwise inherit the mention’s cell styling from the styled editor’s input attributes.
+     */
+    private static boolean isInsertAtEndOfMentionRun(StyledDocument sd, int offset) {
+        if (offset <= 0) {
+            return false;
+        }
+        int docLen = sd.getLength();
+        if (offset > docLen) {
+            return false;
+        }
+        int[] run = findMentionRunBounds(sd, offset - 1, docLen);
+        if (run == null) {
+            return false;
+        }
+        return offset == run[1];
+    }
+
     private static final String SEND_BUTTON_LABEL = "Send";
     private static final String STOP_BUTTON_LABEL = "Stop";
 
@@ -128,7 +282,7 @@ public final class AIAgentChatPanel extends JPanel {
     private final AITranscriptListPanel transcriptList;
     private final JScrollPane transcriptScroll;
     private final Component transcriptBottomGlue = leftAlignedVerticalGlue();
-    private final JTextArea inputArea;
+    private final JTextPane inputArea;
     private JScrollPane inputScroll;
     private RoundedPanel inputPanel;
     private final StyledButton sendButton;
@@ -136,7 +290,7 @@ public final class AIAgentChatPanel extends JPanel {
     private final JComboBox<AiModelOption> modelCombo;
     private final JButton modelOptionsButton;
     private final JPopupMenu modelOptionsMenu = new JPopupMenu();
-    /** In-input {@code @}-mention popup for repeater history; {@code -1} when none. */
+    /** In-input {@code @}-mention popup for open repeater tabs; {@code -1} when none. */
     private int historyMentionAt = -1;
     /**
      * Backup for the "@" position after {@link #dismissHistoryMentionPopup} clears
@@ -149,7 +303,7 @@ public final class AIAgentChatPanel extends JPanel {
     private Object historyMentionSavedImEnter;
     private AbstractAction historyMentionEnterAction;
     private JWindow historyMentionWindow;
-    private JList<AgentToolContext.HistoryEntryInfo> historyMentionList;
+    private JList<AgentTabMention> historyMentionList;
     private JScrollPane historyMentionScroll;
     private final DefaultListCellRenderer historyMentionListCell = new DefaultListCellRenderer();
     private LlmRequestOptions llmRequestOptions = LlmRequestOptions.DEFAULTS;
@@ -184,10 +338,95 @@ public final class AIAgentChatPanel extends JPanel {
         this.transcriptScroll.getVerticalScrollBar().setUnitIncrement(16);
         this.transcriptScroll.setPreferredSize(new Dimension(0, 200));
 
-        this.inputArea = new JTextArea(1, 0);
-        this.inputArea.setLineWrap(true);
-        this.inputArea.setWrapStyleWord(true);
+        this.inputArea =
+                new JTextPane() {
+                    @Override
+                    public boolean getScrollableTracksViewportWidth() {
+                        return true;
+                    }
+                };
         this.inputArea.putClientProperty(FlatClientProperties.STYLE, "background: $Colors.ui.background.1;");
+        this.inputArea.setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
+        this.inputArea.setOpaque(true);
+        {
+            Color ibg = UIManager.getColor("Colors.ui.background.1");
+            if (ibg != null) {
+                this.inputArea.setBackground(ibg);
+            }
+            Color ifg = UIManager.getColor("Label.foreground");
+            if (ifg != null) {
+                this.inputArea.setForeground(ifg);
+            }
+            Font f = UIManager.getFont("TextArea.font");
+            if (f != null) {
+                this.inputArea.setFont(f);
+            }
+        }
+        if (this.inputArea.getDocument() instanceof AbstractDocument ad
+                && this.inputArea.getDocument() instanceof StyledDocument sd) {
+            ad.setDocumentFilter(
+                    new DocumentFilter() {
+                        @Override
+                        public void insertString(
+                                DocumentFilter.FilterBypass fb,
+                                int offset,
+                                String text,
+                                AttributeSet attrs)
+                                throws BadLocationException {
+                            if (text == null || text.isEmpty()) {
+                                return;
+                            }
+                            if (isInsertOffsetInsideMention(sd, offset)) {
+                                return;
+                            }
+                            AttributeSet a = attrs;
+                            if (isInsertAtEndOfMentionRun(sd, offset)) {
+                                a = AIAgentChatPanel.this.createPlainInputAttributes();
+                            }
+                            fb.insertString(offset, text, a);
+                        }
+
+                        @Override
+                        public void remove(DocumentFilter.FilterBypass fb, int offset, int length)
+                                throws BadLocationException {
+                            if (length <= 0) {
+                                return;
+                            }
+                            int[] ex = expandDeleteForTabMentions(sd, offset, length);
+                            fb.remove(ex[0], ex[1]);
+                        }
+
+                        @Override
+                        public void replace(
+                                DocumentFilter.FilterBypass fb,
+                                int offset,
+                                int length,
+                                String text,
+                                AttributeSet attrs)
+                                throws BadLocationException {
+                            if (length == 0) {
+                                String t = text != null ? text : "";
+                                if (!t.isEmpty() && isInsertOffsetInsideMention(sd, offset)) {
+                                    return;
+                                }
+                                AttributeSet a = attrs;
+                                if (isInsertAtEndOfMentionRun(sd, offset)) {
+                                    a = AIAgentChatPanel.this.createPlainInputAttributes();
+                                }
+                                fb.insertString(offset, t, a);
+                                return;
+                            }
+                            int[] ex = expandDeleteForTabMentions(sd, offset, length);
+                            AttributeSet a = attrs;
+                            if (text != null
+                                    && !text.isEmpty()
+                                    && isInsertAtEndOfMentionRun(sd, ex[0])) {
+                                a = AIAgentChatPanel.this.createPlainInputAttributes();
+                            }
+                            fb.replace(ex[0], ex[1], text, a);
+                        }
+                    });
+        }
 
         this.sendButton = new StyledButton(SEND_BUTTON_LABEL);
         this.sendButton.setStyle(StyledButton.Style.AI);
@@ -339,6 +578,17 @@ public final class AIAgentChatPanel extends JPanel {
             return;
         }
         applyInputPanelTheme(this.inputPanel);
+        if (this.inputArea != null) {
+            this.inputArea.putClientProperty(FlatClientProperties.STYLE, "background: $Colors.ui.background.1;");
+            Color ibg = UIManager.getColor("Colors.ui.background.1");
+            if (ibg != null) {
+                this.inputArea.setBackground(ibg);
+            }
+            Color ifg = UIManager.getColor("Label.foreground");
+            if (ifg != null) {
+                this.inputArea.setForeground(ifg);
+            }
+        }
 
         if (this.modelOptionsButton != null) {
             this.modelOptionsButton.setIcon(new GearIcon().withColor(UIManager.getColor("Label.foreground")));
@@ -451,6 +701,7 @@ public final class AIAgentChatPanel extends JPanel {
         if (textWidth <= 0) {
             return;
         }
+        this.inputArea.setSize(new Dimension(textWidth, Short.MAX_VALUE));
 
         FontMetrics fm = this.inputArea.getFontMetrics(this.inputArea.getFont());
         int lineH = fm.getHeight();
@@ -531,8 +782,12 @@ public final class AIAgentChatPanel extends JPanel {
             }
         }
 
-        String text = this.inputArea.getText().trim();
-        if (text.isEmpty()) {
+        String displayText = this.inputArea.getText().trim();
+        if (displayText.isEmpty()) {
+            return;
+        }
+        String agentText = compileUserMessageForAgent();
+        if (agentText.isEmpty()) {
             return;
         }
 
@@ -542,10 +797,10 @@ public final class AIAgentChatPanel extends JPanel {
         }
 
         this.inputArea.setText("");
-        addMessageBubble("You", text);
+        addMessageBubble("You", displayText);
 
         List<ChatMessage> messages = new ArrayList<>(this.conversation);
-        messages.add(new ChatMessage(ChatRole.USER, text));
+        messages.add(new ChatMessage(ChatRole.USER, agentText));
         AgentSystemPrompt.prependDefault(messages);
 
         setSendButtonWorking(true);
@@ -711,7 +966,7 @@ public final class AIAgentChatPanel extends JPanel {
                 continue;
             }
             if (m.role() == ChatRole.USER) {
-                this.addMessageBubble("You", m.content());
+                this.addMessageBubble("You", formatUserMessageForTranscript(m.content()));
                 continue;
             }
             if (m.role() == ChatRole.TOOL) {
@@ -857,9 +1112,8 @@ public final class AIAgentChatPanel extends JPanel {
                     }
                     if (!isHistoryMentionContextValid()) {
                         dismissHistoryMentionPopup();
-                    } else if (this.historyMentionWindow != null
-                            && this.historyMentionWindow.isVisible()) {
-                        SwingUtilities.invokeLater(this::positionHistoryMentionWindow);
+                    } else {
+                        SwingUtilities.invokeLater(this::refreshHistoryMentionIfOpen);
                     }
                 });
         this.inputArea.addFocusListener(
@@ -965,28 +1219,123 @@ public final class AIAgentChatPanel extends JPanel {
         }
     }
 
+    private void refreshHistoryMentionIfOpen() {
+        if (this.historyMentionAt < 0) {
+            return;
+        }
+        if (!isHistoryMentionContextValid()) {
+            dismissHistoryMentionPopup();
+            return;
+        }
+        if (this.historyMentionWindow == null || !this.historyMentionWindow.isVisible()) {
+            return;
+        }
+        this.fillHistoryMentionFromHost();
+        this.historyMentionWindow.pack();
+        this.positionHistoryMentionWindow();
+        restoreMentionInputFocus();
+    }
+
+    /**
+     * Pop-up repack and {@link JList} model updates can move focus off the composer; keep typing
+     * in the text field after every mention UI refresh.
+     */
+    private void restoreMentionInputFocus() {
+        SwingUtilities.invokeLater(
+                () -> {
+                    if (this.historyMentionAt >= 0) {
+                        this.inputArea.requestFocusInWindow();
+                    }
+                });
+    }
+
     private boolean isHistoryMentionContextValid() {
         if (this.historyMentionAt < 0) {
             return false;
         }
         Document d = this.inputArea.getDocument();
-        int len = d.getLength();
         int at = this.historyMentionAt;
-        if (at < 0 || at >= len) {
+        if (at < 0 || at >= d.getLength()) {
             return false;
         }
         try {
             if (!d.getText(at, 1).equals("@")) {
                 return false;
             }
-            if (len != at + 1) {
-                return false;
-            }
+            int end = mentionTokenExclusiveEnd(d, at);
+            int caret = this.inputArea.getCaretPosition();
+            return caret >= at && caret <= end;
         } catch (BadLocationException e) {
             return false;
         }
-        int caret = this.inputArea.getCaretPosition();
-        return caret >= at && caret <= at + 1;
+    }
+
+    /**
+     * {@code @…} is followed by non-spacing characters until the first whitespace. Exclusive end
+     * index, same semantics as end index in String for {@code d.getText(s, l)}.
+     */
+    private static int mentionTokenExclusiveEnd(Document d, int at) throws BadLocationException {
+        if (at < 0
+                || at >= d.getLength()
+                || !d.getText(at, 1).equals("@")) {
+            return at;
+        }
+        int i = at + 1;
+        int len = d.getLength();
+        while (i < len) {
+            if (Character.isWhitespace(d.getText(i, 1).charAt(0))) {
+                break;
+            }
+            i++;
+        }
+        return i;
+    }
+
+    /**
+     * Filter text: typed characters after the {@code @}, up to the caret (or end of the token, if
+     * the caret is past the typed segment).
+     */
+    private String getCurrentMentionQuery() {
+        try {
+            if (this.historyMentionAt < 0) {
+                return "";
+            }
+            Document d = this.inputArea.getDocument();
+            int at = this.historyMentionAt;
+            if (at < 0
+                    || at >= d.getLength()
+                    || !d.getText(at, 1).equals("@")) {
+                return "";
+            }
+            int end = mentionTokenExclusiveEnd(d, at);
+            int caret = Math.min(this.inputArea.getCaretPosition(), end);
+            int from = at + 1;
+            if (from >= caret) {
+                return "";
+            }
+            return d.getText(from, caret - from);
+        } catch (BadLocationException e) {
+            return "";
+        }
+    }
+
+    private static boolean atPopupMentionMatches(AgentTabMention m, String qRaw) {
+        String path = m.pathLabel() != null ? m.pathLabel() : "";
+        if (RepeaterTabQueryMatcher.matches(qRaw, "", "", path)) {
+            return true;
+        }
+        if (qRaw == null) {
+            return true;
+        }
+        String t = qRaw.trim();
+        if (t.isEmpty()) {
+            return true;
+        }
+        String idStr = String.valueOf(m.requestNodeId());
+        if (idStr.toLowerCase(Locale.ROOT).contains(t.toLowerCase(Locale.ROOT))) {
+            return true;
+        }
+        return ("#" + idStr).toLowerCase(Locale.ROOT).contains(t.toLowerCase(Locale.ROOT));
     }
 
     private void ensureHistoryMentionWindow() {
@@ -996,21 +1345,25 @@ public final class AIAgentChatPanel extends JPanel {
         Window owner = SwingUtilities.getWindowAncestor(this);
         this.historyMentionWindow = owner != null ? new JWindow(owner) : new JWindow();
         /*
-         * Children must be able to be focusable so focusLost on the text area can report the
-         * list as the opposite component. setFocusableWindowState(false) made all children
-         * non-focusable, so clicks dismissed the mention before the list ran.
+         * The text field must keep focus while the user types; the list/scroll is not
+         * focus-traversal so that refresh does not steal focus. Mouse still selects rows;
+         * navigation keys are handled from the key dispatcher while the input is focused.
          */
         this.historyMentionWindow.setFocusableWindowState(true);
         this.historyMentionWindow.setAutoRequestFocus(false);
         this.historyMentionWindow.setAlwaysOnTop(true);
         this.historyMentionList = new JList<>();
         this.historyMentionList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        /*
+         * Non-focusable: refresh runs on every typed character; a focusable JList can steal
+         * focus from the text area. Arrow keys and Enter are still handled on the text field
+         * via the key dispatcher; mouse selection still works.
+         */
+        this.historyMentionList.setFocusable(false);
         this.historyMentionList.setCellRenderer(
                 (list, value, index, isSelected, cellHasFocus) -> {
                     String line =
-                            value != null
-                                    ? formatHistoryMentionLine((AgentToolContext.HistoryEntryInfo) value)
-                                    : "";
+                            value != null ? formatTabMentionLine((AgentTabMention) value) : "";
                     return this.historyMentionListCell.getListCellRendererComponent(
                             list, line, index, isSelected, cellHasFocus);
                 });
@@ -1035,13 +1388,16 @@ public final class AIAgentChatPanel extends JPanel {
                         }
                         AIAgentChatPanel.this.historyMentionList.setSelectedIndex(i);
                         Object v = AIAgentChatPanel.this.historyMentionList.getModel().getElementAt(i);
-                        if (v instanceof AgentToolContext.HistoryEntryInfo info) {
-                            AIAgentChatPanel.this.insertHistoryMentionText(info, atSnap);
+                        if (v instanceof AgentTabMention info) {
+                            AIAgentChatPanel.this.insertTabMentionText(info, atSnap);
                         }
                     }
                 });
         this.historyMentionScroll = new JScrollPane(this.historyMentionList);
         this.historyMentionScroll.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
+        this.historyMentionScroll.setFocusable(false);
+        this.historyMentionScroll.getVerticalScrollBar().setFocusable(false);
+        this.historyMentionScroll.getHorizontalScrollBar().setFocusable(false);
         JPanel root = new JPanel(new BorderLayout());
         Color line = UIManager.getColor("Component.borderColor");
         if (line == null) {
@@ -1050,41 +1406,175 @@ public final class AIAgentChatPanel extends JPanel {
         if (line != null) {
             root.setBorder(BorderFactory.createLineBorder(line, 1));
         }
+        root.setFocusable(false);
         this.historyMentionWindow.setContentPane(root);
     }
 
-    private static String formatHistoryMentionLine(AgentToolContext.HistoryEntryInfo e) {
-        String t = e.time() == null ? "" : e.time();
-        String u = e.targetLabel() == null ? "" : e.targetLabel();
-        if (u.isEmpty()) {
-            if (t.isEmpty()) {
-                return "#" + e.index();
-            }
-            return "#" + e.index() + "  " + t;
+    private static String formatTabMentionLine(AgentTabMention e) {
+        String p = e.pathLabel() == null ? "" : e.pathLabel();
+        if (p.isEmpty()) {
+            return "#" + e.requestNodeId();
         }
-        return "#" + e.index() + "  " + t + (t.isEmpty() ? "  " : "  ") + u;
+        return p;
     }
 
-    private static String formatHistoryMentionForInsert(AgentToolContext.HistoryEntryInfo e) {
-        return "history #" + e.index() + " ";
+    private static SimpleAttributeSet newMentionAttributeSet(int requestNodeId) {
+        SimpleAttributeSet a = new SimpleAttributeSet();
+        a.addAttribute(REQUEST_NODE_MENTION_ATTR, requestNodeId);
+        Color bg = UIManager.getColor("TextField.selectionBackground");
+        if (bg == null) {
+            bg = UIManager.getColor("TextArea.selectionBackground");
+        }
+        if (bg == null) {
+            bg = new Color(0xC8D4F0);
+        }
+        Color fg = UIManager.getColor("TextField.selectionForeground");
+        if (fg == null) {
+            fg = UIManager.getColor("TextArea.foreground");
+        }
+        if (fg == null) {
+            fg = UIManager.getColor("Label.foreground");
+        }
+        if (fg == null) {
+            fg = Color.BLACK;
+        }
+        StyleConstants.setBackground(a, bg);
+        StyleConstants.setForeground(a, fg);
+        return a;
+    }
+
+    /** Attributes for normal body text and for the space after a mention (so typing does not stay “highlighted”). */
+    private SimpleAttributeSet createPlainInputAttributes() {
+        SimpleAttributeSet a = new SimpleAttributeSet();
+        Color fg = this.inputArea.getForeground();
+        Color bg = this.inputArea.getBackground();
+        if (fg != null) {
+            StyleConstants.setForeground(a, fg);
+        }
+        if (bg != null) {
+            StyleConstants.setBackground(a, bg);
+        }
+        StyleConstants.setBold(a, false);
+        StyleConstants.setItalic(a, false);
+        StyleConstants.setUnderline(a, false);
+        return a;
+    }
+
+    /** After inserting a mention, force the caret’s typing style to plain (not the chip style). */
+    private void resetInputAttributesForFollowingText() {
+        this.inputArea.setCharacterAttributes(createPlainInputAttributes(), true);
+    }
+
+    /**
+     * Plain visible text; tab mentions are shown as in the composer, while {@link #compileUserMessageForAgent}
+     * is what we persist and send to the model.
+     */
+    private String formatUserMessageForTranscript(String agentContent) {
+        if (agentContent == null || agentContent.isEmpty() || !agentContent.contains("request_node_id:")) {
+            return agentContent;
+        }
+        Map<Integer, String> labels = new HashMap<>();
+        for (AgentTabMention t : this.host.agentTabMentionsForAtPopup()) {
+            labels.put(t.requestNodeId(), formatTabMentionLine(t));
+        }
+        return REQUEST_NODE_ID_TOKEN
+                .matcher(agentContent)
+                .replaceAll(
+                        (MatchResult mr) -> {
+                            int id = Integer.parseInt(mr.group(1));
+                            String label = labels.getOrDefault(id, "tab " + id);
+                            String sp = mr.group(2);
+                            if (sp == null || sp.isEmpty()) {
+                                sp = " ";
+                            }
+                            return Matcher.quoteReplacement("@" + label + sp);
+                        });
+    }
+
+    private String compileUserMessageForAgent() {
+        Document d = this.inputArea.getDocument();
+        if (!(d instanceof StyledDocument sd)) {
+            return this.inputArea.getText().trim();
+        }
+        int len = sd.getLength();
+        if (len == 0) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder();
+        int i = 0;
+        try {
+            while (i < len) {
+                Element el = sd.getCharacterElement(i);
+                int s = el.getStartOffset();
+                int e = Math.min(el.getEndOffset(), len);
+                int from = Math.max(i, s);
+                if (from >= e) {
+                    i = e;
+                    continue;
+                }
+                Object idObj = el.getAttributes().getAttribute(REQUEST_NODE_MENTION_ATTR);
+                if (idObj instanceof Integer id) {
+                    out.append("request_node_id:").append(id).append(" ");
+                    int j = e;
+                    while (j < len) {
+                        Element el2 = sd.getCharacterElement(j);
+                        Object id2 = el2.getAttributes().getAttribute(REQUEST_NODE_MENTION_ATTR);
+                        if (!(id2 instanceof Integer i2) || !id.equals(i2)) {
+                            break;
+                        }
+                        int e2 = Math.min(el2.getEndOffset(), len);
+                        if (e2 > j) {
+                            j = e2;
+                        } else {
+                            j++;
+                        }
+                    }
+                    i = j;
+                } else {
+                    out.append(sd.getText(from, e - from));
+                    i = e;
+                }
+            }
+        } catch (BadLocationException ex) {
+            this.host.logError(ex);
+            return this.inputArea.getText().trim();
+        }
+        return out.toString().trim();
     }
 
     private void fillHistoryMentionFromHost() {
         Container root = (Container) this.historyMentionWindow.getContentPane();
         root.removeAll();
-        AgentToolContext ctx = this.host.agentToolContextForToolPreview();
-        if (ctx == null || ctx.historySize() == 0) {
-            JLabel empty = new JLabel("No request history in this tab");
+        List<AgentTabMention> all = this.host.agentTabMentionsForAtPopup();
+        if (all == null || all.isEmpty()) {
+            this.historyMentionList.setModel(new DefaultListModel<>());
+            JLabel empty = new JLabel("No open repeater tabs");
             empty.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
             root.add(empty, BorderLayout.CENTER);
             return;
         }
-        DefaultListModel<AgentToolContext.HistoryEntryInfo> m = new DefaultListModel<>();
-        for (AgentToolContext.HistoryEntryInfo row : ctx.historyEntries()) {
+        String q = getCurrentMentionQuery();
+        List<AgentTabMention> rows = new ArrayList<>();
+        for (AgentTabMention m : all) {
+            if (atPopupMentionMatches(m, q)) {
+                rows.add(m);
+            }
+        }
+        if (rows.isEmpty()) {
+            this.historyMentionList.setModel(new DefaultListModel<>());
+            JLabel empty = new JLabel("No matching open tabs");
+            empty.setBorder(BorderFactory.createEmptyBorder(8, 10, 8, 10));
+            root.add(empty, BorderLayout.CENTER);
+            return;
+        }
+        DefaultListModel<AgentTabMention> m = new DefaultListModel<>();
+        for (AgentTabMention row : rows) {
             m.addElement(row);
         }
         this.historyMentionList.setModel(m);
-        this.historyMentionList.setSelectedIndex(0);
+        if (m.getSize() > 0) {
+            this.historyMentionList.setSelectedIndex(0);
+        }
         int vis = Math.min(HISTORY_MENTION_MAX_VISIBLE_ROWS, Math.max(1, m.getSize()));
         this.historyMentionList.setVisibleRowCount(vis);
         this.historyMentionScroll.setViewportView(this.historyMentionList);
@@ -1102,10 +1592,11 @@ public final class AIAgentChatPanel extends JPanel {
         this.positionHistoryMentionWindow();
         this.historyMentionWindow.setVisible(true);
         this.installHistoryMentionEnterKeyOverride();
+        restoreMentionInputFocus();
     }
 
     /**
-     * {@link JTextArea} maps Enter to {@link DefaultEditorKit#insertBreakAction} in the
+     * {@link JTextPane} maps Enter to {@link DefaultEditorKit#insertBreakAction} in the
      * focus {@link InputMap}; that path can bypass our {@link KeyEventDispatcher} so Enter
      * never completed the mention. We shadow that binding only while the popup is up.
      */
@@ -1304,17 +1795,17 @@ public final class AIAgentChatPanel extends JPanel {
             i = 0;
         }
         Object v = this.historyMentionList.getModel().getElementAt(i);
-        if (!(v instanceof AgentToolContext.HistoryEntryInfo info)) {
+        if (!(v instanceof AgentTabMention info)) {
             return;
         }
         int at =
                 this.historyMentionAt >= 0
                         ? this.historyMentionAt
                         : this.historyMentionReplaceAt;
-        insertHistoryMentionText(info, at);
+        insertTabMentionText(info, at);
     }
 
-    private void insertHistoryMentionText(AgentToolContext.HistoryEntryInfo info, int at) {
+    private void insertTabMentionText(AgentTabMention info, int at) {
         if (at < 0) {
             at = this.historyMentionAt >= 0 ? this.historyMentionAt : this.historyMentionReplaceAt;
         }
@@ -1331,10 +1822,30 @@ public final class AIAgentChatPanel extends JPanel {
                 dismissHistoryMentionPopup();
                 return;
             }
-            String ins = formatHistoryMentionForInsert(info);
-            d.remove(at, 1);
-            d.insertString(at, ins, null);
-            this.inputArea.setCaretPosition(at + ins.length());
+            int end = mentionTokenExclusiveEnd(d, at);
+            int span = end - at;
+            if (span < 1) {
+                dismissHistoryMentionPopup();
+                return;
+            }
+            if (!(d instanceof StyledDocument doc)) {
+                dismissHistoryMentionPopup();
+                return;
+            }
+            int queryStart = at + 1;
+            int qLen = end - queryStart;
+            if (qLen > 0) {
+                doc.remove(queryStart, qLen);
+            }
+            String display = formatTabMentionLine(info);
+            SimpleAttributeSet mentionAttrs = newMentionAttributeSet(info.requestNodeId());
+            doc.remove(at, 1);
+            String atAndName = "@" + display;
+            doc.insertString(at, atAndName, mentionAttrs);
+            int afterMention = at + atAndName.length();
+            doc.insertString(afterMention, " ", createPlainInputAttributes());
+            this.inputArea.setCaretPosition(afterMention + 1);
+            resetInputAttributesForFollowingText();
             dismissHistoryMentionPopup();
             this.inputArea.requestFocusInWindow();
         } catch (BadLocationException e) {

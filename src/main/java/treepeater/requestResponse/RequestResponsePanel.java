@@ -400,6 +400,16 @@ public class RequestResponsePanel extends JPanel {
                 path);
     }
 
+    /** Live editor request for agent tab discovery (may differ from last-applied target). */
+    public HttpRequest getLiveRequestFromEditor() {
+        return this.requestEditor != null ? this.requestEditor.getRequest() : null;
+    }
+
+    /** Repeater tree node id for this tab (AI tools / labels). */
+    public int getRequestNodeId() {
+        return this.node.getId();
+    }
+
     public AgentToolContext buildAgentToolContextForAi() {
         RequestHistory h = this.node.getHistory();
         int cur = h.getCurrentIndex();
@@ -414,6 +424,7 @@ public class RequestResponsePanel extends JPanel {
         }
         return new AgentToolContext(
                 buildTargetSnapshotForAi(),
+                this.node.getId(),
                 cur,
                 infos,
                 idx -> resolveRequestForHistoryIndex(h, cur, idx),

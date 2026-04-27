@@ -247,6 +247,34 @@ public class TreepeaterModel implements RequestTreeNodeListener {
         return this.tabs;
     }
 
+    /**
+     * The {@link #getTabs()} list is keyed by object identity. After drag-and-drop, the same logical tab
+     * can still be in that list while the tree model holds a <em>new</em> {@link RequestTreeNode} with
+     * the same id, and the list entry is a detached (removed) node. This finds the in-tree node for a
+     * request id, or null if it does not exist.
+     */
+    public RequestTreeNode findRequestNodeInTreeById(int id) {
+        Object root = this.tree.getTreeModel().getRoot();
+        if (!(root instanceof RequestTreeNode r)) {
+            return null;
+        }
+        return findRequestNodeInTreeById(r, id);
+    }
+
+    private static RequestTreeNode findRequestNodeInTreeById(RequestTreeNode node, int id) {
+        if (node.getId() == id) {
+            return node;
+        }
+        for (int i = 0; i < node.getChildCount(); i++) {
+            RequestTreeNode c = (RequestTreeNode) node.getChildAt(i);
+            RequestTreeNode f = findRequestNodeInTreeById(c, id);
+            if (f != null) {
+                return f;
+            }
+        }
+        return null;
+    }
+
     @Override
     public void onDelete(RequestTreeNode node) {
         this.removeNodeFromTree(node);

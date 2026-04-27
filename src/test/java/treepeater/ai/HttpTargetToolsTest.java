@@ -8,6 +8,7 @@ import static org.mockito.Answers.RETURNS_MOCKS;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.OptionalInt;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -183,7 +184,9 @@ class HttpTargetToolsTest {
     private static AgentToolContext singleEntryCtx(HttpRequest request, HttpResponse response,
             Consumer<HttpRequest> applier) {
         return new AgentToolContext(
-                defaultTarget(), 0,
+                defaultTarget(),
+                42,
+                0,
                 List.of(new AgentToolContext.HistoryEntryInfo(0, "12:00:00", "GET example.com")),
                 idx -> request,
                 idx -> response,
@@ -273,7 +276,7 @@ class HttpTargetToolsTest {
 
     @Test
     void definitions_returnsAllBuiltInTools() {
-        assertEquals(8, HttpTargetTools.definitions().size());
+        assertEquals(9, HttpTargetTools.definitions().size());
     }
 
     // ===== result cap =====
@@ -314,7 +317,8 @@ class HttpTargetToolsTest {
 
     @Test
     void execute_nullContext_returnsError() throws Exception {
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{}", null));
+        JsonNode result =
+                parse(HttpTargetTools.execute(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{}", (AgentToolContext) null));
         assertTrue(result.has("error"), "expected error field");
     }
 
@@ -350,6 +354,7 @@ class HttpTargetToolsTest {
         assertTrue(result.has("history"));
         assertEquals(1, result.get("history").get("entry_count").asInt());
         assertEquals(0, result.get("history").get("current_history_index").asInt());
+        assertEquals(42, result.get("request_node_id").asInt());
     }
 
     // ===== read_http_message & search_http_message =====
@@ -1123,7 +1128,7 @@ class HttpTargetToolsTest {
     void sendCurrentHttpRequest_returnsStatusCode() throws Exception {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         Callable<Integer> sender = () -> 200;
-        AgentToolContext ctx = new AgentToolContext(defaultTarget(), 0,
+        AgentToolContext ctx = new AgentToolContext(defaultTarget(), 42, 0,
                 List.of(new AgentToolContext.HistoryEntryInfo(0, "now", "GET x.com")),
                 idx -> request, idx -> null, req -> {}, sender);
 
@@ -1147,7 +1152,7 @@ class HttpTargetToolsTest {
     void sendCurrentHttpRequest_senderReturns404() throws Exception {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         Callable<Integer> sender = () -> 404;
-        AgentToolContext ctx = new AgentToolContext(defaultTarget(), 0,
+        AgentToolContext ctx = new AgentToolContext(defaultTarget(), 42, 0,
                 List.of(new AgentToolContext.HistoryEntryInfo(0, "now", "GET x.com")),
                 idx -> request, idx -> null, req -> {}, sender);
 
@@ -1269,6 +1274,50 @@ class HttpTargetToolsTest {
                 HttpTargetTools.humanToolUsage(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, "INVALID{JSON", 0));
     }
 
+    @Test
+    void humanToolUsage_nodeSuffix_whenUiSelected_appendsId() {
+        HttpTargetTools.HumanToolUsage u =
+                HttpTargetTools.humanToolUsage(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{}", 0, 99);
+        assertTrue(u.title().contains("node id 99"), u.title());
+    }
+
+    @Test
+    void humanToolUsage_nodeSuffix_omittedWhenRequestNodeIdMatchesUi() {
+        HttpTargetTools.HumanToolUsage u =
+                HttpTargetTools.humanToolUsage(
+                        HttpTargetTools.READ_HTTP_MESSAGE,
+                        "{\"side\":\"request\",\"request_node_id\":12}",
+                        0,
+                        12);
+        assertFalse(u.title().contains("node id"), u.title());
+    }
+
+    @Test
+    void humanToolUsage_nodeSuffix_whenNoArg_usesUiSelectedId() {
+        HttpTargetTools.HumanToolUsage u =
+                HttpTargetTools.humanToolUsage(
+                        HttpTargetTools.READ_HTTP_MESSAGE, "{\"side\":\"request\"}", 0, 12);
+        assertTrue(u.title().contains("node id 12"), u.title());
+    }
+
+    @Test
+    void humanToolUsage_nodeSuffix_showsExplicitWhenDifferentFromUi() {
+        HttpTargetTools.HumanToolUsage u =
+                HttpTargetTools.humanToolUsage(
+                        HttpTargetTools.READ_HTTP_MESSAGE,
+                        "{\"side\":\"request\",\"request_node_id\":99}",
+                        0,
+                        12);
+        assertTrue(u.title().contains("node id 99"), u.title());
+    }
+
+    @Test
+    void humanToolUsage_searchTabs_hasNoNodeSuffix() {
+        HttpTargetTools.HumanToolUsage u =
+                HttpTargetTools.humanToolUsage(HttpTargetTools.SEARCH_TABS, "{}", 0, 12);
+        assertFalse(u.title().contains("node id"), u.title());
+    }
+
     // ===== tryPreviewRequestMutation (in-memory, no editor commit) =====
 
     @Test
@@ -1292,6 +1341,82 @@ class HttpTargetToolsTest {
         assertNull(
                 HttpTargetTools.tryPreviewRequestMutation(
                         HttpTargetTools.READ_HTTP_MESSAGE, "{\"side\":\"request\"}", req("GET", "https://a/x", "/x", null, new byte[0])));
+    }
+
+    @Test
+    void search_tabs_invokesBridge() throws Exception {
+        RepeaterTabAgentBridge bridge =
+                new RepeaterTabAgentBridge() {
+                    @Override
+                    public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
+                        return null;
+                    }
+
+                    @Override
+                    public String searchTabs(int offset, int pageSize, String queryOrNull) {
+                        assertEquals(0, offset);
+                        assertEquals(5, pageSize);
+                        assertEquals("q1", queryOrNull);
+                        return HttpTargetTools.formatSearchTabsResponse(
+                                2,
+                                0,
+                                5,
+                                true,
+                                List.of(new SearchTabRow(7, "t", true, "GET", "http://x", false)));
+                    }
+                };
+        JsonNode r =
+                parse(
+                        HttpTargetTools.execute(
+                                HttpTargetTools.SEARCH_TABS, "{\"offset\":0,\"page_size\":5,\"query\":\"q1\"}", bridge));
+        assertEquals(2, r.get("total").asInt());
+        assertTrue(r.get("has_more").asBoolean());
+        assertEquals(1, r.get("next_offset").asInt());
+        assertEquals(7, r.get("tabs").get(0).get("request_node_id").asInt());
+    }
+
+    @Test
+    void execute_requestNodeId_selectsContext() throws Exception {
+        AgentToolContext ctxGet =
+                new AgentToolContext(
+                        new HttpTargetSnapshot("https", "a.com", 443, true, "GET", "https://a.com/", "/"),
+                        1,
+                        0,
+                        List.of(new AgentToolContext.HistoryEntryInfo(0, "", "")),
+                        idx -> req("GET", "https://a.com/", "/", List.of(), new byte[0]),
+                        idx -> null,
+                        r -> {},
+                        null);
+        AgentToolContext ctxPost =
+                new AgentToolContext(
+                        new HttpTargetSnapshot("https", "b.com", 443, true, "POST", "https://b.com/p", "/p"),
+                        2,
+                        0,
+                        List.of(new AgentToolContext.HistoryEntryInfo(0, "", "")),
+                        idx -> req("POST", "https://b.com/p", "/p", List.of(), new byte[0]),
+                        idx -> null,
+                        r -> {},
+                        null);
+        RepeaterTabAgentBridge bridge =
+                new RepeaterTabAgentBridge() {
+                    @Override
+                    public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
+                        if (requestNodeId.isPresent() && requestNodeId.getAsInt() == 2) {
+                            return ctxPost;
+                        }
+                        return ctxGet;
+                    }
+
+                    @Override
+                    public String searchTabs(int offset, int pageSize, String queryOrNull) {
+                        return "{}";
+                    }
+                };
+        JsonNode g2 =
+                parse(HttpTargetTools.execute(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{\"request_node_id\":2}", bridge));
+        assertEquals("POST", g2.get("method").asText());
+        JsonNode gD = parse(HttpTargetTools.execute(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{}", bridge));
+        assertEquals("GET", gD.get("method").asText());
     }
 
     // ===== diagnostic =====

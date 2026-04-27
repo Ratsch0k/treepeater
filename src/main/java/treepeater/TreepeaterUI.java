@@ -5,8 +5,11 @@ import java.awt.Dimension;
 import java.awt.event.ActionEvent;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.lang.reflect.InvocationTargetException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.OptionalInt;
 
 import javax.swing.AbstractAction;
 import javax.swing.JButton;
@@ -25,7 +28,13 @@ import javax.swing.event.TreeModelListener;
 import javax.swing.plaf.basic.BasicSplitPaneDivider;
 import javax.swing.plaf.basic.BasicSplitPaneUI;
 
+import burp.api.montoya.http.message.requests.HttpRequest;
+
 import treepeater.ai.AgentToolContext;
+import treepeater.ai.HttpTargetTools;
+import treepeater.ai.RepeaterTabAgentBridge;
+import treepeater.ai.RepeaterTabQueryMatcher;
+import treepeater.ai.SearchTabRow;
 import treepeater.icons.DoubleArrowLeftIcon;
 import treepeater.icons.DoubleArrowRightIcon;
 import treepeater.requestResponse.RequestResponsePanel;
@@ -35,7 +44,7 @@ import treepeater.requestResponse.toolbar.RequestResponseToolbarListener;
 import treepeater.tree.RequestTreeNode;
 import treepeater.draggable.RequestTreeNodeSimple;
 
-public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarListener {
+public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarListener, RepeaterTabAgentBridge {
     private static final Dimension MIN_LEFT_PANEL_SIZE = new Dimension(240, 0);
 
     private static final int EXPAND_PANEL_MIN_OPEN_WIDTH = 120;
@@ -67,7 +76,7 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         this.requestResponseTabbedPane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
         this.tabMap = new HashMap<>();
 
-        this.sideToolbar = new RequestResponseToolbar(this.model, this::agentToolContextForSelectedTab);
+        this.sideToolbar = new RequestResponseToolbar(this.model, this);
         this.sideToolbar.addToolbarListener(this);
         this.expandPanel = this.sideToolbar.getToolbarPanel();
 
@@ -167,9 +176,124 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         this.sideToolbar.applyLocalTheme();
     }
 
-    private AgentToolContext agentToolContextForSelectedTab() {
+    @Override
+    public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
+        final AgentToolContext[] holder = new AgentToolContext[1];
+        Runnable r = () -> holder[0] = this.contextForAgentOnEdt(requestNodeId);
+        try {
+            if (SwingUtilities.isEventDispatchThread()) {
+                r.run();
+            } else {
+                SwingUtilities.invokeAndWait(r);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (InvocationTargetException e) {
+            Throwable c = e.getCause();
+            if (c instanceof RuntimeException re) {
+                throw re;
+            }
+            if (c instanceof Error err) {
+                throw err;
+            }
+            return null;
+        }
+        return holder[0];
+    }
+
+    @Override
+    public int uiSelectedRequestNodeIdForToolCard() {
         RequestResponsePanel p = this.getSelectedRequestResponsePanel();
-        return p != null ? p.buildAgentToolContextForAi() : null;
+        return p != null ? p.getRequestNodeId() : Integer.MIN_VALUE;
+    }
+
+    private AgentToolContext contextForAgentOnEdt(OptionalInt requestNodeId) {
+        if (requestNodeId.isEmpty()) {
+            RequestResponsePanel p = this.getSelectedRequestResponsePanel();
+            return p != null ? p.buildAgentToolContextForAi() : null;
+        }
+        int id = requestNodeId.getAsInt();
+        for (RequestTreeNode n : this.model.getTabs()) {
+            if (n.getId() == id) {
+                RequestResponsePanel p = this.tabMap.get(n);
+                return p != null ? p.buildAgentToolContextForAi() : null;
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public String searchTabs(int offset, int pageSize, String queryOrNull) {
+        final String[] holder = new String[1];
+        Runnable r = () -> holder[0] = this.searchTabsOnEdt(offset, pageSize, queryOrNull);
+        try {
+            if (SwingUtilities.isEventDispatchThread()) {
+                r.run();
+            } else {
+                SwingUtilities.invokeAndWait(r);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return HttpTargetTools.formatSearchTabsResponse(0, Math.max(0, offset), pageSize, false, List.of());
+        } catch (InvocationTargetException e) {
+            return "{\"error\":\"search_tabs failed\"}";
+        }
+        return holder[0] != null ? holder[0] : "{}";
+    }
+
+    private String searchTabsOnEdt(int offset, int pageSize, String queryOrNull) {
+        String qRaw = queryOrNull != null ? queryOrNull.trim() : "";
+        boolean filter = !qRaw.isEmpty();
+        List<RequestTreeNode> tabs = this.model.getTabs();
+        List<SearchTabRow> matched = new ArrayList<>();
+        Component selected = this.requestResponseTabbedPane.getSelectedComponent();
+
+        for (RequestTreeNode node : tabs) {
+            RequestResponsePanel p = this.tabMap.get(node);
+            String method = "";
+            String url = "";
+            if (p != null) {
+                HttpRequest req = p.getLiveRequestFromEditor();
+                if (req != null) {
+                    try {
+                        String m = req.method();
+                        method = m != null ? m : "";
+                    } catch (Exception ignored) {
+                    }
+                    try {
+                        String u = req.url();
+                        url = u != null ? u : "";
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+            String title = node.getName() != null ? node.getName() : "";
+            if (!filter || RepeaterTabQueryMatcher.matches(qRaw, method, url, title)) {
+                boolean isSel = p != null && p == selected;
+                matched.add(buildSearchTabRow(node.getId(), title, isSel, method, url));
+            }
+        }
+        int total = matched.size();
+        int off = offset;
+        if (off < 0) {
+            off = 0;
+        }
+        if (off > total) {
+            off = total;
+        }
+        int end = Math.min(off + pageSize, total);
+        List<SearchTabRow> page = matched.subList(off, end);
+        boolean hasMore = end < total;
+        return HttpTargetTools.formatSearchTabsResponse(total, off, pageSize, hasMore, page);
+    }
+
+    private static SearchTabRow buildSearchTabRow(int id, String title, boolean selected, String method, String url) {
+        int max = HttpTargetTools.MAX_TAB_LIST_URL_CHARS;
+        String urlSafe = url != null ? url : "";
+        boolean trunc = urlSafe.length() > max;
+        String u = trunc ? urlSafe.substring(0, max) : urlSafe;
+        return new SearchTabRow(id, title, selected, method != null ? method : "", u, trunc);
     }
 
     private RequestResponsePanel getSelectedRequestResponsePanel() {

@@ -16,6 +16,7 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.OptionalInt;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 import java.util.logging.Level;
@@ -90,6 +91,9 @@ public final class HttpTargetTools {
     /** Send the current repeater request and wait for the response; tool result contains only HTTP status_code. */
     public static final String SEND_CURRENT_HTTP_REQUEST = "send_current_http_request";
 
+    /** Paginated list or search of open repeater tabs (live method/URL and title). */
+    public static final String SEARCH_TABS = "search_tabs";
+
     /**
      * Batch semantic mutations on the current request (headers, cookies, JSON Pointer, XPath, method, URL). Use
      * {@code action} {@code set} vs {@code remove}; literal JSON null in the body uses {@code set} with {@code value}
@@ -127,38 +131,52 @@ public final class HttpTargetTools {
      */
     private static final int MAX_TOOL_RESULT_CHARS = 96_000;
 
-    private static final String EMPTY_PARAMS_SCHEMA =
-            """
-            {"type":"object","properties":{},"additionalProperties":false}\
-            """;
+    private static final int DEFAULT_TAB_PAGE_SIZE = 10;
+    private static final int MAX_TAB_PAGE_SIZE = 50;
+
+    /** Max URL characters per row in {@link #SEARCH_TABS} results before truncation. */
+    public static final int MAX_TAB_LIST_URL_CHARS = 512;
+
+    private static final String REQ_NODE_ID_PROP =
+            "\"request_node_id\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Open repeater tab id from search_tabs rows; omit to use the UI-selected tab.\"}";
+
+    private static final String OPTIONAL_TAB_PARAMS_SCHEMA =
+            "{\"type\":\"object\",\"properties\":{" + REQ_NODE_ID_PROP + "},\"additionalProperties\":false}";
 
     private static final String READ_MESSAGE_SCHEMA =
-            """
-            {"type":"object","properties":{"side":{"type":"string","enum":["request","response"],"description":"Whether to read the stored request or response."},"history_index":{"type":"integer","minimum":0,"description":"0-based history index; omit for the current entry."},"offset":{"type":"integer","minimum":0,"default":0,"description":"Byte offset into the raw wire message."},"max_bytes":{"type":"integer","minimum":1,"maximum":65536,"default":4096,"description":"Maximum bytes to return in this call."}},"required":["side"],"additionalProperties":false}\
-            """;
+            "{\"type\":\"object\",\"properties\":{"
+                    + REQ_NODE_ID_PROP
+                    + ",\"side\":{\"type\":\"string\",\"enum\":[\"request\",\"response\"],\"description\":\"Whether to read the stored request or response.\"},\"history_index\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"0-based history index; omit for the current entry.\"},\"offset\":{\"type\":\"integer\",\"minimum\":0,\"default\":0,\"description\":\"Byte offset into the raw wire message.\"},\"max_bytes\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":65536,\"default\":4096,\"description\":\"Maximum bytes to return in this call.\"}},\"required\":[\"side\"],\"additionalProperties\":false}";
 
     private static final String SEARCH_MESSAGE_SCHEMA =
-            """
-            {"type":"object","properties":{"side":{"type":"string","enum":["request","response"]},"pattern":{"type":"string","description":"Java java.util.regex pattern; use inline flags (?i), (?m), (?s) as needed."},"history_index":{"type":"integer","minimum":0,"description":"0-based history index; omit for the current entry."},"scope":{"type":"string","enum":["headers","body","all"],"default":"all","description":"headers: only before CRLFCRLF; body: only after; all: full message."},"max_matches":{"type":"integer","minimum":1,"maximum":100,"default":10,"description":"Maximum matches to return."},"context_bytes":{"type":"integer","minimum":0,"maximum":512,"default":64,"description":"Context bytes on each side of each match."}},"required":["side","pattern"],"additionalProperties":false}\
-            """;
+            "{\"type\":\"object\",\"properties\":{"
+                    + REQ_NODE_ID_PROP
+                    + ",\"side\":{\"type\":\"string\",\"enum\":[\"request\",\"response\"]},\"pattern\":{\"type\":\"string\",\"description\":\"Java java.util.regex pattern; use inline flags (?i), (?m), (?s) as needed.\"},\"history_index\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"0-based history index; omit for the current entry.\"},\"scope\":{\"type\":\"string\",\"enum\":[\"headers\",\"body\",\"all\"],\"default\":\"all\",\"description\":\"headers: only before CRLFCRLF; body: only after; all: full message.\"},\"max_matches\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100,\"default\":10,\"description\":\"Maximum matches to return.\"},\"context_bytes\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":512,\"default\":64,\"description\":\"Context bytes on each side of each match.\"}},\"required\":[\"side\",\"pattern\"],\"additionalProperties\":false}";
+
+    private static final String SEARCH_TABS_SCHEMA =
+            "{\"type\":\"object\",\"properties\":{\"offset\":{\"type\":\"integer\",\"minimum\":0,\"default\":0,\"description\":\"Index into the filtered tab list.\"},\"page_size\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":"
+                    + MAX_TAB_PAGE_SIZE
+                    + ",\"default\":"
+                    + DEFAULT_TAB_PAGE_SIZE
+                    + ",\"description\":\"Tabs per page (capped).\"},\"query\":{\"type\":\"string\",\"description\":\"Optional filter: match live request method and URL (e.g. POST /path or full https URL) or tab title substring; case-insensitive.\"}},\"additionalProperties\":false}";
 
     private static final int MAX_SUBSTRING_REPLACEMENTS = 100_000;
 
     private static final String REPLACE_BODY_SCHEMA =
-            """
-            {"type":"object","properties":{"old_text":{"type":"string","description":"Literal text to find (non-empty)."},"new_text":{"type":"string","description":"Replacement text (may be empty to delete matches)."},"max_replacements":{"type":"integer","minimum":1,"maximum":%d,"default":1,"description":"Maximum non-overlapping replacements (left to right). Ignored when replace_all is true."},"replace_all":{"type":"boolean","default":false,"description":"If true, replace every occurrence; max_replacements is ignored."}},"required":["old_text","new_text"],"additionalProperties":false}\
-            """
+            "{\"type\":\"object\",\"properties\":{"
+                    + REQ_NODE_ID_PROP
+                    + ",\"old_text\":{\"type\":\"string\",\"description\":\"Literal text to find (non-empty).\"},\"new_text\":{\"type\":\"string\",\"description\":\"Replacement text (may be empty to delete matches).\"},\"max_replacements\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":%d,\"default\":1,\"description\":\"Maximum non-overlapping replacements (left to right). Ignored when replace_all is true.\"},\"replace_all\":{\"type\":\"boolean\",\"default\":false,\"description\":\"If true, replace every occurrence; max_replacements is ignored.\"}},\"required\":[\"old_text\",\"new_text\"],\"additionalProperties\":false}"
                     .formatted(MAX_SUBSTRING_REPLACEMENTS);
 
     private static final String PATCH_LINES_SCHEMA =
-            """
-            {"type":"object","properties":{"start_line":{"type":"integer","minimum":1,"description":"First line to replace (1-based, inclusive)."},"end_line":{"type":"integer","minimum":1,"description":"Last line to replace (1-based, inclusive)."},"content":{"type":"string","description":"New text for that range; line breaks may be \\\\n or any Unicode line ending (split with Java \\\\R)."}},"required":["start_line","end_line","content"],"additionalProperties":false}\
-            """;
+            "{\"type\":\"object\",\"properties\":{"
+                    + REQ_NODE_ID_PROP
+                    + ",\"start_line\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"First line to replace (1-based, inclusive).\"},\"end_line\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Last line to replace (1-based, inclusive).\"},\"content\":{\"type\":\"string\",\"description\":\"New text for that range; line breaks may be \\\\n or any Unicode line ending (split with Java \\\\R).\"}},\"required\":[\"start_line\",\"end_line\",\"content\"],\"additionalProperties\":false}";
 
     private static final String SET_BODY_SCHEMA =
-            """
-            {"type":"object","properties":{"body_utf8":{"type":"string","description":"Full new body as UTF-8 text."},"body_base64":{"type":"string","description":"Full new body as standard Base64 (mutually exclusive with body_utf8)."}},"additionalProperties":false}\
-            """;
+            "{\"type\":\"object\",\"properties\":{"
+                    + REQ_NODE_ID_PROP
+                    + ",\"body_utf8\":{\"type\":\"string\",\"description\":\"Full new body as UTF-8 text.\"},\"body_base64\":{\"type\":\"string\",\"description\":\"Full new body as standard Base64 (mutually exclusive with body_utf8).\"}},\"additionalProperties\":false}";
 
     private static final int MAX_SEMANTIC_OPERATIONS = 32;
 
@@ -196,7 +214,9 @@ public final class HttpTargetTools {
                     + ",\"additionalProperties\":false}";
 
     private static final String APPLY_SEMANTIC_CHANGES_SCHEMA =
-            "{\"type\":\"object\",\"required\":[\"operations\"],\"properties\":{\"operations\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":"
+            "{\"type\":\"object\",\"required\":[\"operations\"],\"properties\":{"
+                    + REQ_NODE_ID_PROP
+                    + ",\"operations\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":"
                     + MAX_SEMANTIC_OPERATIONS
                     + ",\"items\":"
                     + SEMANTIC_OPERATION_ITEM_SCHEMA
@@ -211,8 +231,17 @@ public final class HttpTargetTools {
                         "Returns the current repeater HTTP target (what is configured for this tab right now): "
                                 + "scheme, host, port, SNI flag, method, full URL, and path, plus a send-history object "
                                 + "(current index, prev/next, entries with index/time/target label). "
+                                + "Optional `request_node_id` selects an open tab (from search_tabs); omit for the UI-selected tab. "
                                 + "Use read_http_message or search_http_message to inspect the raw request/response for a past send.",
-                        EMPTY_PARAMS_SCHEMA),
+                        OPTIONAL_TAB_PARAMS_SCHEMA),
+                new ChatToolDefinition(
+                        SEARCH_TABS,
+                        "Lists or searches open repeater tabs with pagination. Omit or blank `query` for all tabs (UI order). "
+                                + "With `query`, each tab matches if the live request method+URL matches (e.g. `POST /api/foo` or a "
+                                + "full https URL substring) **or** the tab title contains the query (case-insensitive). "
+                                + "Use returned `request_node_id` on other HTTP tools. Defaults: offset 0, page_size "
+                                + DEFAULT_TAB_PAGE_SIZE + " (max " + MAX_TAB_PAGE_SIZE + ").",
+                        SEARCH_TABS_SCHEMA),
                 new ChatToolDefinition(
                         READ_HTTP_MESSAGE,
                         "Reads a byte range of the raw HTTP request or response for one history entry (start-line + "
@@ -272,8 +301,9 @@ public final class HttpTargetTools {
                         SEND_CURRENT_HTTP_REQUEST,
                         "Sends the **current** repeater request (live editor, with target applied) and waits until the "
                                 + "response is received. Updates the response pane and send history like the Send button. "
-                                + "Returns only the HTTP status_code in the tool result (no body or headers).",
-                        EMPTY_PARAMS_SCHEMA));
+                                + "Returns only the HTTP status_code in the tool result (no body or headers). "
+                                + "Optional `request_node_id` selects which open tab to send from.",
+                        OPTIONAL_TAB_PARAMS_SCHEMA));
     }
 
     /**
@@ -284,7 +314,7 @@ public final class HttpTargetTools {
             return null;
         }
         return switch (toolName) {
-            case GET_CURRENT_HTTP_TARGET, READ_HTTP_MESSAGE, SEARCH_HTTP_MESSAGE -> ToolActionLevel.READ_ONLY;
+            case GET_CURRENT_HTTP_TARGET, READ_HTTP_MESSAGE, SEARCH_HTTP_MESSAGE, SEARCH_TABS -> ToolActionLevel.READ_ONLY;
             case REPLACE_IN_HTTP_REQUEST_BODY,
                     PATCH_HTTP_REQUEST_BODY_LINES,
                     SET_HTTP_REQUEST_BODY,
@@ -320,17 +350,29 @@ public final class HttpTargetTools {
     }
 
     /**
-     * Dispatches built-in tools against a snapshot supplier (typically the live request editor + history).
+     * Dispatches built-in tools; resolves {@link AgentToolContext} per optional {@code request_node_id} on the bridge.
      */
-    public static String execute(String toolName, String argumentsJson, AgentToolContext ctx) {
-        if (ctx == null) {
-            return "{\"error\":\"no target context\"}";
+    public static String execute(String toolName, String argumentsJson, RepeaterTabAgentBridge bridge) {
+        if (bridge == null) {
+            return errorJson("no bridge");
         }
         JsonNode args;
         try {
             args = parseArgs(argumentsJson);
         } catch (Exception e) {
             return errorJson("invalid tool arguments JSON");
+        }
+        if (SEARCH_TABS.equals(toolName)) {
+            try {
+                return capResult(searchTabs(bridge, args));
+            } catch (Exception e) {
+                return errorJson(e.getMessage() != null ? e.getMessage() : "tool error");
+            }
+        }
+        OptionalInt nodeId = parseRequestNodeId(args);
+        AgentToolContext ctx = bridge.contextForAgent(nodeId);
+        if (ctx == null) {
+            return errorJson("no target context");
         }
         String result;
         try {
@@ -349,6 +391,103 @@ public final class HttpTargetTools {
             return errorJson(e.getMessage() != null ? e.getMessage() : "tool error");
         }
         return capResult(result);
+    }
+
+    /**
+     * Same as {@link #execute(String, String, RepeaterTabAgentBridge)} with a fixed context (tests; {@link #SEARCH_TABS} unsupported).
+     */
+    public static String execute(String toolName, String argumentsJson, AgentToolContext ctx) {
+        return execute(toolName, argumentsJson, RepeaterTabAgentBridge.singleTab(ctx));
+    }
+
+    /**
+     * History index for tool transcript labels when the tool targets a specific tab via {@code request_node_id}.
+     */
+    public static int viewerHistoryIndexForToolCard(String toolName, String argumentsJson, RepeaterTabAgentBridge bridge) {
+        if (bridge == null || SEARCH_TABS.equals(toolName)) {
+            return Integer.MIN_VALUE;
+        }
+        try {
+            JsonNode args = parseArgs(argumentsJson);
+            AgentToolContext ctx = bridge.contextForAgent(parseRequestNodeId(args));
+            return ctx != null ? ctx.currentHistoryIndex() : Integer.MIN_VALUE;
+        } catch (Exception e) {
+            return Integer.MIN_VALUE;
+        }
+    }
+
+    /** UI-selected tab id for {@link #humanToolUsage(String, String, int, int)}; {@link Integer#MIN_VALUE} if unknown. */
+    public static int uiSelectedRequestNodeIdForToolCard(RepeaterTabAgentBridge bridge) {
+        return bridge != null ? bridge.uiSelectedRequestNodeIdForToolCard() : Integer.MIN_VALUE;
+    }
+
+    private static OptionalInt parseRequestNodeId(JsonNode args) {
+        if (args == null) {
+            return OptionalInt.empty();
+        }
+        JsonNode n = argFirst(args, "request_node_id", "requestNodeId");
+        if (n == null || n.isNull() || !n.isNumber()) {
+            return OptionalInt.empty();
+        }
+        int v = n.intValue();
+        if (v < 1) {
+            return OptionalInt.empty();
+        }
+        return OptionalInt.of(v);
+    }
+
+    private static String searchTabs(RepeaterTabAgentBridge bridge, JsonNode args) {
+        int offset = 0;
+        JsonNode offN = argFirst(args, "offset");
+        if (offN != null && offN.isNumber()) {
+            offset = offN.intValue();
+        }
+        if (offset < 0) {
+            offset = 0;
+        }
+        int pageSize = DEFAULT_TAB_PAGE_SIZE;
+        JsonNode psN = argFirst(args, "page_size", "pageSize");
+        if (psN != null && psN.isNumber()) {
+            pageSize = psN.intValue();
+        }
+        if (pageSize < 1) {
+            pageSize = DEFAULT_TAB_PAGE_SIZE;
+        }
+        pageSize = Math.min(pageSize, MAX_TAB_PAGE_SIZE);
+        String query = argTextAny(args, "query", "q", "search");
+        if (query.isEmpty()) {
+            query = null;
+        }
+        return bridge.searchTabs(offset, pageSize, query);
+    }
+
+    /** JSON body for {@link RepeaterTabAgentBridge#searchTabs(int, int, String)}. */
+    public static String formatSearchTabsResponse(
+            int total, int offset, int pageSize, boolean hasMore, List<SearchTabRow> rows) {
+        ObjectNode root = JSON.createObjectNode();
+        root.put("total", total);
+        root.put("offset", offset);
+        root.put("page_size", pageSize);
+        root.put("has_more", hasMore);
+        if (hasMore) {
+            root.put("next_offset", offset + rows.size());
+        }
+        ArrayNode arr = root.putArray("tabs");
+        for (SearchTabRow r : rows) {
+            arr.add(searchTabRowToObject(r));
+        }
+        return write(root);
+    }
+
+    private static ObjectNode searchTabRowToObject(SearchTabRow r) {
+        ObjectNode o = JSON.createObjectNode();
+        o.put("request_node_id", r.requestNodeId());
+        o.put("title", r.title() != null ? r.title() : "");
+        o.put("selected", r.selected());
+        o.put("method", r.method() != null ? r.method() : "");
+        o.put("url", r.url() != null ? r.url() : "");
+        o.put("url_truncated", r.urlTruncated());
+        return o;
     }
 
     /**
@@ -404,6 +543,7 @@ public final class HttpTargetTools {
     private static String targetWithHistoryJson(AgentToolContext ctx) {
         try {
             ObjectNode n = (ObjectNode) JSON.readTree(ctx.target().toJson());
+            n.put("request_node_id", ctx.requestNodeId());
             n.set("history", buildHistoryStateObject(ctx));
             return write(n);
         } catch (Exception e) {
@@ -1940,6 +2080,16 @@ public final class HttpTargetTools {
      *     {@code history_index} in the tool args, the "· history #n" suffix is omitted.
      */
     public static HumanToolUsage humanToolUsage(String toolName, String argumentsJson, int viewerHistoryIndex) {
+        return humanToolUsage(toolName, argumentsJson, viewerHistoryIndex, Integer.MIN_VALUE);
+    }
+
+    /**
+     * @param uiSelectedRequestNodeId {@link RepeaterTabAgentBridge#uiSelectedRequestNodeIdForToolCard()}; used to add
+     *     {@code · node id n} to titles and to omit that suffix when {@code request_node_id} matches the UI-selected
+     *     tab. {@link Integer#MIN_VALUE} skips suffix unless {@code request_node_id} is set in args.
+     */
+    public static HumanToolUsage humanToolUsage(
+            String toolName, String argumentsJson, int viewerHistoryIndex, int uiSelectedRequestNodeId) {
         JsonNode args;
         try {
             args = parseArgs(argumentsJson);
@@ -1956,8 +2106,10 @@ public final class HttpTargetTools {
                         ? "Response"
                         : "request".equals(sideNorm) ? "Request" : "";
         String hist = formatHistoryIndexArg(args, viewerHistoryIndex);
+        String nodeSuf = formatRequestNodeIdSuffix(args, uiSelectedRequestNodeId);
         return switch (toolName) {
-            case GET_CURRENT_HTTP_TARGET -> new HumanToolUsage("Getting current repeater target and send history", "");
+            case GET_CURRENT_HTTP_TARGET ->
+                    new HumanToolUsage("Getting current repeater target and send history" + nodeSuf, "");
             case READ_HTTP_MESSAGE -> {
                 String head =
                         sideLabel.isEmpty()
@@ -1970,6 +2122,7 @@ public final class HttpTargetTools {
                 int offset = readOffsetArg(args);
                 int maxBytes = readMaxBytesForReadMessage(args);
                 b.append(" · offset ").append(offset).append(", max ").append(maxBytes).append(" B");
+                b.append(nodeSuf);
                 yield new HumanToolUsage(b.toString(), "");
             }
             case SEARCH_HTTP_MESSAGE -> {
@@ -1987,6 +2140,7 @@ public final class HttpTargetTools {
                 }
                 String pat = argTextAny(args, "pattern", "regex", "re");
                 String det = pat.isEmpty() ? "" : quotedSnippet(pat, 96);
+                b.append(nodeSuf);
                 yield new HumanToolUsage(b.toString(), det);
             }
             case REPLACE_IN_HTTP_REQUEST_BODY -> {
@@ -2014,7 +2168,7 @@ public final class HttpTargetTools {
                 } else if (maxRep > 1) {
                     d.append(" · up to ").append(maxRep).append(" time(s)");
                 }
-                yield new HumanToolUsage("Replace text in request body", d.toString());
+                yield new HumanToolUsage("Replace text in request body" + nodeSuf, d.toString());
             }
             case PATCH_HTTP_REQUEST_BODY_LINES -> {
                 int sl = jsonToInt(argFirst(args, "start_line", "startLine"));
@@ -2025,14 +2179,32 @@ public final class HttpTargetTools {
                 String det =
                         "Lines " + sl + "–" + el
                                 + (preview.isEmpty() ? "" : " · new text: " + preview);
-                yield new HumanToolUsage("Patch request body line range", det);
+                yield new HumanToolUsage("Patch request body line range" + nodeSuf, det);
             }
-            case SET_HTTP_REQUEST_BODY -> new HumanToolUsage("Setting full request body", "");
+            case SET_HTTP_REQUEST_BODY -> new HumanToolUsage("Setting full request body" + nodeSuf, "");
             case APPLY_HTTP_REQUEST_SEMANTIC_CHANGES ->
-                    new HumanToolUsage("Apply semantic request changes", formatSemanticOperationsHumanDetail(args));
-            case SEND_CURRENT_HTTP_REQUEST -> new HumanToolUsage(
-                    "Send current HTTP request", "Sends the in-editor request and waits for the response (status only)");
-            default -> new HumanToolUsage("Working…", "");
+                    new HumanToolUsage(
+                            "Apply semantic request changes" + nodeSuf, formatSemanticOperationsHumanDetail(args));
+            case SEND_CURRENT_HTTP_REQUEST ->
+                    new HumanToolUsage(
+                            "Send current HTTP request" + nodeSuf,
+                            "Sends the in-editor request and waits for the response (status only)");
+            case SEARCH_TABS -> {
+                int off = 0;
+                JsonNode offN = argFirst(args, "offset");
+                if (offN != null && offN.isNumber()) {
+                    off = Math.max(0, offN.intValue());
+                }
+                int ps = DEFAULT_TAB_PAGE_SIZE;
+                JsonNode psN = argFirst(args, "page_size", "pageSize");
+                if (psN != null && psN.isNumber()) {
+                    ps = Math.min(MAX_TAB_PAGE_SIZE, Math.max(1, psN.intValue()));
+                }
+                String q = argTextAny(args, "query", "q", "search");
+                String det = q.isEmpty() ? "all tabs" : quotedSnippet(q, 80);
+                yield new HumanToolUsage("Search repeater tabs · offset " + off + ", page " + ps, det);
+            }
+            default -> new HumanToolUsage("Working…" + nodeSuf, "");
         };
     }
 
@@ -2052,6 +2224,42 @@ public final class HttpTargetTools {
             one = one.replace("  ", " ");
         }
         return truncateForStatus(one.trim(), max);
+    }
+
+    /**
+     * When {@code request_node_id} is in args, appends {@code · node id n} unless it matches {@code uiSelectedId}.
+     * When args omit it, appends the UI-selected id if known. Mirrors {@link #formatHistoryIndexArg} for explicit args.
+     */
+    private static String formatRequestNodeIdSuffix(JsonNode args, int uiSelectedId) {
+        if (args == null) {
+            return "";
+        }
+        JsonNode n = argFirst(args, "request_node_id", "requestNodeId");
+        if (n != null && !n.isNull()) {
+            int id;
+            if (n.isNumber()) {
+                id = n.intValue();
+            } else if (n.isTextual()) {
+                try {
+                    id = Integer.parseInt(n.asText().trim());
+                } catch (NumberFormatException e) {
+                    return "";
+                }
+            } else {
+                return "";
+            }
+            if (id < 1) {
+                return "";
+            }
+            if (uiSelectedId != Integer.MIN_VALUE && id == uiSelectedId) {
+                return "";
+            }
+            return " · node id " + id;
+        }
+        if (uiSelectedId != Integer.MIN_VALUE) {
+            return " · node id " + uiSelectedId;
+        }
+        return "";
     }
 
     /**

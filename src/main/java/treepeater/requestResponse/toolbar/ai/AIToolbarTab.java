@@ -6,7 +6,7 @@ import java.awt.Component;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Supplier;
+import java.util.OptionalInt;
 import javax.swing.JComponent;
 import java.lang.reflect.InvocationTargetException;
 
@@ -27,12 +27,14 @@ import treepeater.ai.AgentChatSession;
 import treepeater.ai.AgentChatWorkspace;
 import treepeater.ai.AgentMode;
 import treepeater.ai.AgentModeToolPolicy;
+import treepeater.ai.AgentTabMention;
 import treepeater.ai.AgentToolContext;
 import treepeater.ai.AiModelOption;
 import treepeater.ai.LlmRequestOptions;
 import treepeater.ai.ChatToolExecutor;
 import treepeater.ai.ChatTooling;
 import treepeater.ai.HttpTargetTools;
+import treepeater.ai.RepeaterTabAgentBridge;
 import treepeater.ai.StreamingChatClient;
 import treepeater.ai.anthropic.AnthropicClientConfig;
 import treepeater.ai.anthropic.AnthropicStreamingChatClient;
@@ -46,6 +48,7 @@ import treepeater.icons.WandIcon;
 import treepeater.requestResponse.toolbar.ToolbarIconButton;
 import treepeater.requestResponse.toolbar.ToolbarTabTitle;
 import treepeater.settings.TreepeaterSettings;
+import treepeater.tree.RequestTreeNode;
 
 public class AIToolbarTab implements AIChatHost {
 
@@ -56,15 +59,15 @@ public class AIToolbarTab implements AIChatHost {
     private int nextChatTabIndex = 1;
 
     private final TreepeaterModel model;
-    private final Supplier<AgentToolContext> agentToolContextSupplier;
+    private final RepeaterTabAgentBridge agentBridge;
     private boolean blockTabPersist;
 
-    public AIToolbarTab(TreepeaterModel model, Supplier<AgentToolContext> agentToolContextSupplier) {
+    public AIToolbarTab(TreepeaterModel model, RepeaterTabAgentBridge agentBridge) {
         this.model = model;
         this.button = new ToolbarIconButton(new WandIcon());
         this.content = new JPanel(new BorderLayout());
 
-        this.agentToolContextSupplier = agentToolContextSupplier;
+        this.agentBridge = agentBridge;
         this.disabledInfoArea = null;
 
         this.content.add(this.buildContent(), BorderLayout.CENTER);
@@ -144,25 +147,45 @@ public class AIToolbarTab implements AIChatHost {
     /** Built-in HTTP target tools; approval depends on {@link AgentMode}. */
     @Override
     public ChatTooling chatTooling(AgentMode mode) {
-        if (this.agentToolContextSupplier == null) {
+        if (this.agentBridge == null) {
             return ChatTooling.none();
         }
         AgentMode m = mode != null ? mode : AgentMode.ASK;
-        ChatToolExecutor exec =
-                (name, argsJson) -> HttpTargetTools.execute(name, argsJson, this.agentToolContextSupplier.get());
+        ChatToolExecutor exec = (name, argsJson) -> HttpTargetTools.execute(name, argsJson, this.agentBridge);
         return new ChatTooling(
                 HttpTargetTools.definitions(),
                 exec,
                 () -> {
-                    AgentToolContext c = this.agentToolContextSupplier.get();
+                    AgentToolContext c = this.agentBridge.contextForAgent(OptionalInt.empty());
                     return c != null ? c.currentHistoryIndex() : Integer.MIN_VALUE;
                 },
-                new AgentModeToolPolicy(m));
+                new AgentModeToolPolicy(m),
+                this.agentBridge);
     }
 
     @Override
     public AgentToolContext agentToolContextForToolPreview() {
-        return this.agentToolContextSupplier != null ? this.agentToolContextSupplier.get() : null;
+        return this.agentBridge != null ? this.agentBridge.contextForAgent(OptionalInt.empty()) : null;
+    }
+
+    @Override
+    public List<AgentTabMention> agentTabMentionsForAtPopup() {
+        if (this.model == null) {
+            return List.of();
+        }
+        List<RequestTreeNode> tabs = this.model.getTabs();
+        if (tabs.isEmpty()) {
+            return List.of();
+        }
+        List<AgentTabMention> out = new ArrayList<>(tabs.size());
+        for (RequestTreeNode n : tabs) {
+            RequestTreeNode forPath = this.model.findRequestNodeInTreeById(n.getId());
+            if (forPath == null) {
+                forPath = n;
+            }
+            out.add(new AgentTabMention(n.getId(), AgentTabMention.slashPathForNode(forPath)));
+        }
+        return out;
     }
 
     @Override

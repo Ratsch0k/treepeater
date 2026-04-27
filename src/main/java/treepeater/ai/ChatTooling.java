@@ -12,18 +12,29 @@ import java.util.function.IntSupplier;
  * @param currentHistoryIndexSupplier invoked when formatting tool status lines; returns the tab's current send-history
  *     index, or {@link Integer#MIN_VALUE} if unknown.
  * @param toolRunPolicy which tools need user approval before execution (never blocks outright).
+ * @param agentBridge when non-null, tool cards use {@link HttpTargetTools#viewerHistoryIndexForToolCard} for the tab in
+ *     {@code request_node_id}
  */
 public record ChatTooling(
         List<ChatToolDefinition> tools,
         ChatToolExecutor executor,
         IntSupplier currentHistoryIndexSupplier,
-        ToolRunPolicy toolRunPolicy) {
+        ToolRunPolicy toolRunPolicy,
+        RepeaterTabAgentBridge agentBridge) {
     public ChatTooling {
         Objects.requireNonNull(toolRunPolicy, "toolRunPolicy");
     }
 
+    public ChatTooling(
+            List<ChatToolDefinition> tools,
+            ChatToolExecutor executor,
+            IntSupplier currentHistoryIndexSupplier,
+            ToolRunPolicy toolRunPolicy) {
+        this(tools, executor, currentHistoryIndexSupplier, toolRunPolicy, null);
+    }
+
     public static ChatTooling none() {
-        return new ChatTooling(List.of(), null, () -> Integer.MIN_VALUE, new AgentModeToolPolicy(AgentMode.ASK));
+        return new ChatTooling(List.of(), null, () -> Integer.MIN_VALUE, new AgentModeToolPolicy(AgentMode.ASK), null);
     }
 
     public boolean isActive() {
@@ -57,8 +68,13 @@ public record ChatTooling(
         }
         String argsJson = tc.argumentsJson();
         String name = tc.name();
+        int histForCard =
+                this.agentBridge != null
+                        ? HttpTargetTools.viewerHistoryIndexForToolCard(name, argsJson, this.agentBridge)
+                        : currentHistoryIndexForToolStatus();
+        int uiNodeForCard = HttpTargetTools.uiSelectedRequestNodeIdForToolCard(this.agentBridge);
         HttpTargetTools.HumanToolUsage label =
-                HttpTargetTools.humanToolUsage(name, argsJson, currentHistoryIndexForToolStatus());
+                HttpTargetTools.humanToolUsage(name, argsJson, histForCard, uiNodeForCard);
         ToolRunPolicy policy = this.toolRunPolicy;
         if (!policy.requiresApproval(name)) {
             session.emit(

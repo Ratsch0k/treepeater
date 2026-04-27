@@ -1,11 +1,13 @@
 package treepeater.requestResponse.toolbar.ai;
 
 import java.awt.Component;
+import java.util.List;
 
 import javax.swing.JComboBox;
 
 import treepeater.Treepeater;
 import treepeater.ai.AgentMode;
+import treepeater.ai.AgentTabMention;
 import treepeater.ai.AgentToolContext;
 import treepeater.ai.AiModelOption;
 import treepeater.ai.ChatTooling;
@@ -32,6 +34,13 @@ public interface AIChatHost {
      */
     default AgentToolContext agentToolContextForToolPreview() {
         return null;
+    }
+
+    /**
+     * Open repeater tabs for the {@code @}-mention popup (slash-separated paths). Default: none.
+     */
+    default List<AgentTabMention> agentTabMentionsForAtPopup() {
+        return List.of();
     }
 
     static boolean isBurpAiEnabled() {

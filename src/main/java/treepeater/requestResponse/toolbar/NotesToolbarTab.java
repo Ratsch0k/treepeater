@@ -10,48 +10,41 @@ import javax.swing.JTextArea;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
+import treepeater.TreepeaterModel;
 import treepeater.icons.NotesIcon;
-import treepeater.tree.RequestTreeNode;
-
 
 public class NotesToolbarTab {
     private final ToolbarIconButton button;
     private final JPanel content;
     private final JTextArea notesArea;
-    private final RequestTreeNode notesTarget;
 
-    public NotesToolbarTab(RequestTreeNode node) {
+    public NotesToolbarTab(TreepeaterModel model) {
         this.button = new ToolbarIconButton(new NotesIcon());
         this.content = new JPanel(new BorderLayout());
 
         this.notesArea = new JTextArea();
+        this.notesArea.setText(model.getGlobalNotes());
         this.notesArea.setLineWrap(true);
         this.notesArea.setWrapStyleWord(true);
 
         this.content.add(this.buildContent(), BorderLayout.CENTER);
 
-        this.notesTarget = node;
-        this.notesArea.setText(node.getNotes());
         this.notesArea.getDocument().addDocumentListener(new DocumentListener() {
             @Override
             public void insertUpdate(DocumentEvent e) {
-                syncNotesToTarget();
+                model.setGlobalNotes(NotesToolbarTab.this.notesArea.getText());
             }
 
             @Override
             public void removeUpdate(DocumentEvent e) {
-                syncNotesToTarget();
+                model.setGlobalNotes(NotesToolbarTab.this.notesArea.getText());
             }
 
             @Override
             public void changedUpdate(DocumentEvent e) {
-                syncNotesToTarget();
+                model.setGlobalNotes(NotesToolbarTab.this.notesArea.getText());
             }
         });
-    }
-
-    private void syncNotesToTarget() {
-        this.notesTarget.setNotes(this.notesArea.getText());
     }
 
     public JButton getButton() {

@@ -33,14 +33,18 @@ public class RequestTreeNode extends TreepeaterNode {
         this.history = new RequestHistory();
     }
 
-    public RequestTreeNode(int id, Status status, String name, HttpRequest request, HttpResponse response, HashSet<TreepeaterNodeListener> l, String notes) {
-        this(id, status, name, request, response, null, l, notes);
-    }
-
     /**
      * Used when reconstructing a node from drag-and-drop transfer data; preserves {@code history} when non-null.
      */
-    public RequestTreeNode(int id, Status status, String name, HttpRequest request, HttpResponse response, RequestHistory history, HashSet<TreepeaterNodeListener> l, String notes) {
+    public RequestTreeNode(
+            int id,
+            Status status,
+            String name,
+            HttpRequest request,
+            HttpResponse response,
+            RequestHistory history,
+            HashSet<TreepeaterNodeListener> l,
+            String notes) {
         super(id, status, name, l);
         this.request = request;
         this.response = response;
@@ -61,6 +65,19 @@ public class RequestTreeNode extends TreepeaterNode {
         return false;
     }
 
+    public String getNotes() {
+        return this.notes != null ? this.notes : "";
+    }
+
+    public void setNotes(String n) {
+        String next = n != null ? n : "";
+        if (next.equals(this.notes)) {
+            return;
+        }
+        this.notes = next;
+        Treepeater.saveState();
+    }
+
     public void setRequest(HttpRequest r) {
         this.request = r;
         Treepeater.saveState();
@@ -68,15 +85,6 @@ public class RequestTreeNode extends TreepeaterNode {
 
     public void setResponse(HttpResponse r) {
         this.response = r;
-        Treepeater.saveState();
-    }
-
-    public String getNotes() {
-        return this.notes != null ? this.notes : "";
-    }
-
-    public void setNotes(String notes) {
-        this.notes = notes != null ? notes : "";
         Treepeater.saveState();
     }
 

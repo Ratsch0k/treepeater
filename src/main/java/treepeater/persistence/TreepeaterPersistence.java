@@ -2,8 +2,10 @@ package treepeater.persistence;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
@@ -16,6 +18,19 @@ import burp.api.montoya.persistence.Persistence;
 import treepeater.Treepeater;
 import treepeater.TreepeaterModel;
 import treepeater.Utilities;
+import treepeater.ai.AgentChatSession;
+import treepeater.ai.AgentChatWorkspace;
+import treepeater.ai.AgentMode;
+import treepeater.ai.ChatMessage;
+import treepeater.ai.ChatRole;
+import treepeater.ai.ChatToolCall;
+import treepeater.ai.anthropic.AnthropicProvider;
+import treepeater.ai.burp.BurpProvider;
+import treepeater.ai.model.EffortLevel;
+import treepeater.ai.model.LlmModelRef;
+import treepeater.ai.model.ModelOptions;
+import treepeater.ai.ollama.OllamaProvider;
+import treepeater.ai.openai.OpenAiProvider;
 import treepeater.requestResponse.HistoryEntry;
 import treepeater.requestResponse.RequestHistory;
 import treepeater.requestResponse.Status;
@@ -29,6 +44,7 @@ public class TreepeaterPersistence {
     private final Persistence persistence;
 
     private static final String PERSISTENCE_ROOT = "treepeater_v1";
+    private static final String PERSISTENCE_GLOBAL_UI = "globalUi";
     private static final String PERSISTENCE_TREE = "tree";
     private static final String PERSISTENCE_TABS = "tabs";
     private static final String PERSISTENCE_CHILDREN = "children";
@@ -70,6 +86,43 @@ public class TreepeaterPersistence {
     private static final String PERSISTENCE_STATUS_KEY_BG_DARK = "keyBgDark";
     private static final String PERSISTENCE_STATUS_KEY_BORDER_DARK = "keyBorderDark";
 
+    private static final String PERSISTENCE_AGENT_CHATS = "agentChats";
+    private static final String PERSISTENCE_AGENT_CHATS_VERSION = "agentChatsVersion";
+    private static final int AGENT_CHATS_VERSION = 1;
+    private static final String PERSISTENCE_AGENT_SELECTED_TAB = "agentSelectedTab";
+    private static final String PERSISTENCE_AGENT_NEXT_TAB_INDEX = "agentNextTabIndex";
+    private static final String PERSISTENCE_AGENT_SESSION = "s";
+    private static final String PERSISTENCE_AGENT_SESSION_TITLE = "agentTitle";
+    private static final String PERSISTENCE_AGENT_SESSION_MODE = "agentMode";
+    private static final String PERSISTENCE_AGENT_SESSION_MODEL = "agentModel";
+    // New (post-refactor) keys:
+    private static final String PERSISTENCE_MODEL_PROVIDER_ID = "modelProviderId";
+    private static final String PERSISTENCE_MODEL_ID = "modelId";
+    private static final String PERSISTENCE_MODEL_DISPLAY = "modelDisplayName";
+    private static final String PERSISTENCE_MODEL_OPTION_VALUES = "modelOptionValues";
+    // Legacy keys (read-only fallback for sessions saved before the model/options refactor):
+    private static final String PERSISTENCE_MODEL_LABEL_LEGACY = "modelLabel";
+    private static final String PERSISTENCE_MODEL_KIND_LEGACY = "modelKind";
+    private static final String PERSISTENCE_MODEL_OLLAMA_LEGACY = "ollamaModel";
+    private static final String PERSISTENCE_MODEL_ANTHROPIC_LEGACY = "anthropicModel";
+    private static final String PERSISTENCE_MODEL_OPENAI_DEP_LEGACY = "openAiDeployment";
+    private static final String PERSISTENCE_LLM_OAI_REASON_LEGACY = "llmOaiReasoning";
+    private static final String PERSISTENCE_LLM_ANTH_EFFORT_LEGACY = "llmAnthropicEffort";
+    private static final String PERSISTENCE_LLM_ANTH_THINK_LEGACY = "llmAnthropicExtendedThinking";
+    private static final String PERSISTENCE_AGENT_MESSAGES = "agentMessages";
+    private static final String PERSISTENCE_AGENT_MESSAGE = "m";
+    private static final String PERSISTENCE_MSG_ROLE = "msgRole";
+    private static final String PERSISTENCE_MSG_CONTENT = "msgContent";
+    private static final String PERSISTENCE_MSG_TOOL_CALL_ID = "msgToolCallId";
+    private static final String PERSISTENCE_MSG_TOOL_CALLS = "msgToolCalls";
+    private static final String PERSISTENCE_TOOL_CALL = "call";
+    private static final String PERSISTENCE_TOOL_CALL_ID = "toolId";
+    private static final String PERSISTENCE_TOOL_CALL_NAME = "toolName";
+    private static final String PERSISTENCE_TOOL_CALL_ARGS = "toolArgsJson";
+
+    private record LegacyNodeUiData(String notes, AgentChatWorkspace workspace) {
+    }
+
     public TreepeaterPersistence(Persistence persistence) {
         this.persistence = persistence;
     }
@@ -89,6 +142,11 @@ public class TreepeaterPersistence {
             root.setInteger(PERSISTENCE_ACTIVE_NODE, -1);
         }
         root.setChildObject(PERSISTENCE_TABS, saveTabs(model.getTabs()));
+
+        PersistedObject globalUi = PersistedObject.persistedObject();
+        globalUi.setString(PERSISTENCE_NOTES, model.getGlobalNotes());
+        globalUi.setChildObject(PERSISTENCE_AGENT_CHATS, saveAgentChatWorkspace(model.getGlobalAgentChatWorkspace()));
+        root.setChildObject(PERSISTENCE_GLOBAL_UI, globalUi);
 
         extensionData.setChildObject(PERSISTENCE_ROOT, root);
 
@@ -225,8 +283,9 @@ public class TreepeaterPersistence {
 
         Integer requestCount = root.getInteger(PERSISTENCE_REQUEST_COUNT);
 
-        RequestTree tree = this.loadTree(root.getChildObject(PERSISTENCE_TREE));
-    
+        Map<Integer, LegacyNodeUiData> legacyUiByNodeId = new HashMap<>();
+        RequestTree tree = this.loadTree(root.getChildObject(PERSISTENCE_TREE), legacyUiByNodeId);
+
         HashMap<Integer, RequestTreeNode> nodeMap = this.buildNodeIdMap(tree);
 
         LinkedList<RequestTreeNode> tabs = this.loadTabs(root.getChildObject(PERSISTENCE_TABS), nodeMap);
@@ -237,9 +296,24 @@ public class TreepeaterPersistence {
             activeNode = nodeMap.get(activeNodeId);
         }
 
-        TreepeaterModel model = new TreepeaterModel(tree, tabs, activeNode, requestCount.intValue());
+        String globalNotes = "";
+        AgentChatWorkspace globalWs = AgentChatWorkspace.EMPTY;
+        PersistedObject globalUi = root.getChildObject(PERSISTENCE_GLOBAL_UI);
+        if (globalUi != null) {
+            String p = globalUi.getString(PERSISTENCE_NOTES);
+            globalNotes = p != null ? p : "";
+            if (globalUi.childObjectKeys().contains(PERSISTENCE_AGENT_CHATS)) {
+                globalWs = this.loadAgentChatWorkspace(globalUi.getChildObject(PERSISTENCE_AGENT_CHATS));
+            }
+        } else if (activeNode != null) {
+            LegacyNodeUiData leg = legacyUiByNodeId.get(activeNode.getId());
+            if (leg != null) {
+                globalNotes = leg.notes() != null ? leg.notes() : "";
+                globalWs = leg.workspace() != null ? leg.workspace() : AgentChatWorkspace.EMPTY;
+            }
+        }
 
-        return model;
+        return new TreepeaterModel(tree, tabs, activeNode, requestCount.intValue(), globalNotes, globalWs);
     }
 
     public boolean hasStatusRegistry() {
@@ -312,23 +386,30 @@ public class TreepeaterPersistence {
         throw new IllegalStateException("Invalid persisted status (missing color data): " + id);
     }
 
-    private RequestTree loadTree(PersistedObject treeObject) {
+    private RequestTree loadTree(PersistedObject treeObject, Map<Integer, LegacyNodeUiData> legacyUiByNodeId) {
         RequestTree tree = new RequestTree();
 
+        if (treeObject == null) {
+            return tree;
+        }
+
         PersistedObject rootChild = treeObject.getChildObject(PERSISTENCE_CHILDREN);
+        if (rootChild == null) {
+            return tree;
+        }
 
         int childCount = rootChild.getInteger(PERSISTENCE_SIZE).intValue();
 
         for (int idx = 0; idx < childCount; idx++) {
             PersistedObject childObject = rootChild.getChildObject(PERSISTENCE_CHILDREN + "_" + idx);
-            TreepeaterNode child = this.loadTreeNode(childObject);
+            TreepeaterNode child = this.loadTreeNode(childObject, legacyUiByNodeId);
             tree.insertRootNode(child);
         }
 
         return tree;
     }
 
-    private TreepeaterNode loadTreeNode(PersistedObject nodeObject) {
+    private TreepeaterNode loadTreeNode(PersistedObject nodeObject, Map<Integer, LegacyNodeUiData> legacyUiByNodeId) {
         int id = nodeObject.getInteger(PERSISTENCE_ID).intValue();
         String name = nodeObject.getString(PERSISTENCE_NAME);
         String statusId = nodeObject.getString(PERSISTENCE_STATUS);
@@ -345,13 +426,14 @@ public class TreepeaterPersistence {
             FolderTreeNode folder = new FolderTreeNode(id, status, name);
             for (int idx = 0; idx < childCount; idx++) {
                 PersistedObject childObject = nodeObject.getChildObject(PERSISTENCE_CHILDREN + "_" + idx);
-                TreepeaterNode child = this.loadTreeNode(childObject);
+                TreepeaterNode child = this.loadTreeNode(childObject, legacyUiByNodeId);
                 folder.add(child);
             }
             return folder;
         }
 
         if (TYPE_REQUEST.equals(type)) {
+            this.recordLegacyNodeUiIfPresent(id, nodeObject, legacyUiByNodeId);
             HttpRequest request = nodeObject.getHttpRequest(PERSISTENCE_REQUEST);
             HttpResponse response = nodeObject.getHttpResponse(PERSISTENCE_RESPONSE);
             RequestHistory history = this.loadHistory(nodeObject.getChildObject(PERSISTENCE_HISTORY));
@@ -366,6 +448,7 @@ public class TreepeaterPersistence {
 
             HttpRequest request = nodeObject.getHttpRequest(PERSISTENCE_REQUEST);
             if (request != null) {
+                this.recordLegacyNodeUiIfPresent(id, nodeObject, legacyUiByNodeId);
                 HttpResponse response = nodeObject.getHttpResponse(PERSISTENCE_RESPONSE);
                 PersistedObject historyObj = nodeObject.getChildObject(PERSISTENCE_HISTORY);
                 RequestHistory history = historyObj != null ? this.loadHistory(historyObj) : new RequestHistory();
@@ -377,13 +460,14 @@ public class TreepeaterPersistence {
 
             for (int idx = 0; idx < childCount; idx++) {
                 PersistedObject childObject = nodeObject.getChildObject(PERSISTENCE_CHILDREN + "_" + idx);
-                TreepeaterNode child = this.loadTreeNode(childObject);
+                TreepeaterNode child = this.loadTreeNode(childObject, legacyUiByNodeId);
                 folder.add(child);
             }
             return folder;
         }
 
         // Legacy leaf node -> RequestTreeNode
+        this.recordLegacyNodeUiIfPresent(id, nodeObject, legacyUiByNodeId);
         HttpRequest request = nodeObject.getHttpRequest(PERSISTENCE_REQUEST);
         HttpResponse response = nodeObject.getHttpResponse(PERSISTENCE_RESPONSE);
         PersistedObject historyObj = nodeObject.getChildObject(PERSISTENCE_HISTORY);
@@ -391,6 +475,16 @@ public class TreepeaterPersistence {
         String notesPersisted = nodeObject.getString(PERSISTENCE_NOTES);
         String notes = notesPersisted != null ? notesPersisted : "";
         return new RequestTreeNode(id, status, name, request, response, history, notes);
+    }
+
+    private void recordLegacyNodeUiIfPresent(int id, PersistedObject nodeObject, Map<Integer, LegacyNodeUiData> legacyUiByNodeId) {
+        String notesPersisted = nodeObject.getString(PERSISTENCE_NOTES);
+        String notes = notesPersisted != null ? notesPersisted : "";
+        AgentChatWorkspace agentWs = AgentChatWorkspace.EMPTY;
+        if (nodeObject.childObjectKeys().contains(PERSISTENCE_AGENT_CHATS)) {
+            agentWs = this.loadAgentChatWorkspace(nodeObject.getChildObject(PERSISTENCE_AGENT_CHATS));
+        }
+        legacyUiByNodeId.put(id, new LegacyNodeUiData(notes, agentWs));
     }
 
 
@@ -430,6 +524,251 @@ public class TreepeaterPersistence {
         }
         
         return tabs;
+    }
+
+    private PersistedObject saveAgentChatWorkspace(AgentChatWorkspace ws) {
+        AgentChatWorkspace w = ws != null ? ws : AgentChatWorkspace.EMPTY;
+        PersistedObject o = PersistedObject.persistedObject();
+        o.setInteger(PERSISTENCE_AGENT_CHATS_VERSION, AGENT_CHATS_VERSION);
+        o.setInteger(PERSISTENCE_AGENT_SELECTED_TAB, w.selectedSessionIndex());
+        o.setInteger(PERSISTENCE_AGENT_NEXT_TAB_INDEX, w.nextChatTabIndex());
+        int n = w.sessions().size();
+        o.setInteger(PERSISTENCE_SIZE, n);
+        for (int i = 0; i < n; i++) {
+            o.setChildObject(PERSISTENCE_AGENT_SESSION + "_" + i, saveAgentSession(w.sessions().get(i)));
+        }
+        return o;
+    }
+
+    private PersistedObject saveAgentSession(AgentChatSession s) {
+        PersistedObject o = PersistedObject.persistedObject();
+        o.setString(PERSISTENCE_AGENT_SESSION_TITLE, s.title());
+        o.setString(PERSISTENCE_AGENT_SESSION_MODE, s.agentMode().name());
+        o.setChildObject(PERSISTENCE_AGENT_SESSION_MODEL, saveLlmModelRef(s.modelRef()));
+        o.setChildObject(PERSISTENCE_AGENT_MESSAGES, saveChatMessages(s.conversation()));
+        return o;
+    }
+
+    private PersistedObject saveLlmModelRef(LlmModelRef m) {
+        PersistedObject o = PersistedObject.persistedObject();
+        o.setString(PERSISTENCE_MODEL_PROVIDER_ID, m.providerId());
+        o.setString(PERSISTENCE_MODEL_ID, m.modelId());
+        o.setString(PERSISTENCE_MODEL_DISPLAY, m.displayName());
+        PersistedObject opts = PersistedObject.persistedObject();
+        for (Map.Entry<String, String> e : m.optionValues().entrySet()) {
+            opts.setString(e.getKey(), e.getValue());
+        }
+        o.setChildObject(PERSISTENCE_MODEL_OPTION_VALUES, opts);
+        return o;
+    }
+
+    private PersistedObject saveChatMessages(List<ChatMessage> messages) {
+        PersistedObject o = PersistedObject.persistedObject();
+        o.setInteger(PERSISTENCE_SIZE, messages.size());
+        for (int i = 0; i < messages.size(); i++) {
+            o.setChildObject(PERSISTENCE_AGENT_MESSAGE + "_" + i, saveChatMessage(messages.get(i)));
+        }
+        return o;
+    }
+
+    private PersistedObject saveChatMessage(ChatMessage m) {
+        PersistedObject o = PersistedObject.persistedObject();
+        o.setString(PERSISTENCE_MSG_ROLE, m.role().name());
+        o.setString(PERSISTENCE_MSG_CONTENT, m.content());
+        o.setString(PERSISTENCE_MSG_TOOL_CALL_ID, m.toolCallId());
+        if (m.hasAssistantToolCalls()) {
+            PersistedObject tcRoot = PersistedObject.persistedObject();
+            List<ChatToolCall> calls = m.assistantToolCalls();
+            tcRoot.setInteger(PERSISTENCE_SIZE, calls.size());
+            for (int i = 0; i < calls.size(); i++) {
+                tcRoot.setChildObject(PERSISTENCE_TOOL_CALL + "_" + i, saveToolCall(calls.get(i)));
+            }
+            o.setChildObject(PERSISTENCE_MSG_TOOL_CALLS, tcRoot);
+        }
+        return o;
+    }
+
+    private PersistedObject saveToolCall(ChatToolCall tc) {
+        PersistedObject o = PersistedObject.persistedObject();
+        o.setString(PERSISTENCE_TOOL_CALL_ID, tc.id());
+        o.setString(PERSISTENCE_TOOL_CALL_NAME, tc.name());
+        o.setString(PERSISTENCE_TOOL_CALL_ARGS, tc.argumentsJson());
+        return o;
+    }
+
+    private AgentChatWorkspace loadAgentChatWorkspace(PersistedObject o) {
+        if (o == null) {
+            return AgentChatWorkspace.EMPTY;
+        }
+        int version = 1;
+        if (o.childObjectKeys() != null && o.getInteger(PERSISTENCE_AGENT_CHATS_VERSION) != null) {
+            version = o.getInteger(PERSISTENCE_AGENT_CHATS_VERSION).intValue();
+        }
+        if (version != 1) {
+            return AgentChatWorkspace.EMPTY;
+        }
+        int selected = o.getInteger(PERSISTENCE_AGENT_SELECTED_TAB) != null ? o.getInteger(PERSISTENCE_AGENT_SELECTED_TAB).intValue() : 0;
+        int nextIdx = o.getInteger(PERSISTENCE_AGENT_NEXT_TAB_INDEX) != null ? o.getInteger(PERSISTENCE_AGENT_NEXT_TAB_INDEX).intValue() : 1;
+        int n = o.getInteger(PERSISTENCE_SIZE) != null ? o.getInteger(PERSISTENCE_SIZE).intValue() : 0;
+        List<AgentChatSession> sessions = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            PersistedObject so = o.getChildObject(PERSISTENCE_AGENT_SESSION + "_" + i);
+            if (so != null) {
+                sessions.add(loadAgentSession(so));
+            }
+        }
+        return new AgentChatWorkspace(sessions, selected, nextIdx);
+    }
+
+    private AgentChatSession loadAgentSession(PersistedObject o) {
+        String title = o.getString(PERSISTENCE_AGENT_SESSION_TITLE);
+        if (title == null) {
+            title = "Chat";
+        }
+        String modeS = o.getString(PERSISTENCE_AGENT_SESSION_MODE);
+        AgentMode mode = AgentMode.ASK;
+        if (modeS != null) {
+            try {
+                mode = AgentMode.valueOf(modeS);
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+        LlmModelRef modelRef = loadLlmModelRef(o);
+        List<ChatMessage> messages = loadChatMessages(o.getChildObject(PERSISTENCE_AGENT_MESSAGES));
+        return new AgentChatSession(title, messages, mode, modelRef);
+    }
+
+    /**
+     * Reads the new {@code modelProviderId}/{@code modelId}/{@code modelOptionValues} shape, falling
+     * back to the legacy {@code modelKind}/provider-specific-field layout (with effort/thinking
+     * read from the session-level {@code llm*} keys) when the new keys are absent.
+     */
+    private static LlmModelRef loadLlmModelRef(PersistedObject sessionObj) {
+        PersistedObject mo = sessionObj.getChildObject(PERSISTENCE_AGENT_SESSION_MODEL);
+        if (mo == null) {
+            return null;
+        }
+        String providerId = mo.getString(PERSISTENCE_MODEL_PROVIDER_ID);
+        if (providerId != null && !providerId.isBlank()) {
+            String modelId = mo.getString(PERSISTENCE_MODEL_ID);
+            String displayName = mo.getString(PERSISTENCE_MODEL_DISPLAY);
+            Map<String, String> optionValues = new LinkedHashMap<>();
+            PersistedObject ov = mo.getChildObject(PERSISTENCE_MODEL_OPTION_VALUES);
+            if (ov != null) {
+                for (String key : ov.stringKeys()) {
+                    String v = ov.getString(key);
+                    if (v != null) {
+                        optionValues.put(key, v);
+                    }
+                }
+            }
+            return new LlmModelRef(providerId, modelId, displayName, optionValues);
+        }
+        return loadLegacyLlmModelRef(mo, sessionObj);
+    }
+
+    /**
+     * Translate a pre-refactor model record into the new {@link LlmModelRef} shape. Maps
+     * {@code modelKind} -> {@code providerId}, the per-kind nullable model field -> {@code modelId},
+     * and the session-level {@code llmAnthropicEffort}/{@code llmAnthropicExtendedThinking}/
+     * {@code llmOaiReasoning} keys -> {@link ModelOptions} option values for the relevant provider.
+     */
+    private static LlmModelRef loadLegacyLlmModelRef(PersistedObject mo, PersistedObject sessionObj) {
+        String label = mo.getString(PERSISTENCE_MODEL_LABEL_LEGACY);
+        String displayName = label != null ? label : "";
+        String kindS = mo.getString(PERSISTENCE_MODEL_KIND_LEGACY);
+        if (kindS == null) {
+            return new LlmModelRef(BurpProvider.ID, "", displayName.isEmpty() ? "Burp" : displayName, Map.of());
+        }
+        Map<String, String> optionValues = new LinkedHashMap<>();
+        switch (kindS) {
+            case "ANTHROPIC" -> {
+                String modelId = mo.getString(PERSISTENCE_MODEL_ANTHROPIC_LEGACY);
+                copyLegacyEffort(sessionObj, PERSISTENCE_LLM_ANTH_EFFORT_LEGACY, optionValues);
+                Boolean think = sessionObj.getBoolean(PERSISTENCE_LLM_ANTH_THINK_LEGACY);
+                if (think != null) {
+                    optionValues.put(ModelOptions.EXTENDED_THINKING.id(), Boolean.toString(think));
+                }
+                return new LlmModelRef(AnthropicProvider.ID, nullSafe(modelId), displayName, optionValues);
+            }
+            case "OPENAI" -> {
+                String modelId = mo.getString(PERSISTENCE_MODEL_OPENAI_DEP_LEGACY);
+                copyLegacyEffort(sessionObj, PERSISTENCE_LLM_OAI_REASON_LEGACY, optionValues);
+                return new LlmModelRef(OpenAiProvider.ID, nullSafe(modelId), displayName, optionValues);
+            }
+            case "OLLAMA" -> {
+                String modelId = mo.getString(PERSISTENCE_MODEL_OLLAMA_LEGACY);
+                return new LlmModelRef(OllamaProvider.ID, nullSafe(modelId), displayName, optionValues);
+            }
+            default -> {
+                return new LlmModelRef(BurpProvider.ID, "", displayName.isEmpty() ? "Burp" : displayName, optionValues);
+            }
+        }
+    }
+
+    private static void copyLegacyEffort(PersistedObject sessionObj, String key, Map<String, String> out) {
+        String s = sessionObj.getString(key);
+        if (s == null) {
+            return;
+        }
+        // Both legacy enums (OpenAiReasoningEffort and AnthropicOutputEffort) used names that
+        // line up with the new EffortLevel constants (MINIMAL / LOW / MEDIUM / HIGH / MAX).
+        try {
+            EffortLevel level = EffortLevel.valueOf(s);
+            out.put(ModelOptions.EFFORT.id(), level.name());
+        } catch (IllegalArgumentException ignored) {
+        }
+    }
+
+    private static String nullSafe(String s) {
+        return s != null ? s : "";
+    }
+
+    private static List<ChatMessage> loadChatMessages(PersistedObject o) {
+        if (o == null) {
+            return List.of();
+        }
+        int n = o.getInteger(PERSISTENCE_SIZE) != null ? o.getInteger(PERSISTENCE_SIZE).intValue() : 0;
+        List<ChatMessage> list = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            PersistedObject mo = o.getChildObject(PERSISTENCE_AGENT_MESSAGE + "_" + i);
+            if (mo != null) {
+                list.add(loadChatMessage(mo));
+            }
+        }
+        return list;
+    }
+
+    private static ChatMessage loadChatMessage(PersistedObject o) {
+        String roleS = o.getString(PERSISTENCE_MSG_ROLE);
+        ChatRole role = ChatRole.USER;
+        if (roleS != null) {
+            try {
+                role = ChatRole.valueOf(roleS);
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+        String content = o.getString(PERSISTENCE_MSG_CONTENT);
+        if (content == null) {
+            content = "";
+        }
+        String toolCallId = o.getString(PERSISTENCE_MSG_TOOL_CALL_ID);
+        List<ChatToolCall> calls = new ArrayList<>();
+        if (o.childObjectKeys().contains(PERSISTENCE_MSG_TOOL_CALLS)) {
+            PersistedObject tcRoot = o.getChildObject(PERSISTENCE_MSG_TOOL_CALLS);
+            int n = tcRoot.getInteger(PERSISTENCE_SIZE) != null ? tcRoot.getInteger(PERSISTENCE_SIZE).intValue() : 0;
+            for (int i = 0; i < n; i++) {
+                PersistedObject tco = tcRoot.getChildObject(PERSISTENCE_TOOL_CALL + "_" + i);
+                if (tco != null) {
+                    calls.add(
+                            new ChatToolCall(
+                                    tco.getString(PERSISTENCE_TOOL_CALL_ID),
+                                    tco.getString(PERSISTENCE_TOOL_CALL_NAME),
+                                    tco.getString(PERSISTENCE_TOOL_CALL_ARGS)));
+                }
+            }
+        }
+        return new ChatMessage(role, content, List.copyOf(calls), toolCallId);
     }
 
     private HashMap<Integer, RequestTreeNode> buildNodeIdMap(RequestTree tree) {

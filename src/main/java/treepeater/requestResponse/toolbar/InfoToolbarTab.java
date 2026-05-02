@@ -146,6 +146,11 @@ public class InfoToolbarTab implements RequestResponseChangeListener {
         }
     }
 
+    /** Clears the summary when no request tab is selected. */
+    public void clearDisplay() {
+        this.updateDisplay(null, null, null);
+    }
+
     private JPanel buildContent() {
         JPanel root = new JPanel(new BorderLayout());
         JPanel heading = new ToolbarTabTitle("Info");

@@ -13,6 +13,7 @@ import burp.api.montoya.http.message.responses.HttpResponse;
  * request/response for a given history index (live editors for the current index, frozen {@link
  * treepeater.requestResponse.HistoryEntry} snapshots for others).
  *
+ * @param requestNodeId {@link treepeater.tree.RequestTreeNode#getId()} for the repeater tab this context belongs to
  * @param applyLiveRequest commits the given request to the live repeater editor (current history entry only). Invoked
  *     on the EDT by body-edit tools; null if mutation is unavailable.
  * @param sendCurrentHttpRequest sends the current editor request (after applying target), updates response and history
@@ -20,6 +21,7 @@ import burp.api.montoya.http.message.responses.HttpResponse;
  */
 public record AgentToolContext(
         HttpTargetSnapshot target,
+        int requestNodeId,
         int currentHistoryIndex,
         List<HistoryEntryInfo> historyEntries,
         IntFunction<HttpRequest> requestForHistoryIndex,

@@ -2,11 +2,11 @@ package treepeater.ai.ollama;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Consumer;
-
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.github.ollama4j.Ollama;
@@ -24,10 +24,10 @@ import io.github.ollama4j.utils.Utils;
 import treepeater.ai.ChatMessage;
 import treepeater.ai.ChatRole;
 import treepeater.ai.ChatStreamMessage;
+import treepeater.ai.ChatStreamSession;
 import treepeater.ai.ChatToolCall;
 import treepeater.ai.ChatToolDefinition;
 import treepeater.ai.ChatTooling;
-import treepeater.ai.HttpTargetTools;
 import treepeater.ai.StreamingChatClient;
 
 /**
@@ -48,27 +48,27 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
     public OllamaStreamingChatClient(OllamaClientConfig config) {
         this.config = config;
         this.api = new Ollama(config.baseUrl());
-        this.api.setMaxChatToolCallRetries(16);
+        this.api.setMaxChatToolCallRetries(StreamingChatClient.MAX_AGENT_TOOL_ROUNDS);
     }
 
     @Override
     public List<ChatMessage> streamChat(
-            List<ChatMessage> messages, ChatTooling tooling, Consumer<ChatStreamMessage> onMessage) throws Exception {
+            List<ChatMessage> messages, ChatTooling tooling, ChatStreamSession session) throws Exception {
         if (tooling == null || !tooling.isActive()) {
-            return streamPlain(messages, onMessage, false);
+            return streamPlain(messages, session, false);
         }
         try {
             for (ChatToolDefinition def : tooling.tools()) {
-                this.api.registerTool(toOllamaTool(def, tooling, onMessage));
+                this.api.registerTool(toOllamaTool(def, tooling, session));
             }
-            return streamPlain(messages, onMessage, true);
+            return streamPlain(messages, session, true);
         } finally {
             this.api.deregisterTools();
         }
     }
 
     private List<ChatMessage> streamPlain(
-            List<ChatMessage> messages, Consumer<ChatStreamMessage> onMessage, boolean useTools) throws Exception {
+            List<ChatMessage> messages, ChatStreamSession session, boolean useTools) throws Exception {
         List<OllamaChatMessage> ollamaMessages = new ArrayList<>(messages.size());
         for (ChatMessage m : messages) {
             ollamaMessages.add(toOllama(m));
@@ -90,9 +90,14 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
                     if (msg == null) {
                         return;
                     }
+                    // Per-chunk delta (like {@link OllamaChatMessage#getResponse()}), not cumulative.
+                    String thinking = msg.getThinking();
+                    if (thinking != null && !thinking.isEmpty()) {
+                        session.emit(new ChatStreamMessage.ThinkingDelta(thinking));
+                    }
                     String delta = msg.getResponse();
                     if (delta != null && !delta.isEmpty()) {
-                        onMessage.accept(new ChatStreamMessage.AssistantDelta(delta));
+                        session.emit(new ChatStreamMessage.AssistantDelta(delta));
                     }
                 };
 
@@ -144,10 +149,90 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
         return linked;
     }
 
-    private static Tools.Tool toOllamaTool(
-            ChatToolDefinition def, ChatTooling tooling, Consumer<ChatStreamMessage> onMessage) {
+    /**
+     * ollama4j {@link Tools.Parameters} only supports flat {@link Tools.Property} fields (type, description, enum).
+     * Nested JSON Schema ({@code items}, {@code oneOf}, …) is appended to {@code description} so local models still
+     * see the full operation shape where possible.
+     */
+    static Tools.Parameters ollamaParametersFromJsonSchema(String parametersJsonSchema) {
         Tools.Parameters parameters = new Tools.Parameters();
         parameters.setProperties(new HashMap<>());
+        parameters.setRequired(new ArrayList<>());
+        if (parametersJsonSchema == null || parametersJsonSchema.isBlank()) {
+            return parameters;
+        }
+        final JsonNode root;
+        try {
+            root = JSON.readTree(parametersJsonSchema);
+        } catch (Exception e) {
+            return parameters;
+        }
+        if (!root.isObject()) {
+            return parameters;
+        }
+        JsonNode req = root.get("required");
+        if (req != null && req.isArray()) {
+            List<String> r = new ArrayList<>();
+            req.forEach(
+                    n -> {
+                        if (n != null && n.isTextual()) {
+                            r.add(n.asText());
+                        }
+                    });
+            parameters.setRequired(r);
+        }
+        JsonNode props = root.get("properties");
+        if (props != null && props.isObject()) {
+            for (Iterator<String> it = props.fieldNames(); it.hasNext(); ) {
+                String name = it.next();
+                JsonNode spec = props.get(name);
+                if (spec == null || !spec.isObject()) {
+                    continue;
+                }
+                Tools.Property prop = new Tools.Property();
+                JsonNode t = spec.get("type");
+                prop.setType(t != null && t.isTextual() ? t.asText() : "string");
+                StringBuilder desc = new StringBuilder();
+                JsonNode d = spec.get("description");
+                if (d != null && d.isTextual()) {
+                    desc.append(d.asText());
+                }
+                JsonNode items = spec.get("items");
+                if (items != null) {
+                    if (desc.length() > 0) {
+                        desc.append(' ');
+                    }
+                    desc.append("JSON Schema items:");
+                    String itemsStr = items.toString();
+                    int cap = 6000;
+                    if (itemsStr.length() > cap) {
+                        itemsStr = itemsStr.substring(0, cap) + "…";
+                    }
+                    desc.append(itemsStr);
+                }
+                prop.setDescription(desc.toString());
+                JsonNode en = spec.get("enum");
+                if (en != null && en.isArray()) {
+                    List<String> vals = new ArrayList<>();
+                    en.forEach(
+                            n -> {
+                                if (n != null && n.isTextual()) {
+                                    vals.add(n.asText());
+                                }
+                            });
+                    if (!vals.isEmpty()) {
+                        prop.setEnumValues(vals);
+                    }
+                }
+                parameters.getProperties().put(name, prop);
+            }
+        }
+        return parameters;
+    }
+
+    private static Tools.Tool toOllamaTool(
+            ChatToolDefinition def, ChatTooling tooling, ChatStreamSession session) {
+        Tools.Parameters parameters = ollamaParametersFromJsonSchema(def.parametersJsonSchema());
 
         Tools.ToolSpec spec =
                 Tools.ToolSpec.builder()
@@ -160,13 +245,7 @@ public class OllamaStreamingChatClient implements StreamingChatClient {
                 args -> {
                     try {
                         String argsJson = JSON.writeValueAsString(args);
-                        onMessage.accept(
-                                new ChatStreamMessage.ToolUsage(
-                                        def.name(),
-                                        argsJson,
-                                        HttpTargetTools.humanReadableUsage(
-                                                def.name(), argsJson, tooling.currentHistoryIndexForToolStatus())));
-                        return tooling.executor().invoke(def.name(), argsJson);
+                        return tooling.executeWithApproval(new ChatToolCall("", def.name(), argsJson), session);
                     } catch (Exception e) {
                         throw new RuntimeException(e);
                     }

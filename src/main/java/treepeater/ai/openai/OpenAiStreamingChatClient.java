@@ -1,10 +1,10 @@
 package treepeater.ai.openai;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
-import java.util.function.Consumer;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -23,16 +23,17 @@ import com.openai.models.chat.completions.ChatCompletionChunk;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall;
 import com.openai.models.chat.completions.ChatCompletionMessageToolCall;
+import com.openai.models.chat.completions.ChatCompletionStreamOptions;
 import com.openai.models.chat.completions.ChatCompletionToolChoiceOption;
 import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
-
 import treepeater.ai.ChatMessage;
 import treepeater.ai.ChatRole;
 import treepeater.ai.ChatStreamMessage;
+import treepeater.ai.ChatStreamSession;
 import treepeater.ai.ChatToolCall;
 import treepeater.ai.ChatToolDefinition;
 import treepeater.ai.ChatTooling;
-import treepeater.ai.HttpTargetTools;
+import treepeater.ai.ParallelToolExecution;
 import treepeater.ai.StreamingChatClient;
 
 /**
@@ -50,38 +51,48 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
 
     @Override
     public List<ChatMessage> streamChat(
-            List<ChatMessage> messages, ChatTooling tooling, Consumer<ChatStreamMessage> onMessage) throws Exception {
-        if (tooling == null || !tooling.isActive()) {
-            return streamOncePlain(messages, onMessage);
-        }
-        List<ChatMessage> work = new ArrayList<>(messages);
-        int maxRounds = 16;
-        for (int round = 0; round < maxRounds; round++) {
-            RoundResult rr = streamOneAssistantTurn(work, onMessage, tooling);
-            work.add(rr.assistant());
-            if (!rr.hadToolCalls()) {
-                return work;
+            List<ChatMessage> messages, ChatTooling tooling, ChatStreamSession session) throws Exception {
+        OpenAIClient client = newClient();
+        String cacheKey = "treepeater-" + System.identityHashCode(session);
+        try {
+            if (tooling == null || !tooling.isActive()) {
+                return streamOncePlain(client, messages, session, cacheKey);
             }
-            for (ChatToolCall tc : rr.assistant().assistantToolCalls()) {
-                String argsJson = tc.argumentsJson() != null ? tc.argumentsJson() : "";
-                onMessage.accept(
-                        new ChatStreamMessage.ToolUsage(
-                                tc.name() != null ? tc.name() : "",
-                                argsJson,
-                                HttpTargetTools.humanReadableUsage(
-                                        tc.name(), argsJson, tooling.currentHistoryIndexForToolStatus())));
-                String result = tooling.executor().invoke(tc.name(), argsJson);
-                work.add(new ChatMessage(ChatRole.TOOL, result, List.of(), tc.id()));
+            List<ChatMessage> work = new ArrayList<>(messages);
+            for (int round = 0; round < StreamingChatClient.MAX_AGENT_TOOL_ROUNDS; round++) {
+                if (session.isClosed() || Thread.currentThread().isInterrupted()) {
+                    return work;
+                }
+                RoundResult rr = streamOneAssistantTurn(client, work, session, tooling, round, cacheKey);
+                work.add(rr.assistant());
+                if (session.isClosed() || Thread.currentThread().isInterrupted()) {
+                    return work;
+                }
+                if (!rr.hadToolCalls()) {
+                    return work;
+                }
+                List<ChatToolCall> calls = rr.assistant().assistantToolCalls();
+                List<String> results =
+                        ParallelToolExecution.executeRound(calls, tooling, session);
+                for (int i = 0; i < calls.size(); i++) {
+                    if (session.isClosed() || Thread.currentThread().isInterrupted()) {
+                        return work;
+                    }
+                    work.add(new ChatMessage(ChatRole.TOOL, results.get(i), List.of(), calls.get(i).id()));
+                }
             }
+            return work;
+        } finally {
+            client.close();
         }
-        return work;
     }
 
-    private List<ChatMessage> streamOncePlain(List<ChatMessage> messages, Consumer<ChatStreamMessage> onMessage)
+    private List<ChatMessage> streamOncePlain(
+            OpenAIClient client, List<ChatMessage> messages, ChatStreamSession session, String cacheKey)
             throws Exception {
-        ChatCompletionCreateParams params = buildParams(messages, ChatTooling.none(), false);
+        ChatCompletionCreateParams params = buildParams(messages, ChatTooling.none(), false, cacheKey);
         StringBuilder assistantAccum = new StringBuilder();
-        runTextStream(params, assistantAccum, onMessage);
+        runTextStream(client, params, assistantAccum, session);
         List<ChatMessage> history = new ArrayList<>(messages.size() + 1);
         history.addAll(messages);
         history.add(new ChatMessage(ChatRole.ASSISTANT, assistantAccum.toString()));
@@ -89,51 +100,54 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
     }
 
     private RoundResult streamOneAssistantTurn(
-            List<ChatMessage> messages, Consumer<ChatStreamMessage> onMessage, ChatTooling tooling) throws Exception {
-        ChatCompletionCreateParams params = buildParams(messages, tooling, true);
+            OpenAIClient client,
+            List<ChatMessage> messages,
+            ChatStreamSession session,
+            ChatTooling tooling,
+            int round,
+            String cacheKey)
+            throws Exception {
+        ChatCompletionCreateParams params = buildParams(messages, tooling, true, cacheKey);
         StringBuilder textOut = new StringBuilder();
         Map<Long, ToolStreamAccumulator> toolAcc = new TreeMap<>();
 
-        OpenAIClient client = newClient();
         try (StreamResponse<ChatCompletionChunk> stream = client.chat().completions().createStreaming(params)) {
-            stream.stream()
-                    .forEach(
-                            chunk -> {
-                                List<ChatCompletionChunk.Choice> choices = chunk.choices();
-                                if (choices == null || choices.isEmpty()) {
-                                    return;
-                                }
-                                ChatCompletionChunk.Choice choice = choices.getFirst();
-                                var delta = choice.delta();
-                                delta.content()
-                                        .ifPresent(
-                                                piece -> {
-                                                    if (!piece.isEmpty()) {
-                                                        textOut.append(piece);
-                                                        onMessage.accept(new ChatStreamMessage.AssistantDelta(piece));
-                                                    }
-                                                });
-                                delta.toolCalls()
-                                        .ifPresent(
-                                                tcs -> {
-                                                    for (ChatCompletionChunk.Choice.Delta.ToolCall tc : tcs) {
-                                                        long idx = tc.index();
-                                                        ToolStreamAccumulator acc =
-                                                                toolAcc.computeIfAbsent(
-                                                                        idx, k -> new ToolStreamAccumulator());
-                                                        tc.id().ifPresent(id -> acc.id = id);
-                                                        tc.function()
-                                                                .ifPresent(
-                                                                        fn -> {
-                                                                            fn.name().ifPresent(n -> acc.name = n);
-                                                                            fn.arguments()
-                                                                                    .ifPresent(a -> acc.args.append(a));
-                                                                        });
-                                                    }
-                                                });
-                            });
-        } finally {
-            client.close();
+            Iterator<ChatCompletionChunk> it = stream.stream().iterator();
+            while (it.hasNext()
+                    && !session.isClosed()
+                    && !Thread.currentThread().isInterrupted()) {
+                ChatCompletionChunk chunk = it.next();
+                List<ChatCompletionChunk.Choice> choices = chunk.choices();
+                if (choices == null || choices.isEmpty()) {
+                    continue;
+                }
+                ChatCompletionChunk.Choice choice = choices.getFirst();
+                var delta = choice.delta();
+                delta.content()
+                        .ifPresent(
+                                piece -> {
+                                    if (!piece.isEmpty()) {
+                                        textOut.append(piece);
+                                        session.emit(new ChatStreamMessage.AssistantDelta(piece));
+                                    }
+                                });
+                delta.toolCalls()
+                        .ifPresent(
+                                tcs -> {
+                                    for (ChatCompletionChunk.Choice.Delta.ToolCall tc : tcs) {
+                                        long idx = tc.index();
+                                        ToolStreamAccumulator acc =
+                                                toolAcc.computeIfAbsent(idx, k -> new ToolStreamAccumulator());
+                                        tc.id().ifPresent(id -> acc.id = id);
+                                        tc.function()
+                                                .ifPresent(
+                                                        fn -> {
+                                                            fn.name().ifPresent(n -> acc.name = n);
+                                                            fn.arguments().ifPresent(a -> acc.args.append(a));
+                                                        });
+                                    }
+                                });
+            }
         }
 
         List<ChatToolCall> toolCalls = new ArrayList<>();
@@ -154,39 +168,52 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
     }
 
     private void runTextStream(
-            ChatCompletionCreateParams params, StringBuilder assistantAccum, Consumer<ChatStreamMessage> onMessage)
+            OpenAIClient client,
+            ChatCompletionCreateParams params,
+            StringBuilder assistantAccum,
+            ChatStreamSession session)
             throws Exception {
-        OpenAIClient client = newClient();
         try (StreamResponse<ChatCompletionChunk> stream = client.chat().completions().createStreaming(params)) {
-            stream.stream()
-                    .forEach(
-                            chunk -> {
-                                List<ChatCompletionChunk.Choice> choices = chunk.choices();
-                                if (choices == null || choices.isEmpty()) {
-                                    return;
-                                }
-                                choices.getFirst()
-                                        .delta()
-                                        .content()
-                                        .ifPresent(
-                                                piece -> {
-                                                    if (!piece.isEmpty()) {
-                                                        assistantAccum.append(piece);
-                                                        onMessage.accept(new ChatStreamMessage.AssistantDelta(piece));
-                                                    }
-                                                });
-                            });
-        } finally {
-            client.close();
+            Iterator<ChatCompletionChunk> it = stream.stream().iterator();
+            while (it.hasNext()
+                    && !session.isClosed()
+                    && !Thread.currentThread().isInterrupted()) {
+                ChatCompletionChunk chunk = it.next();
+                List<ChatCompletionChunk.Choice> choices = chunk.choices();
+                if (choices == null || choices.isEmpty()) {
+                    continue;
+                }
+                choices.getFirst()
+                        .delta()
+                        .content()
+                        .ifPresent(
+                                piece -> {
+                                    if (!piece.isEmpty()) {
+                                        assistantAccum.append(piece);
+                                        session.emit(new ChatStreamMessage.AssistantDelta(piece));
+                                    }
+                                });
+            }
         }
     }
 
     private ChatCompletionCreateParams buildParams(
-            List<ChatMessage> messages, ChatTooling tooling, boolean includeTools) throws JsonProcessingException {
+            List<ChatMessage> messages, ChatTooling tooling, boolean includeTools, String cacheKey)
+            throws JsonProcessingException {
+        // Order matters for auto prompt caching: emit tools → system → messages. The Azure/OpenAI
+        // prefix cache keys on a stable prefix; mutating system or tools mid-session invalidates
+        // subsequent hits. promptCacheKey keeps a session's prefix colocated on the same backend.
         ChatCompletionCreateParams.Builder b =
                 ChatCompletionCreateParams.builder()
                         .model(ChatModel.of(this.config.deploymentName()))
-                        .maxCompletionTokens(4096L);
+                        .maxCompletionTokens(4096L)
+                        .reasoningEffort(this.config.reasoningEffort())
+                        .streamOptions(
+                                ChatCompletionStreamOptions.builder().includeUsage(true).build());
+
+        if (cacheKey != null && !cacheKey.isBlank()) {
+            b.promptCacheKey(cacheKey);
+        }
 
         if (includeTools && tooling != null && tooling.isActive()) {
             b.toolChoice(ChatCompletionToolChoiceOption.Auto.AUTO);
@@ -204,8 +231,14 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
         return b.build();
     }
 
-    private static FunctionParameters schemaToParameters(String jsonSchema) throws JsonProcessingException {
-        JsonNode n = JSON.readTree(jsonSchema);
+    /** Package-private for tests; converts Treepeater JSON Schema strings to OpenAI function parameters. */
+    static FunctionParameters schemaToParameters(String jsonSchema) throws JsonProcessingException {
+        final JsonNode n;
+        try {
+            n = JSON.readTree(jsonSchema);
+        } catch (JsonProcessingException e) {
+            return FunctionParameters.builder().build();
+        }
         if (!n.isObject()) {
             return FunctionParameters.builder().build();
         }

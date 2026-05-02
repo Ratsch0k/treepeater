@@ -3,22 +3,25 @@ package treepeater.requestResponse.toolbar.ai;
 import java.awt.Component;
 import java.util.List;
 
-import javax.swing.JComboBox;
-
 import treepeater.Treepeater;
 import treepeater.ai.AgentMode;
 import treepeater.ai.AgentTabMention;
 import treepeater.ai.AgentToolContext;
-import treepeater.ai.AiModelOption;
 import treepeater.ai.ChatTooling;
-import treepeater.ai.LlmRequestOptions;
 import treepeater.ai.StreamingChatClient;
+import treepeater.ai.model.LlmModelDefinition;
+import treepeater.ai.model.LlmModelOptionValues;
 
 /**
  * Services provided by {@link AIToolbarTab} for each nested chat (agent) panel.
  */
 public interface AIChatHost {
-    StreamingChatClient clientForSelectedModel(JComboBox<AiModelOption> modelCombo, LlmRequestOptions options);
+    /**
+     * Build a streaming client for the given model + per-request option values. The host delegates
+     * to {@link LlmModelDefinition#provider()}'s {@code createClient} — the agent panel has no
+     * provider-specific knowledge beyond the model selection itself.
+     */
+    StreamingChatClient clientForSelectedModel(LlmModelDefinition model, LlmModelOptionValues values);
 
     ChatTooling chatTooling(AgentMode mode);
 

@@ -32,6 +32,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -97,11 +98,6 @@ import treepeater.Treepeater;
 import treepeater.ai.AgentChatSession;
 import treepeater.ai.AgentMode;
 import treepeater.ai.AgentSystemPrompt;
-import treepeater.ai.AiModelOption;
-import treepeater.ai.AiModelRef;
-import treepeater.ai.AnthropicOutputEffort;
-import treepeater.ai.LlmRequestOptions;
-import treepeater.ai.OpenAiReasoningEffort;
 import treepeater.ai.MarkdownRenderer;
 import treepeater.ai.ChatErrors;
 import treepeater.ai.ChatMessage;
@@ -116,10 +112,17 @@ import treepeater.ai.AgentToolContext;
 import treepeater.ai.CoalescingChatStreamOutbound;
 import treepeater.ai.HttpTargetTools;
 import treepeater.ai.LineDiffer;
+import treepeater.ai.model.BooleanOption;
+import treepeater.ai.model.EnumOption;
+import treepeater.ai.model.LlmModelDefinition;
+import treepeater.ai.model.LlmModelOptionValues;
+import treepeater.ai.model.LlmModelRef;
+import treepeater.ai.model.LlmProvider;
+import treepeater.ai.model.LlmRegistry;
+import treepeater.ai.model.ModelOption;
 import treepeater.components.RoundedPanel;
 import treepeater.components.StyledButton;
 import treepeater.icons.GearIcon;
-import treepeater.settings.TreepeaterSettings;
 
 /**
  * One nested “agent” chat tab: transcript, draft input, model choice, and any in-flight request for this
@@ -287,7 +290,7 @@ public final class AIAgentChatPanel extends JPanel {
     private RoundedPanel inputPanel;
     private final StyledButton sendButton;
     private final JComboBox<AgentMode> agentModeCombo;
-    private final JComboBox<AiModelOption> modelCombo;
+    private final JComboBox<LlmModelDefinition> modelCombo;
     private final JButton modelOptionsButton;
     private final JPopupMenu modelOptionsMenu = new JPopupMenu();
     /** In-input {@code @}-mention popup for open repeater tabs; {@code -1} when none. */
@@ -306,7 +309,11 @@ public final class AIAgentChatPanel extends JPanel {
     private JList<AgentTabMention> historyMentionList;
     private JScrollPane historyMentionScroll;
     private final DefaultListCellRenderer historyMentionListCell = new DefaultListCellRenderer();
-    private LlmRequestOptions llmRequestOptions = LlmRequestOptions.DEFAULTS;
+    /**
+     * Per-tab option-value bag persisted across model switches. When the user toggles a knob in the
+     * gear menu we replace this with an immutable copy via {@link LlmModelOptionValues#with}.
+     */
+    private LlmModelOptionValues currentOptionValues;
     private final Runnable onPersistState;
     private boolean blockPersist;
     private final List<ChatMessage> conversation = new ArrayList<>();
@@ -438,9 +445,11 @@ public final class AIAgentChatPanel extends JPanel {
         this.agentModeCombo.setMaximumRowCount(6);
 
         this.modelCombo =
-                new JComboBox<>(new DefaultComboBoxModel<>(new Vector<>(AiModelOption.defaultChoices())));
+                new JComboBox<>(new DefaultComboBoxModel<>(new Vector<>(LlmRegistry.allModels())));
         this.modelCombo.setSelectedIndex(0);
         this.modelCombo.setMaximumRowCount(12);
+        LlmModelDefinition initial = (LlmModelDefinition) this.modelCombo.getSelectedItem();
+        this.currentOptionValues = initial != null ? initial.defaults() : LlmModelOptionValues.EMPTY;
         this.modelCombo.addActionListener(
                 e -> {
                     this.updateModelOptionsButtonVisibility();
@@ -596,75 +605,22 @@ public final class AIAgentChatPanel extends JPanel {
     }
 
     private void updateModelOptionsButtonVisibility() {
-        AiModelOption opt = (AiModelOption) this.modelCombo.getSelectedItem();
-        this.modelOptionsButton.setVisible(LlmRequestOptions.anyConfigurable(opt));
+        LlmModelDefinition def = (LlmModelDefinition) this.modelCombo.getSelectedItem();
+        boolean configurable = def != null && !def.supportedOptions().isEmpty();
+        this.modelOptionsButton.setVisible(configurable);
     }
 
     private void showModelOptionsMenu() {
         this.modelOptionsMenu.removeAll();
-        AiModelOption opt = (AiModelOption) this.modelCombo.getSelectedItem();
-        if (opt == null) {
+        LlmModelDefinition def = (LlmModelDefinition) this.modelCombo.getSelectedItem();
+        if (def == null) {
             return;
         }
-        if (LlmRequestOptions.supportsOpenAiReasoningMenu(opt)) {
-            JMenu effortMenu = new JMenu("Reasoning effort");
-            ButtonGroup g = new ButtonGroup();
-            for (OpenAiReasoningEffort e : OpenAiReasoningEffort.values()) {
-                JRadioButtonMenuItem item = new JRadioButtonMenuItem(openAiReasoningLabel(e));
-                g.add(item);
-                if (e == this.llmRequestOptions.openAiReasoningEffort()) {
-                    item.setSelected(true);
-                }
-                final OpenAiReasoningEffort chosen = e;
-                item.addActionListener(
-                        a -> {
-                            this.llmRequestOptions =
-                                    new LlmRequestOptions(
-                                            chosen,
-                                            this.llmRequestOptions.anthropicOutputEffort(),
-                                            this.llmRequestOptions.anthropicExtendedThinking());
-                            this.notifyPersist();
-                        });
-                effortMenu.add(item);
+        for (ModelOption<?> opt : def.supportedOptions()) {
+            JComponent item = renderOptionMenu(opt, def);
+            if (item != null) {
+                this.modelOptionsMenu.add(item);
             }
-            this.modelOptionsMenu.add(effortMenu);
-        }
-        if (LlmRequestOptions.supportsAnthropicOutputEffortMenu(opt)) {
-            JMenu effortMenu = new JMenu("Effort");
-            ButtonGroup g = new ButtonGroup();
-            for (AnthropicOutputEffort e : AnthropicOutputEffort.values()) {
-                JRadioButtonMenuItem item = new JRadioButtonMenuItem(anthropicOutputLabel(e));
-                g.add(item);
-                if (e == this.llmRequestOptions.anthropicOutputEffort()) {
-                    item.setSelected(true);
-                }
-                final AnthropicOutputEffort chosen = e;
-                item.addActionListener(
-                        a -> {
-                            this.llmRequestOptions =
-                                    new LlmRequestOptions(
-                                            this.llmRequestOptions.openAiReasoningEffort(),
-                                            chosen,
-                                            this.llmRequestOptions.anthropicExtendedThinking());
-                            this.notifyPersist();
-                        });
-                effortMenu.add(item);
-            }
-            this.modelOptionsMenu.add(effortMenu);
-        }
-        if (LlmRequestOptions.supportsAnthropicExtendedThinkingMenu(opt)) {
-            JCheckBoxMenuItem thinkItem =
-                    new JCheckBoxMenuItem("Extended thinking", this.llmRequestOptions.anthropicExtendedThinking());
-            thinkItem.addActionListener(
-                    a -> {
-                        this.llmRequestOptions =
-                                new LlmRequestOptions(
-                                        this.llmRequestOptions.openAiReasoningEffort(),
-                                        this.llmRequestOptions.anthropicOutputEffort(),
-                                        thinkItem.isSelected());
-                        this.notifyPersist();
-                    });
-            this.modelOptionsMenu.add(thinkItem);
         }
         if (this.modelOptionsMenu.getComponentCount() == 0) {
             return;
@@ -674,22 +630,54 @@ public final class AIAgentChatPanel extends JPanel {
         this.modelOptionsMenu.show(this.modelOptionsButton, 0, -ph);
     }
 
-    private static String openAiReasoningLabel(OpenAiReasoningEffort e) {
-        return switch (e) {
-            case MINIMAL -> "Minimal";
-            case LOW -> "Low";
-            case MEDIUM -> "Medium";
-            case HIGH -> "High";
-        };
+    private JComponent renderOptionMenu(ModelOption<?> opt, LlmModelDefinition def) {
+        if (opt instanceof EnumOption<?> eo) {
+            return buildEnumOptionMenu(eo, def);
+        }
+        if (opt instanceof BooleanOption bo) {
+            return buildBooleanOptionItem(bo);
+        }
+        return null;
     }
 
-    private static String anthropicOutputLabel(AnthropicOutputEffort e) {
-        return switch (e) {
-            case LOW -> "Low";
-            case MEDIUM -> "Medium";
-            case HIGH -> "High";
-            case MAX -> "Max";
-        };
+    private <E extends Enum<E>> JMenu buildEnumOptionMenu(EnumOption<E> opt, LlmModelDefinition def) {
+        JMenu menu = new JMenu(opt.menuLabel());
+        ButtonGroup group = new ButtonGroup();
+        List<E> allowed = def.allowedValues(opt);
+        if (allowed.isEmpty()) {
+            allowed = Arrays.asList(opt.type().getEnumConstants());
+        }
+        E current = this.currentOptionValues.get(opt);
+        if (current == null) {
+            current = def.defaults().get(opt);
+        }
+        for (E value : allowed) {
+            JRadioButtonMenuItem item = new JRadioButtonMenuItem(opt.valueLabel(value));
+            group.add(item);
+            if (value == current) {
+                item.setSelected(true);
+            }
+            final E chosen = value;
+            item.addActionListener(
+                    a -> {
+                        this.currentOptionValues = this.currentOptionValues.with(opt, chosen);
+                        this.notifyPersist();
+                    });
+            menu.add(item);
+        }
+        return menu;
+    }
+
+    private JCheckBoxMenuItem buildBooleanOptionItem(BooleanOption opt) {
+        Boolean current = this.currentOptionValues.get(opt);
+        boolean checked = current != null && current.booleanValue();
+        JCheckBoxMenuItem item = new JCheckBoxMenuItem(opt.menuLabel(), checked);
+        item.addActionListener(
+                a -> {
+                    this.currentOptionValues = this.currentOptionValues.with(opt, item.isSelected());
+                    this.notifyPersist();
+                });
+        return item;
     }
 
     void adjustInputAreaHeight() {
@@ -733,50 +721,14 @@ public final class AIAgentChatPanel extends JPanel {
         if (Treepeater.api == null || this.modelCombo == null) {
             return;
         }
-        AiModelOption choice = (AiModelOption) this.modelCombo.getSelectedItem();
-        if (choice != null && choice.kind() == AiModelOption.Kind.BURP && !AIChatHost.isBurpAiEnabled()) {
-            JOptionPane.showMessageDialog(
-                    this.host.dialogParent(),
-                    "Enable Burp's AI for this extension under Extensions (Use AI), or choose an Ollama model.",
-                    "Burp AI unavailable",
-                    JOptionPane.INFORMATION_MESSAGE);
-            return;
-        }
-
-        if (choice != null && choice.kind() == AiModelOption.Kind.ANTHROPIC) {
-            String key = TreepeaterSettings.getInstance().getLlmAnthropicApiKey();
-            if (key == null || key.isBlank()) {
+        LlmModelDefinition choice = (LlmModelDefinition) this.modelCombo.getSelectedItem();
+        if (choice != null) {
+            Optional<LlmProvider.UnavailableReason> reason = choice.provider().unavailableReason(choice);
+            if (reason.isPresent()) {
                 JOptionPane.showMessageDialog(
                         this.host.dialogParent(),
-                        "Add your Anthropic API key under Extension settings for Treepeater (LLMs \u2192 Anthropic).",
-                        "Anthropic API key required",
-                        JOptionPane.INFORMATION_MESSAGE);
-                return;
-            }
-        }
-
-        if (choice != null && choice.kind() == AiModelOption.Kind.OLLAMA) {
-            String base = TreepeaterSettings.getInstance().getLlmOllamaBaseUrl();
-            if (base == null || base.isBlank()) {
-                JOptionPane.showMessageDialog(
-                        this.host.dialogParent(),
-                        "Set the Ollama base URL under Extension settings for Treepeater (LLMs \u2192 Ollama).",
-                        "Ollama base URL required",
-                        JOptionPane.INFORMATION_MESSAGE);
-                return;
-            }
-        }
-
-        if (choice != null && choice.kind() == AiModelOption.Kind.OPENAI) {
-            TreepeaterSettings s = TreepeaterSettings.getInstance();
-            String endpoint = s.getLlmAzureOpenAiEndpoint();
-            String key = s.getLlmAzureOpenAiApiKey();
-            if (endpoint == null || endpoint.isBlank() || key == null || key.isBlank()) {
-                JOptionPane.showMessageDialog(
-                        this.host.dialogParent(),
-                        "Add your Azure OpenAI / Foundry endpoint and API key under Extension settings for Treepeater "
-                                + "(LLMs \u2192 Azure OpenAI / Foundry).",
-                        "Azure OpenAI configuration required",
+                        reason.get().message(),
+                        reason.get().title(),
                         JOptionPane.INFORMATION_MESSAGE);
                 return;
             }
@@ -828,10 +780,11 @@ public final class AIAgentChatPanel extends JPanel {
             @Override
             protected List<ChatMessage> doInBackground() throws Exception {
                 try {
+                    LlmModelDefinition selected =
+                            (LlmModelDefinition) AIAgentChatPanel.this.modelCombo.getSelectedItem();
                     return AIAgentChatPanel.this
                             .host
-                            .clientForSelectedModel(
-                                    AIAgentChatPanel.this.modelCombo, AIAgentChatPanel.this.llmRequestOptions)
+                            .clientForSelectedModel(selected, AIAgentChatPanel.this.currentOptionValues)
                             .streamChat(this.requestMessages, requestTooling, session);
                 } finally {
                     streamCoalescer.shutdown();
@@ -904,7 +857,6 @@ public final class AIAgentChatPanel extends JPanel {
         try {
             this.conversation.clear();
             this.conversation.addAll(session.conversation());
-            this.llmRequestOptions = session.llmRequestOptions();
             this.agentModeCombo.setSelectedItem(session.agentMode());
             this.applyModelFromRef(session.modelRef());
             this.updateModelOptionsButtonVisibility();
@@ -916,42 +868,51 @@ public final class AIAgentChatPanel extends JPanel {
     }
 
     public AgentChatSession toSessionSnapshot(String tabTitle) {
-        AiModelOption opt = (AiModelOption) this.modelCombo.getSelectedItem();
+        LlmModelDefinition def = (LlmModelDefinition) this.modelCombo.getSelectedItem();
+        LlmModelRef ref = LlmModelRef.capture(def, this.currentOptionValues);
         return new AgentChatSession(
                 tabTitle,
                 new ArrayList<>(this.conversation),
                 this.selectedAgentMode(),
-                AiModelRef.fromOption(opt),
-                this.llmRequestOptions);
+                ref);
     }
 
-    private void applyModelFromRef(AiModelRef ref) {
-        AiModelOption want = ref.toModelOption();
-        javax.swing.DefaultComboBoxModel<AiModelOption> m =
-                (javax.swing.DefaultComboBoxModel<AiModelOption>) this.modelCombo.getModel();
+    /**
+     * Resolves a persisted ref to a live {@link LlmModelDefinition} via {@link LlmRegistry}, then
+     * either selects it in the combo (adding it if the registry synthesized a new entry, e.g. for a
+     * user-typed Ollama model) or falls back to the first combo entry.
+     */
+    private void applyModelFromRef(LlmModelRef ref) {
+        javax.swing.DefaultComboBoxModel<LlmModelDefinition> m =
+                (javax.swing.DefaultComboBoxModel<LlmModelDefinition>) this.modelCombo.getModel();
+        Optional<LlmModelDefinition> resolved = LlmRegistry.resolve(ref);
+        if (resolved.isEmpty()) {
+            this.modelCombo.setSelectedIndex(0);
+            LlmModelDefinition fallback = (LlmModelDefinition) this.modelCombo.getSelectedItem();
+            this.currentOptionValues =
+                    fallback != null ? fallback.defaults() : LlmModelOptionValues.EMPTY;
+            return;
+        }
+        LlmModelDefinition target = resolved.get();
         for (int i = 0; i < m.getSize(); i++) {
-            if (optionsMatch(m.getElementAt(i), want)) {
+            LlmModelDefinition def = m.getElementAt(i);
+            if (matchesRef(def, ref)) {
                 this.modelCombo.setSelectedIndex(i);
+                this.currentOptionValues = LlmModelRef.materializeValues(def, ref);
                 return;
             }
         }
-        m.addElement(want);
-        this.modelCombo.setSelectedItem(want);
+        m.addElement(target);
+        this.modelCombo.setSelectedItem(target);
+        this.currentOptionValues = LlmModelRef.materializeValues(target, ref);
     }
 
-    private static boolean optionsMatch(AiModelOption a, AiModelOption b) {
-        if (a == null || b == null) {
+    private static boolean matchesRef(LlmModelDefinition def, LlmModelRef ref) {
+        if (def == null || ref == null) {
             return false;
         }
-        if (a.kind() != b.kind()) {
-            return false;
-        }
-        return switch (a.kind()) {
-            case BURP -> true;
-            case OLLAMA -> java.util.Objects.equals(a.ollamaModel(), b.ollamaModel());
-            case ANTHROPIC -> java.util.Objects.equals(a.anthropicModel(), b.anthropicModel());
-            case OPENAI -> java.util.Objects.equals(a.openAiDeployment(), b.openAiDeployment());
-        };
+        return def.provider().id().equals(ref.providerId())
+                && def.modelId().equals(ref.modelId());
     }
 
     private void clearTranscriptForReload() {

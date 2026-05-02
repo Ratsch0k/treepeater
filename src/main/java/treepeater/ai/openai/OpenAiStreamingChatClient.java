@@ -207,7 +207,7 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
                 ChatCompletionCreateParams.builder()
                         .model(ChatModel.of(this.config.deploymentName()))
                         .maxCompletionTokens(4096L)
-                        .reasoningEffort(this.config.reasoningEffort().toSdk())
+                        .reasoningEffort(this.config.reasoningEffort())
                         .streamOptions(
                                 ChatCompletionStreamOptions.builder().includeUsage(true).build());
 

@@ -2,6 +2,7 @@ package treepeater.persistence;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -20,14 +21,16 @@ import treepeater.Utilities;
 import treepeater.ai.AgentChatSession;
 import treepeater.ai.AgentChatWorkspace;
 import treepeater.ai.AgentMode;
-import treepeater.ai.AiModelOption;
-import treepeater.ai.AiModelRef;
-import treepeater.ai.AnthropicOutputEffort;
 import treepeater.ai.ChatMessage;
 import treepeater.ai.ChatRole;
 import treepeater.ai.ChatToolCall;
-import treepeater.ai.LlmRequestOptions;
-import treepeater.ai.OpenAiReasoningEffort;
+import treepeater.ai.anthropic.AnthropicProvider;
+import treepeater.ai.burp.BurpProvider;
+import treepeater.ai.model.EffortLevel;
+import treepeater.ai.model.LlmModelRef;
+import treepeater.ai.model.ModelOptions;
+import treepeater.ai.ollama.OllamaProvider;
+import treepeater.ai.openai.OpenAiProvider;
 import treepeater.requestResponse.HistoryEntry;
 import treepeater.requestResponse.RequestHistory;
 import treepeater.requestResponse.Status;
@@ -87,14 +90,20 @@ public class TreepeaterPersistence {
     private static final String PERSISTENCE_AGENT_SESSION_TITLE = "agentTitle";
     private static final String PERSISTENCE_AGENT_SESSION_MODE = "agentMode";
     private static final String PERSISTENCE_AGENT_SESSION_MODEL = "agentModel";
-    private static final String PERSISTENCE_MODEL_LABEL = "modelLabel";
-    private static final String PERSISTENCE_MODEL_KIND = "modelKind";
-    private static final String PERSISTENCE_MODEL_OLLAMA = "ollamaModel";
-    private static final String PERSISTENCE_MODEL_ANTHROPIC = "anthropicModel";
-    private static final String PERSISTENCE_MODEL_OPENAI_DEP = "openAiDeployment";
-    private static final String PERSISTENCE_LLM_OAI_REASON = "llmOaiReasoning";
-    private static final String PERSISTENCE_LLM_ANTH_EFFORT = "llmAnthropicEffort";
-    private static final String PERSISTENCE_LLM_ANTH_THINK = "llmAnthropicExtendedThinking";
+    // New (post-refactor) keys:
+    private static final String PERSISTENCE_MODEL_PROVIDER_ID = "modelProviderId";
+    private static final String PERSISTENCE_MODEL_ID = "modelId";
+    private static final String PERSISTENCE_MODEL_DISPLAY = "modelDisplayName";
+    private static final String PERSISTENCE_MODEL_OPTION_VALUES = "modelOptionValues";
+    // Legacy keys (read-only fallback for sessions saved before the model/options refactor):
+    private static final String PERSISTENCE_MODEL_LABEL_LEGACY = "modelLabel";
+    private static final String PERSISTENCE_MODEL_KIND_LEGACY = "modelKind";
+    private static final String PERSISTENCE_MODEL_OLLAMA_LEGACY = "ollamaModel";
+    private static final String PERSISTENCE_MODEL_ANTHROPIC_LEGACY = "anthropicModel";
+    private static final String PERSISTENCE_MODEL_OPENAI_DEP_LEGACY = "openAiDeployment";
+    private static final String PERSISTENCE_LLM_OAI_REASON_LEGACY = "llmOaiReasoning";
+    private static final String PERSISTENCE_LLM_ANTH_EFFORT_LEGACY = "llmAnthropicEffort";
+    private static final String PERSISTENCE_LLM_ANTH_THINK_LEGACY = "llmAnthropicExtendedThinking";
     private static final String PERSISTENCE_AGENT_MESSAGES = "agentMessages";
     private static final String PERSISTENCE_AGENT_MESSAGE = "m";
     private static final String PERSISTENCE_MSG_ROLE = "msgRole";
@@ -487,21 +496,21 @@ public class TreepeaterPersistence {
         PersistedObject o = PersistedObject.persistedObject();
         o.setString(PERSISTENCE_AGENT_SESSION_TITLE, s.title());
         o.setString(PERSISTENCE_AGENT_SESSION_MODE, s.agentMode().name());
-        o.setChildObject(PERSISTENCE_AGENT_SESSION_MODEL, saveAiModelRef(s.modelRef()));
-        o.setString(PERSISTENCE_LLM_OAI_REASON, s.llmRequestOptions().openAiReasoningEffort().name());
-        o.setString(PERSISTENCE_LLM_ANTH_EFFORT, s.llmRequestOptions().anthropicOutputEffort().name());
-        o.setBoolean(PERSISTENCE_LLM_ANTH_THINK, s.llmRequestOptions().anthropicExtendedThinking());
+        o.setChildObject(PERSISTENCE_AGENT_SESSION_MODEL, saveLlmModelRef(s.modelRef()));
         o.setChildObject(PERSISTENCE_AGENT_MESSAGES, saveChatMessages(s.conversation()));
         return o;
     }
 
-    private PersistedObject saveAiModelRef(AiModelRef m) {
+    private PersistedObject saveLlmModelRef(LlmModelRef m) {
         PersistedObject o = PersistedObject.persistedObject();
-        o.setString(PERSISTENCE_MODEL_LABEL, m.label());
-        o.setString(PERSISTENCE_MODEL_KIND, m.kind().name());
-        o.setString(PERSISTENCE_MODEL_OLLAMA, m.ollamaModel());
-        o.setString(PERSISTENCE_MODEL_ANTHROPIC, m.anthropicModel());
-        o.setString(PERSISTENCE_MODEL_OPENAI_DEP, m.openAiDeployment());
+        o.setString(PERSISTENCE_MODEL_PROVIDER_ID, m.providerId());
+        o.setString(PERSISTENCE_MODEL_ID, m.modelId());
+        o.setString(PERSISTENCE_MODEL_DISPLAY, m.displayName());
+        PersistedObject opts = PersistedObject.persistedObject();
+        for (Map.Entry<String, String> e : m.optionValues().entrySet()) {
+            opts.setString(e.getKey(), e.getValue());
+        }
+        o.setChildObject(PERSISTENCE_MODEL_OPTION_VALUES, opts);
         return o;
     }
 
@@ -576,53 +585,95 @@ public class TreepeaterPersistence {
             } catch (IllegalArgumentException ignored) {
             }
         }
-        AiModelRef modelRef = loadAiModelRef(o.getChildObject(PERSISTENCE_AGENT_SESSION_MODEL));
-        LlmRequestOptions llm = loadLlmOptions(o);
+        LlmModelRef modelRef = loadLlmModelRef(o);
         List<ChatMessage> messages = loadChatMessages(o.getChildObject(PERSISTENCE_AGENT_MESSAGES));
-        return new AgentChatSession(title, messages, mode, modelRef, llm);
+        return new AgentChatSession(title, messages, mode, modelRef);
     }
 
-    private LlmRequestOptions loadLlmOptions(PersistedObject o) {
-        OpenAiReasoningEffort oai = LlmRequestOptions.DEFAULTS.openAiReasoningEffort();
-        String s1 = o.getString(PERSISTENCE_LLM_OAI_REASON);
-        if (s1 != null) {
-            try {
-                oai = OpenAiReasoningEffort.valueOf(s1);
-            } catch (IllegalArgumentException ignored) {
-            }
+    /**
+     * Reads the new {@code modelProviderId}/{@code modelId}/{@code modelOptionValues} shape, falling
+     * back to the legacy {@code modelKind}/provider-specific-field layout (with effort/thinking
+     * read from the session-level {@code llm*} keys) when the new keys are absent.
+     */
+    private static LlmModelRef loadLlmModelRef(PersistedObject sessionObj) {
+        PersistedObject mo = sessionObj.getChildObject(PERSISTENCE_AGENT_SESSION_MODEL);
+        if (mo == null) {
+            return null;
         }
-        AnthropicOutputEffort ao = LlmRequestOptions.DEFAULTS.anthropicOutputEffort();
-        String s2 = o.getString(PERSISTENCE_LLM_ANTH_EFFORT);
-        if (s2 != null) {
-            try {
-                ao = AnthropicOutputEffort.valueOf(s2);
-            } catch (IllegalArgumentException ignored) {
+        String providerId = mo.getString(PERSISTENCE_MODEL_PROVIDER_ID);
+        if (providerId != null && !providerId.isBlank()) {
+            String modelId = mo.getString(PERSISTENCE_MODEL_ID);
+            String displayName = mo.getString(PERSISTENCE_MODEL_DISPLAY);
+            Map<String, String> optionValues = new LinkedHashMap<>();
+            PersistedObject ov = mo.getChildObject(PERSISTENCE_MODEL_OPTION_VALUES);
+            if (ov != null) {
+                for (String key : ov.stringKeys()) {
+                    String v = ov.getString(key);
+                    if (v != null) {
+                        optionValues.put(key, v);
+                    }
+                }
             }
+            return new LlmModelRef(providerId, modelId, displayName, optionValues);
         }
-        boolean think = o.getBoolean(PERSISTENCE_LLM_ANTH_THINK) != null
-                && o.getBoolean(PERSISTENCE_LLM_ANTH_THINK).booleanValue();
-        return new LlmRequestOptions(oai, ao, think);
+        return loadLegacyLlmModelRef(mo, sessionObj);
     }
 
-    private static AiModelRef loadAiModelRef(PersistedObject o) {
-        if (o == null) {
-            return AiModelRef.fromOption(null);
+    /**
+     * Translate a pre-refactor model record into the new {@link LlmModelRef} shape. Maps
+     * {@code modelKind} -> {@code providerId}, the per-kind nullable model field -> {@code modelId},
+     * and the session-level {@code llmAnthropicEffort}/{@code llmAnthropicExtendedThinking}/
+     * {@code llmOaiReasoning} keys -> {@link ModelOptions} option values for the relevant provider.
+     */
+    private static LlmModelRef loadLegacyLlmModelRef(PersistedObject mo, PersistedObject sessionObj) {
+        String label = mo.getString(PERSISTENCE_MODEL_LABEL_LEGACY);
+        String displayName = label != null ? label : "";
+        String kindS = mo.getString(PERSISTENCE_MODEL_KIND_LEGACY);
+        if (kindS == null) {
+            return new LlmModelRef(BurpProvider.ID, "", displayName.isEmpty() ? "Burp" : displayName, Map.of());
         }
-        String label = o.getString(PERSISTENCE_MODEL_LABEL);
-        String kindS = o.getString(PERSISTENCE_MODEL_KIND);
-        AiModelOption.Kind kind = AiModelOption.Kind.BURP;
-        if (kindS != null) {
-            try {
-                kind = AiModelOption.Kind.valueOf(kindS);
-            } catch (IllegalArgumentException ignored) {
+        Map<String, String> optionValues = new LinkedHashMap<>();
+        switch (kindS) {
+            case "ANTHROPIC" -> {
+                String modelId = mo.getString(PERSISTENCE_MODEL_ANTHROPIC_LEGACY);
+                copyLegacyEffort(sessionObj, PERSISTENCE_LLM_ANTH_EFFORT_LEGACY, optionValues);
+                Boolean think = sessionObj.getBoolean(PERSISTENCE_LLM_ANTH_THINK_LEGACY);
+                if (think != null) {
+                    optionValues.put(ModelOptions.EXTENDED_THINKING.id(), Boolean.toString(think));
+                }
+                return new LlmModelRef(AnthropicProvider.ID, nullSafe(modelId), displayName, optionValues);
+            }
+            case "OPENAI" -> {
+                String modelId = mo.getString(PERSISTENCE_MODEL_OPENAI_DEP_LEGACY);
+                copyLegacyEffort(sessionObj, PERSISTENCE_LLM_OAI_REASON_LEGACY, optionValues);
+                return new LlmModelRef(OpenAiProvider.ID, nullSafe(modelId), displayName, optionValues);
+            }
+            case "OLLAMA" -> {
+                String modelId = mo.getString(PERSISTENCE_MODEL_OLLAMA_LEGACY);
+                return new LlmModelRef(OllamaProvider.ID, nullSafe(modelId), displayName, optionValues);
+            }
+            default -> {
+                return new LlmModelRef(BurpProvider.ID, "", displayName.isEmpty() ? "Burp" : displayName, optionValues);
             }
         }
-        return new AiModelRef(
-                label,
-                kind,
-                o.getString(PERSISTENCE_MODEL_OLLAMA),
-                o.getString(PERSISTENCE_MODEL_ANTHROPIC),
-                o.getString(PERSISTENCE_MODEL_OPENAI_DEP));
+    }
+
+    private static void copyLegacyEffort(PersistedObject sessionObj, String key, Map<String, String> out) {
+        String s = sessionObj.getString(key);
+        if (s == null) {
+            return;
+        }
+        // Both legacy enums (OpenAiReasoningEffort and AnthropicOutputEffort) used names that
+        // line up with the new EffortLevel constants (MINIMAL / LOW / MEDIUM / HIGH / MAX).
+        try {
+            EffortLevel level = EffortLevel.valueOf(s);
+            out.put(ModelOptions.EFFORT.id(), level.name());
+        } catch (IllegalArgumentException ignored) {
+        }
+    }
+
+    private static String nullSafe(String s) {
+        return s != null ? s : "";
     }
 
     private static List<ChatMessage> loadChatMessages(PersistedObject o) {

@@ -37,7 +37,7 @@ import javax.swing.UIManager;
 
 import burp.api.montoya.ui.settings.SettingsPanelWithData;
 import treepeater.Treepeater;
-import treepeater.ai.AiModelOption;
+import treepeater.ai.ollama.OllamaProvider;
 import treepeater.requestResponse.Status;
 
 /**
@@ -285,7 +285,7 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         if (persisted != null) {
             persisted.forEach(listModel::addElement);
         } else {
-            for (String m : AiModelOption.FALLBACK_OLLAMA_MODELS) {
+            for (String m : OllamaProvider.FALLBACK_MODELS) {
                 listModel.addElement(m);
             }
         }

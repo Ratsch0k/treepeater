@@ -11,7 +11,6 @@ import javax.swing.JComponent;
 import java.lang.reflect.InvocationTargetException;
 
 import javax.swing.BoxLayout;
-import javax.swing.JComboBox;
 import javax.swing.JButton;
 import javax.swing.JPanel;
 import javax.swing.JTabbedPane;
@@ -29,25 +28,17 @@ import treepeater.ai.AgentMode;
 import treepeater.ai.AgentModeToolPolicy;
 import treepeater.ai.AgentTabMention;
 import treepeater.ai.AgentToolContext;
-import treepeater.ai.AiModelOption;
-import treepeater.ai.LlmRequestOptions;
 import treepeater.ai.ChatToolExecutor;
 import treepeater.ai.ChatTooling;
 import treepeater.ai.HttpTargetTools;
 import treepeater.ai.RepeaterTabAgentBridge;
 import treepeater.ai.StreamingChatClient;
-import treepeater.ai.anthropic.AnthropicClientConfig;
-import treepeater.ai.anthropic.AnthropicStreamingChatClient;
-import treepeater.ai.burp.BurpAiStreamingChatClient;
-import treepeater.ai.openai.OpenAiClientConfig;
-import treepeater.ai.openai.OpenAiStreamingChatClient;
-import treepeater.ai.ollama.OllamaClientConfig;
-import treepeater.ai.ollama.OllamaStreamingChatClient;
+import treepeater.ai.model.LlmModelDefinition;
+import treepeater.ai.model.LlmModelOptionValues;
 import treepeater.components.StyledButton;
 import treepeater.icons.WandIcon;
 import treepeater.requestResponse.toolbar.ToolbarIconButton;
 import treepeater.requestResponse.toolbar.ToolbarTabTitle;
-import treepeater.settings.TreepeaterSettings;
 import treepeater.tree.RequestTreeNode;
 
 public class AIToolbarTab implements AIChatHost {
@@ -94,54 +85,14 @@ public class AIToolbarTab implements AIChatHost {
     }
 
     @Override
-    public StreamingChatClient clientForSelectedModel(JComboBox<AiModelOption> modelCombo, LlmRequestOptions options) {
-        LlmRequestOptions o = options != null ? options : LlmRequestOptions.DEFAULTS;
-        AiModelOption opt = (AiModelOption) modelCombo.getSelectedItem();
-        if (opt == null || Treepeater.api == null) {
-            throw new IllegalStateException("No model or API");
+    public StreamingChatClient clientForSelectedModel(LlmModelDefinition model, LlmModelOptionValues values) {
+        if (model == null) {
+            throw new IllegalStateException("No model selected");
         }
-        TreepeaterSettings settings = TreepeaterSettings.getInstance();
-        if (opt.kind() == AiModelOption.Kind.BURP) {
-            return new BurpAiStreamingChatClient(Treepeater.api);
+        if (Treepeater.api == null) {
+            throw new IllegalStateException("Burp API not available");
         }
-        if (opt.kind() == AiModelOption.Kind.ANTHROPIC) {
-            String apiKey = settings.getLlmAnthropicApiKey();
-            if (apiKey == null || apiKey.isBlank()) {
-                throw new IllegalStateException("Anthropic API key not configured");
-            }
-            String model = opt.anthropicModel();
-            if (model == null || model.isBlank()) {
-                throw new IllegalStateException("No Anthropic model id");
-            }
-            return new AnthropicStreamingChatClient(
-                    new AnthropicClientConfig(
-                            apiKey, model, o.anthropicExtendedThinking(), o.anthropicOutputEffort()));
-        }
-        if (opt.kind() == AiModelOption.Kind.OPENAI) {
-            String endpoint = settings.getLlmAzureOpenAiEndpoint();
-            if (endpoint == null || endpoint.isBlank()) {
-                throw new IllegalStateException("Azure OpenAI endpoint not configured");
-            }
-            String apiKey = settings.getLlmAzureOpenAiApiKey();
-            if (apiKey == null || apiKey.isBlank()) {
-                throw new IllegalStateException("Azure OpenAI API key not configured");
-            }
-            String deployment = opt.openAiDeployment();
-            if (deployment == null || deployment.isBlank()) {
-                throw new IllegalStateException("No deployment name for Azure OpenAI");
-            }
-            return new OpenAiStreamingChatClient(
-                    new OpenAiClientConfig(endpoint, apiKey, deployment, o.openAiReasoningEffort()));
-        }
-        String baseUrl = settings.getLlmOllamaBaseUrl();
-        if (baseUrl == null || baseUrl.isBlank()) {
-            throw new IllegalStateException("Ollama base URL not configured");
-        }
-        String model = opt.ollamaModel();
-        if (model == null || model.isBlank()) {
-            throw new IllegalStateException("No Ollama model id");
-        }
-        return new OllamaStreamingChatClient(new OllamaClientConfig(baseUrl, model));
+        return model.provider().createClient(model, values != null ? values : model.defaults());
     }
 
     /** Built-in HTTP target tools; approval depends on {@link AgentMode}. */

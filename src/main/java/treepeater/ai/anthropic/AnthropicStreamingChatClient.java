@@ -3,7 +3,6 @@ package treepeater.ai.anthropic;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Locale;
 
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
@@ -235,7 +234,7 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
                         .maxTokens(ANTHROPIC_MAX_OUTPUT_TOKENS)
                         .outputConfig(
                                 OutputConfig.builder()
-                                        .effort(this.config.outputEffort().toSdk())
+                                        .effort(this.config.outputEffort())
                                         .build());
         applyExtendedThinkingConfig(paramsBuilder);
 
@@ -272,26 +271,18 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
     }
 
     /**
-     * Sonnet / Opus 4.6+ use {@link ThinkingConfigAdaptive}. Earlier 4.x thinking models use {@code enabled_thinking}
-     * with {@code budget_tokens &lt; max_tokens} (Anthropic API constraint). Skipped when
-     * {@link AnthropicClientConfig#extendedThinking()} is false.
+     * Configures the {@code thinking} request field according to the {@link AnthropicClientConfig.ThinkingMode}
+     * chosen by {@link AnthropicProvider} for this model. The provider — not this client — owns the
+     * per-model decision; this method just translates it to SDK calls.
      */
     private void applyExtendedThinkingConfig(MessageCreateParams.Builder b) {
-        if (!this.config.extendedThinking()) {
-            return;
-        }
-        String modelId = this.config.model();
-        String m = modelId == null ? "" : modelId.toLowerCase(Locale.ROOT);
-        if (m.isEmpty()) {
-            return;
-        }
-        if (AnthropicModelSupport.isClaude46FamilyOrLater(m)) {
-            b.thinking(ThinkingConfigAdaptive.builder().build());
-            return;
-        }
-        if (AnthropicModelSupport.likelySupportsFixedBudgetExtendedThinking(m)) {
-            long budget = Math.min(2048L, ANTHROPIC_MAX_OUTPUT_TOKENS - 1);
-            b.enabledThinking(budget);
+        switch (this.config.thinkingMode()) {
+            case OFF -> {}
+            case ADAPTIVE -> b.thinking(ThinkingConfigAdaptive.builder().build());
+            case FIXED_BUDGET -> {
+                long budget = Math.min(2048L, ANTHROPIC_MAX_OUTPUT_TOKENS - 1);
+                b.enabledThinking(budget);
+            }
         }
     }
 

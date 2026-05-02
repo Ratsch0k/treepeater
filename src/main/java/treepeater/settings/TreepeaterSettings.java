@@ -38,6 +38,14 @@ public class TreepeaterSettings {
     /** Integer preference: number of stored default statuses (0 means none). */
     public static final String DEFAULT_STATUSES_COUNT_SETTING = DEFAULT_STATUSES_SETTING + "_COUNT";
 
+    public static final String LLM_OLLAMA_BASE_URL_SETTING = "TREEPEATER_LLM_OLLAMA_BASE_URL";
+    public static final String LLM_OLLAMA_MODELS_SETTING = "TREEPEATER_LLM_OLLAMA_MODELS";
+    public static final String LLM_OLLAMA_MODELS_COUNT_SETTING = LLM_OLLAMA_MODELS_SETTING + "_COUNT";
+    public static final String LLM_ANTHROPIC_API_KEY_SETTING = "TREEPEATER_LLM_ANTHROPIC_API_KEY";
+    /** Azure OpenAI / Microsoft Foundry resource endpoint (no trailing path), e.g. {@code https://myresource.openai.azure.com}. */
+    public static final String LLM_AZURE_OPENAI_ENDPOINT_SETTING = "TREEPEATER_LLM_AZURE_OPENAI_ENDPOINT";
+    public static final String LLM_AZURE_OPENAI_API_KEY_SETTING = "TREEPEATER_LLM_AZURE_OPENAI_API_KEY";
+
     private static final String DEFAULT_STATUS_FIELD_ID = "ID";
     private static final String DEFAULT_STATUS_FIELD_NAME = "NAME";
     private static final String DEFAULT_STATUS_FIELD_SVG = "SVG";
@@ -76,6 +84,7 @@ public class TreepeaterSettings {
         STRING_PREFERENCE_DEFAULTS.put(EDIT_TARGET_HOTKEY_SETTING, "Ctrl+L");
         STRING_PREFERENCE_DEFAULTS.put(TAB_PREVIOUS_HOTKEY_SETTING, "Ctrl+Alt+Left");
         STRING_PREFERENCE_DEFAULTS.put(TAB_NEXT_HOTKEY_SETTING, "Ctrl+Alt+Right");
+        STRING_PREFERENCE_DEFAULTS.put(LLM_OLLAMA_BASE_URL_SETTING, "http://127.0.0.1:11434");
     }
 
     public static void init(Preferences preferences) {
@@ -194,6 +203,89 @@ public class TreepeaterSettings {
     public void setTabNextHotkey(String hotkey) {
         this.preferences.setString(TAB_NEXT_HOTKEY_SETTING, hotkey);
         this.notifyListeners(TAB_NEXT_HOTKEY_SETTING, hotkey);
+    }
+
+    public String getLlmOllamaBaseUrl() {
+        return this.getStringWithDefault(LLM_OLLAMA_BASE_URL_SETTING);
+    }
+
+    public void setLlmOllamaBaseUrl(String baseUrl) {
+        this.preferences.setString(LLM_OLLAMA_BASE_URL_SETTING, baseUrl);
+        this.notifyListeners(LLM_OLLAMA_BASE_URL_SETTING, baseUrl);
+    }
+
+    /**
+     * User-configured Ollama model names, or {@code null} if never set (meaning use defaults).
+     */
+    public List<String> getOllamaModels() {
+        Integer countBox = this.preferences.getInteger(LLM_OLLAMA_MODELS_COUNT_SETTING);
+        if (countBox == null) {
+            return null;
+        }
+        int n = countBox.intValue();
+        if (n <= 0) {
+            return Collections.emptyList();
+        }
+        List<String> result = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            String model = this.preferences.getString(LLM_OLLAMA_MODELS_SETTING + "_" + i);
+            if (model != null && !model.isBlank()) {
+                result.add(model);
+            }
+        }
+        return result;
+    }
+
+    public void setOllamaModels(List<String> models) {
+        List<String> list = models != null ? models : List.of();
+        Integer previousCountBox = this.preferences.getInteger(LLM_OLLAMA_MODELS_COUNT_SETTING);
+        int previousCount = previousCountBox != null ? previousCountBox.intValue() : 0;
+
+        int n = list.size();
+        for (int i = 0; i < n; i++) {
+            this.preferences.setString(LLM_OLLAMA_MODELS_SETTING + "_" + i, list.get(i));
+        }
+        for (int i = n; i < previousCount; i++) {
+            this.preferences.deleteString(LLM_OLLAMA_MODELS_SETTING + "_" + i);
+        }
+        this.preferences.setInteger(LLM_OLLAMA_MODELS_COUNT_SETTING, n);
+        this.notifyListeners(LLM_OLLAMA_MODELS_SETTING, list);
+    }
+
+    /**
+     * Stored Anthropic API key, or {@code null} if the user has never set one.
+     */
+    public String getLlmAnthropicApiKey() {
+        return this.getString(LLM_ANTHROPIC_API_KEY_SETTING);
+    }
+
+    public void setLlmAnthropicApiKey(String apiKey) {
+        this.preferences.setString(LLM_ANTHROPIC_API_KEY_SETTING, apiKey);
+        this.notifyListeners(LLM_ANTHROPIC_API_KEY_SETTING, apiKey);
+    }
+
+    /**
+     * Azure OpenAI / Foundry endpoint base URL, or {@code null} if unset.
+     */
+    public String getLlmAzureOpenAiEndpoint() {
+        return this.getString(LLM_AZURE_OPENAI_ENDPOINT_SETTING);
+    }
+
+    public void setLlmAzureOpenAiEndpoint(String endpoint) {
+        this.preferences.setString(LLM_AZURE_OPENAI_ENDPOINT_SETTING, endpoint);
+        this.notifyListeners(LLM_AZURE_OPENAI_ENDPOINT_SETTING, endpoint);
+    }
+
+    /**
+     * API key for Azure OpenAI / Foundry, or {@code null} if unset.
+     */
+    public String getLlmAzureOpenAiApiKey() {
+        return this.getString(LLM_AZURE_OPENAI_API_KEY_SETTING);
+    }
+
+    public void setLlmAzureOpenAiApiKey(String apiKey) {
+        this.preferences.setString(LLM_AZURE_OPENAI_API_KEY_SETTING, apiKey);
+        this.notifyListeners(LLM_AZURE_OPENAI_API_KEY_SETTING, apiKey);
     }
 
     /**

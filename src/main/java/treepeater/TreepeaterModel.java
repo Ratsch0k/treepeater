@@ -10,6 +10,7 @@ import javax.swing.tree.TreeNode;
 import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
+import treepeater.ai.AgentChatWorkspace;
 import treepeater.requestResponse.RequestHistory;
 
 import treepeater.tree.RequestTree;
@@ -22,16 +23,32 @@ public class TreepeaterModel implements RequestTreeNodeListener {
     private RequestTreeNode activeNode;
     private int requestCount;
 
+    private String globalNotes = "";
+    private AgentChatWorkspace globalAgentChatWorkspace = AgentChatWorkspace.EMPTY;
+
     private Set<TreepeaterModelListener> listeners;
 
     public TreepeaterModel(RequestTree tree, LinkedList<RequestTreeNode> tabs, RequestTreeNode activeNode, int requestCount) {
+        this(tree, tabs, activeNode, requestCount, "", AgentChatWorkspace.EMPTY);
+    }
+
+    public TreepeaterModel(
+            RequestTree tree,
+            LinkedList<RequestTreeNode> tabs,
+            RequestTreeNode activeNode,
+            int requestCount,
+            String globalNotes,
+            AgentChatWorkspace globalAgentChatWorkspace) {
         this.tree = tree;
         this.tabs = tabs;
         this.activeNode = activeNode;
         this.requestCount = requestCount;
+        this.globalNotes = globalNotes != null ? globalNotes : "";
+        this.globalAgentChatWorkspace =
+                globalAgentChatWorkspace != null ? globalAgentChatWorkspace : AgentChatWorkspace.EMPTY;
         this.listeners = new HashSet<>();
-        
-        this.listenToAllNodes((RequestTreeNode)this.tree.getTreeModel().getRoot());
+
+        this.listenToAllNodes((RequestTreeNode) this.tree.getTreeModel().getRoot());
     }
 
     public TreepeaterModel() {
@@ -39,7 +56,35 @@ public class TreepeaterModel implements RequestTreeNodeListener {
         this.tabs = new LinkedList<>();
         this.requestCount = 0;
         this.activeNode = null;
+        this.globalNotes = "";
+        this.globalAgentChatWorkspace = AgentChatWorkspace.EMPTY;
         this.listeners = new HashSet<>();
+    }
+
+    public String getGlobalNotes() {
+        return this.globalNotes != null ? this.globalNotes : "";
+    }
+
+    public void setGlobalNotes(String notes) {
+        String next = notes != null ? notes : "";
+        if (next.equals(this.globalNotes)) {
+            return;
+        }
+        this.globalNotes = next;
+        Treepeater.saveState();
+    }
+
+    public AgentChatWorkspace getGlobalAgentChatWorkspace() {
+        return this.globalAgentChatWorkspace != null ? this.globalAgentChatWorkspace : AgentChatWorkspace.EMPTY;
+    }
+
+    public void setGlobalAgentChatWorkspace(AgentChatWorkspace workspace) {
+        AgentChatWorkspace next = workspace != null ? workspace : AgentChatWorkspace.EMPTY;
+        if (next.equals(this.globalAgentChatWorkspace)) {
+            return;
+        }
+        this.globalAgentChatWorkspace = next;
+        Treepeater.saveState();
     }
 
     private void listenToAllNodes(RequestTreeNode node) {
@@ -153,7 +198,14 @@ public class TreepeaterModel implements RequestTreeNodeListener {
         RequestHistory history = new RequestHistory();
         history.addEntry(request.httpService().host(), request, response);
 
-        RequestTreeNode copy = new RequestTreeNode(this.requestCount, source.getStatus(), copyName, request, response, history, source.getNotes());
+        RequestTreeNode copy =
+                new RequestTreeNode(
+                        this.requestCount,
+                        source.getStatus(),
+                        copyName,
+                        request,
+                        response,
+                        history);
         copy.addListener(this);
 
         int insertIndex = parent.getIndex(source) + 1;
@@ -193,6 +245,34 @@ public class TreepeaterModel implements RequestTreeNodeListener {
 
     public List<RequestTreeNode> getTabs() {
         return this.tabs;
+    }
+
+    /**
+     * The {@link #getTabs()} list is keyed by object identity. After drag-and-drop, the same logical tab
+     * can still be in that list while the tree model holds a <em>new</em> {@link RequestTreeNode} with
+     * the same id, and the list entry is a detached (removed) node. This finds the in-tree node for a
+     * request id, or null if it does not exist.
+     */
+    public RequestTreeNode findRequestNodeInTreeById(int id) {
+        Object root = this.tree.getTreeModel().getRoot();
+        if (!(root instanceof RequestTreeNode r)) {
+            return null;
+        }
+        return findRequestNodeInTreeById(r, id);
+    }
+
+    private static RequestTreeNode findRequestNodeInTreeById(RequestTreeNode node, int id) {
+        if (node.getId() == id) {
+            return node;
+        }
+        for (int i = 0; i < node.getChildCount(); i++) {
+            RequestTreeNode c = (RequestTreeNode) node.getChildAt(i);
+            RequestTreeNode f = findRequestNodeInTreeById(c, id);
+            if (f != null) {
+                return f;
+            }
+        }
+        return null;
     }
 
     @Override

@@ -1,11 +1,9 @@
 package treepeater.requestResponse;
 
 import java.awt.BorderLayout;
-import java.awt.Dimension;
 import java.awt.Font;
-import java.awt.event.ComponentAdapter;
-import java.awt.event.ComponentEvent;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -21,37 +19,27 @@ import javax.swing.JPanel;
 import javax.swing.JSplitPane;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
-import javax.swing.plaf.basic.BasicSplitPaneDivider;
-import javax.swing.plaf.basic.BasicSplitPaneUI;
 import javax.swing.tree.TreePath;
 
+import burp.api.montoya.http.HttpService;
+import burp.api.montoya.http.RequestOptions;
+import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 import burp.api.montoya.ui.editor.EditorOptions;
 import burp.api.montoya.ui.editor.HttpRequestEditor;
 import burp.api.montoya.ui.editor.HttpResponseEditor;
+import treepeater.ai.AgentToolContext;
+import treepeater.ai.HttpTargetSnapshot;
 import treepeater.Treepeater;
 import treepeater.TreepeaterModel;
 import treepeater.components.CustomButton;
-import treepeater.icons.DoubleArrowLeftIcon;
-import treepeater.icons.DoubleArrowRightIcon;
-import treepeater.requestResponse.toolbar.RequestResponseToolbar;
-import treepeater.requestResponse.toolbar.RequestResponseToolbarListener;
 import treepeater.settings.TreepeaterSettings;
 import treepeater.tree.RequestTree;
 import treepeater.tree.RequestTreeNode;
 import treepeater.tree.CustomTreeCellEditor.ProgrammaticEdit;
 
-public class RequestResponsePanel extends JPanel implements RequestResponseToolbarListener {
-
-    /** When the expand panel is open, the divider cannot shrink it below this width (button closes only). */
-    private static final int EXPAND_PANEL_MIN_OPEN_WIDTH = 120;
-
-    /** Divider thickness when the expand strip is open; 0 when closed so nothing can be dragged. */
-    private static int expandSplitDividerSizeWhenOpen() {
-        int s = UIManager.getInt("SplitPane.dividerSize");
-        return s > 0 ? s : 8;
-    }
+public class RequestResponsePanel extends JPanel {
 
     private final TreepeaterModel model;
     private final RequestTree tree;
@@ -66,19 +54,8 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
     private JPanel topBarWrapper;
 
     private JSplitPane splitPane;
-    private JPanel mainContent;
-    private RequestResponseToolbar sideToolbar;
 
     private final List<RequestResponseChangeListener> requestResponseChangeListeners = new CopyOnWriteArrayList<>();
-
-    private JSplitPane expandSplitPane;
-    private JPanel expandPanel;
-    private boolean expandPanelOpen;
-    /**
-     * Proportional width of the left component (request/response editors) in {@link #expandSplitPane} when the expand
-     * strip is open. The expand panel is on the right, so e.g. {@code 0.78} leaves ~22% for the expand strip.
-     */
-    private double expandSplitEditorWidthFraction = 0.78;
 
     private JButton historyBackButton;
     private JButton historyBackDropButton;
@@ -212,30 +189,11 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
 
         this.splitPane.setDividerLocation(0.5);
         this.splitPane.setResizeWeight(0.5);
-;
-        this.sideToolbar = new RequestResponseToolbar(this.node);
-        this.addRequestResponseChangeListener(this.sideToolbar.getInfoToolbarTab());
-        this.sideToolbar.addToolbarListener(this);
-        this.expandPanel = this.sideToolbar.getToolbarPanel();
 
         this.notifyRequestChanged();
         this.notifyResponseChanged();
 
-        this.expandSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, this.splitPane, this.expandPanel);
-        Treepeater.api.userInterface().applyThemeToComponent(this.expandSplitPane);
-        this.expandSplitPane.setResizeWeight(1.0);
-        this.expandSplitPane.setOneTouchExpandable(false);
-        this.expandSplitPane.setContinuousLayout(true);
-        this.syncExpandSplitInteraction();
-
-        this.mainContent = new JPanel(new BorderLayout());
-        this.mainContent.add(this.expandSplitPane, BorderLayout.CENTER);
-        this.mainContent.add(this.sideToolbar, BorderLayout.LINE_END);
-        Treepeater.api.userInterface().applyThemeToComponent(this.mainContent);
-
-        this.installExpandSplitInitiallyCollapsed();
-
-        this.add(this.mainContent, BorderLayout.CENTER);
+        this.add(this.splitPane, BorderLayout.CENTER);
 
         this.hotkeyHandler = new HotkeyHandler();
         this.populateHotkeyActions();
@@ -246,14 +204,6 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
     public void updateUI() {
         super.updateUI();
         this.applyThemeLocalStyles();
-    }
-
-    public void onToolbarOpen() {
-        this.toggleExpandPanel();
-    }
-
-    public void onToolbarClose() {
-        this.toggleExpandPanel();
     }
 
     /**
@@ -270,95 +220,8 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
                 this.historyBackDropButton,
                 this.historyForwardButton,
                 this.historyForwardDropButton);
-        if (this.mainContent != null && Treepeater.api != null) {
-            Treepeater.api.userInterface().applyThemeToComponent(this.mainContent);
-        }
-        if (this.expandSplitPane != null && Treepeater.api != null) {
-            Treepeater.api.userInterface().applyThemeToComponent(this.expandSplitPane);
-        }
-        if (this.expandPanel != null && Treepeater.api != null) {
-            Treepeater.api.userInterface().applyThemeToComponent(this.expandPanel);
-        }
-        if (this.sideToolbar != null && Treepeater.api != null) {
-            Treepeater.api.userInterface().applyThemeToComponent(this.sideToolbar);
-        }
-        if (this.sideToolbar != null) {
-            this.sideToolbar.applyLocalTheme();
-        }
-        SwingUtilities.invokeLater(this::applyExpandDividerInteractionState);
-    }
-
-    private void installExpandSplitInitiallyCollapsed() {
-        this.expandSplitPane.addComponentListener(
-                new ComponentAdapter() {
-                    private boolean laidOut;
-
-                    @Override
-                    public void componentResized(ComponentEvent e) {
-                        if (this.laidOut || RequestResponsePanel.this.expandSplitPane.getWidth() < 32) {
-                            return;
-                        }
-                        this.laidOut = true;
-                        RequestResponsePanel.this.expandSplitPane.setDividerLocation(1.0d);
-                        RequestResponsePanel.this.syncExpandSplitInteraction();
-                        RequestResponsePanel.this.expandSplitPane.removeComponentListener(this);
-                    }
-                });
-    }
-
-    private void syncExpandSplitInteraction() {
-        this.applyExpandPanelMinSizeForState();
-        this.applyExpandDividerInteractionState();
-    }
-
-    private void applyExpandPanelMinSizeForState() {
-        if (this.expandPanel == null) {
-            return;
-        }
-        int minW = this.expandPanelOpen ? EXPAND_PANEL_MIN_OPEN_WIDTH : 0;
-        this.expandPanel.setMinimumSize(new Dimension(minW, 0));
-        if (this.expandSplitPane != null) {
-            this.expandSplitPane.revalidate();
-        }
-    }
-
-    private void applyExpandDividerInteractionState() {
-        if (this.expandSplitPane == null) {
-            return;
-        }
-        if (this.expandPanelOpen) {
-            this.expandSplitPane.setDividerSize(expandSplitDividerSizeWhenOpen());
-        } else {
-            this.expandSplitPane.setDividerSize(0);
-        }
-        if (!(this.expandSplitPane.getUI() instanceof BasicSplitPaneUI)) {
-            return;
-        }
-        BasicSplitPaneDivider divider = ((BasicSplitPaneUI) this.expandSplitPane.getUI()).getDivider();
-        if (divider == null) {
-            return;
-        }
-        divider.setEnabled(this.expandPanelOpen);
-    }
-
-    private void toggleExpandPanel() {
-        if (this.expandPanelOpen) {
-            int w = this.expandSplitPane.getWidth();
-            if (w > 0) {
-                double editorFrac = this.expandSplitPane.getDividerLocation() / (double) w;
-                this.expandSplitEditorWidthFraction = Math.max(0.35d, Math.min(0.96d, editorFrac));
-            }
-            this.sideToolbar.getExpandButton().setIcon(new DoubleArrowLeftIcon().withSize(24, 24).withColor(UIManager.getColor("Label.foreground")));
-            this.expandPanelOpen = false;
-            this.expandSplitPane.setResizeWeight(1.0);
-            this.syncExpandSplitInteraction();
-            SwingUtilities.invokeLater(() -> this.expandSplitPane.setDividerLocation(1.0d));
-        } else {
-            this.sideToolbar.getExpandButton().setIcon(new DoubleArrowRightIcon().withSize(24, 24).withColor(UIManager.getColor("Label.foreground")));
-            this.expandPanelOpen = true;
-            this.expandSplitPane.setResizeWeight(0.78);
-            this.syncExpandSplitInteraction();
-            SwingUtilities.invokeLater(() -> this.expandSplitPane.setDividerLocation(this.expandSplitEditorWidthFraction));
+        if (this.splitPane != null && Treepeater.api != null) {
+            Treepeater.api.userInterface().applyThemeToComponent(this.splitPane);
         }
     }
 
@@ -405,6 +268,7 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
     }
 
     public void setRequest(HttpRequest request) {
+        Treepeater.api.logging().logToOutput("setRequest: " + request.url());
         this.requestEditor.setRequest(request);
         this.node.setRequest(request);
         Treepeater.saveState();
@@ -435,6 +299,14 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
         this.requestResponseChangeListeners.remove(listener);
     }
 
+    /**
+     * Notifies listeners with the current editor-backed request/response (e.g. after switching tabs).
+     */
+    public void refreshToolbarLinkedInfo() {
+        this.notifyRequestChanged();
+        this.notifyResponseChanged();
+    }
+
     private void notifyRequestChanged() {
         LocalDateTime received = this.currentHistoryResponseTime();
         HttpRequest request = this.requestEditor.getRequest();
@@ -453,9 +325,6 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
         }
     }
 
-    /**
-     * Time associated with the current history entry (typically when that response was received or recorded).
-     */
     private LocalDateTime currentHistoryResponseTime() {
         RequestHistory h = this.node.getHistory();
         if (h.isEmpty()) {
@@ -480,6 +349,169 @@ public class RequestResponsePanel extends JPanel implements RequestResponseToolb
             label = "Target: " + label;
         }
         this.targetValueLabel.setText(label);
+    }
+
+    private HttpTargetSnapshot buildTargetSnapshotForAi() {
+        String method = "";
+        String url = "";
+        String path = "";
+        String protocol = this.httpTarget.isHttps() ? "HTTPS" : "HTTP";
+        String host = "";
+        String portLabel = "";
+        HttpRequest request = this.requestEditor.getRequest();
+        if (request != null) {
+            HttpService service = safeHttpService(request);
+            if (service != null) {
+                protocol = service.secure() ? "HTTPS" : "HTTP";
+                String h = service.host();
+                host = (h == null || h.isBlank()) ? "" : h;
+                int port = service.port();
+                portLabel = port > 0 ? String.valueOf(port) : "";
+            } else {
+                host = this.httpTarget.getHost() == null ? "" : this.httpTarget.getHost().trim();
+                int p = this.httpTarget.getPort();
+                portLabel = p > 0 ? String.valueOf(p) : "";
+                protocol = this.httpTarget.isHttps() ? "HTTPS" : "HTTP";
+            }
+            method = safeHttpString(() -> request.method(), "");
+            url = safeHttpString(() -> request.url(), "");
+            path = safeHttpString(() -> request.path(), "");
+        } else {
+            host = this.httpTarget.getHost() == null ? "" : this.httpTarget.getHost().trim();
+            int p = this.httpTarget.getPort();
+            portLabel = p > 0 ? String.valueOf(p) : "";
+        }
+        int portNum = -1;
+        try {
+            portNum = Integer.parseInt(portLabel);
+        } catch (NumberFormatException ignored) {
+        }
+        if (portNum <= 0) {
+            portNum = "HTTPS".equals(protocol) ? 443 : 80;
+        }
+        String scheme = "HTTPS".equals(protocol) ? "https" : "http";
+        return new HttpTargetSnapshot(
+                scheme,
+                host,
+                portNum,
+                this.httpTarget.isSniEnabled(),
+                method,
+                url,
+                path);
+    }
+
+    /** Live editor request for agent tab discovery (may differ from last-applied target). */
+    public HttpRequest getLiveRequestFromEditor() {
+        return this.requestEditor != null ? this.requestEditor.getRequest() : null;
+    }
+
+    /** Repeater tree node id for this tab (AI tools / labels). */
+    public int getRequestNodeId() {
+        return this.node.getId();
+    }
+
+    public AgentToolContext buildAgentToolContextForAi() {
+        RequestHistory h = this.node.getHistory();
+        int cur = h.getCurrentIndex();
+        List<AgentToolContext.HistoryEntryInfo> infos = new ArrayList<>();
+        for (int i = 0; i < h.size(); i++) {
+            HistoryEntry e = h.getEntry(i);
+            infos.add(
+                    new AgentToolContext.HistoryEntryInfo(
+                            i,
+                            e.getTime() != null ? e.getTime().toString() : "",
+                            e.getTargetLabel() != null ? e.getTargetLabel() : ""));
+        }
+        return new AgentToolContext(
+                buildTargetSnapshotForAi(),
+                this.node.getId(),
+                cur,
+                infos,
+                idx -> resolveRequestForHistoryIndex(h, cur, idx),
+                idx -> resolveResponseForHistoryIndex(h, cur, idx),
+                this::setRequest,
+                this::sendCurrentHttpRequestBlocking);
+    }
+
+    private int sendCurrentHttpRequestBlocking() throws Exception {
+        if (Treepeater.api == null) {
+            throw new IllegalStateException("Burp API unavailable");
+        }
+        final HttpRequest[] prepared = new HttpRequest[1];
+        final String[] targetLabel = new String[1];
+        SwingUtilities.invokeAndWait(
+                () -> {
+                    HttpRequest r = this.requestEditor.getRequest();
+                    r = this.httpTarget.applyToRequest(r);
+                    this.requestEditor.setRequest(r);
+                    this.node.setRequest(r);
+                    prepared[0] = r;
+                    targetLabel[0] = this.httpTarget.statusLineLabel();
+                });
+
+        RequestOptions options = RequestOptions.requestOptions();
+        if (this.httpTarget.isSniEnabled() && this.httpTarget.isHttps()) {
+            String host = this.httpTarget.getHost();
+            if (host != null && !host.isBlank()) {
+                options = options.withServerNameIndicator(host.trim());
+            }
+        }
+
+        HttpRequestResponse rr = Treepeater.api.http().sendRequest(prepared[0], options);
+        HttpResponse response = rr.response();
+        if (response == null) {
+            throw new IllegalStateException("no HTTP response");
+        }
+        int status = Short.toUnsignedInt(response.statusCode());
+        LocalDateTime time = LocalDateTime.now();
+        HttpRequest snapshot = prepared[0];
+        SwingUtilities.invokeAndWait(
+                () -> {
+                    this.setResponse(response);
+                    this.addToHistory(snapshot, response, time, targetLabel[0]);
+                });
+        return status;
+    }
+
+    private HttpRequest resolveRequestForHistoryIndex(RequestHistory h, int currentIndex, int index) {
+        if (index < 0 || index >= h.size()) {
+            return null;
+        }
+        if (index == currentIndex) {
+            return this.requestEditor.getRequest();
+        }
+        return h.getEntry(index).getRequest();
+    }
+
+    private HttpResponse resolveResponseForHistoryIndex(RequestHistory h, int currentIndex, int index) {
+        if (index < 0 || index >= h.size()) {
+            return null;
+        }
+        HttpResponse fromEntry = h.getEntry(index).getResponse();
+        if (fromEntry != null) {
+            return fromEntry;
+        }
+        if (index == currentIndex) {
+            return this.responseEditor.getResponse();
+        }
+        return null;
+    }
+
+    private static HttpService safeHttpService(HttpRequest request) {
+        try {
+            return request.httpService();
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static String safeHttpString(java.util.function.Supplier<String> supplier, String onFailure) {
+        try {
+            String s = supplier.get();
+            return (s == null || s.isBlank()) ? onFailure : s;
+        } catch (Exception ignored) {
+            return onFailure;
+        }
     }
 
     private void openEditTargetDialog() {

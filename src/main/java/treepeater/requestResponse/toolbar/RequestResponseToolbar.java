@@ -13,10 +13,12 @@ import javax.swing.JButton;
 import javax.swing.JPanel;
 import javax.swing.UIManager;
 
+import treepeater.ai.RepeaterTabAgentBridge;
 import treepeater.Treepeater;
+import treepeater.TreepeaterModel;
 import treepeater.icons.DoubleArrowLeftIcon;
 import treepeater.requestResponse.RequestResponsePanelUi;
-import treepeater.tree.RequestTreeNode;
+import treepeater.requestResponse.toolbar.ai.AIToolbarTab;
 
 /**
  * Narrow vertical strip of actions to the right of the request/response editors.
@@ -24,6 +26,7 @@ import treepeater.tree.RequestTreeNode;
 public class RequestResponseToolbar extends JPanel {
     private final InfoToolbarTab infoToolbarTab;
     private final NotesToolbarTab notesToolbarTab;
+    private final AIToolbarTab magicToolbarTab;
 
     private final JButton expandButton;
 
@@ -34,7 +37,7 @@ public class RequestResponseToolbar extends JPanel {
 
     private final List<RequestResponseToolbarListener> toolbarListeners = new CopyOnWriteArrayList<>();
 
-    public RequestResponseToolbar(RequestTreeNode node) {
+    public RequestResponseToolbar(TreepeaterModel model, RepeaterTabAgentBridge agentBridge) {
         super(new BorderLayout());
         setBorder(
                 BorderFactory.createCompoundBorder(
@@ -43,13 +46,15 @@ public class RequestResponseToolbar extends JPanel {
 
 
         this.infoToolbarTab = new InfoToolbarTab();
-        this.notesToolbarTab = new NotesToolbarTab(node);
+        this.notesToolbarTab = new NotesToolbarTab(model);
+        this.magicToolbarTab = new AIToolbarTab(model, agentBridge);
 
         this.toolbarCardLayout = new CardLayout();
         this.toolbarPanel = new JPanel(this.toolbarCardLayout);
 
         this.toolbarPanel.add(this.infoToolbarTab.getContent(), "info");
         this.toolbarPanel.add(this.notesToolbarTab.getContent(), "notes");
+        this.toolbarPanel.add(this.magicToolbarTab.getContent(), "magic");
 
         this.infoToolbarTab.getButton().addActionListener(e -> {
             if (!this.toolbarOpen) {
@@ -63,6 +68,13 @@ public class RequestResponseToolbar extends JPanel {
                 openToolbarToCard("notes");
             } else {
                 this.toolbarCardLayout.show(this.toolbarPanel, "notes");
+            }
+        });
+        this.magicToolbarTab.getButton().addActionListener(e -> {
+            if (!this.toolbarOpen) {
+                openToolbarToCard("magic");
+            } else {
+                this.toolbarCardLayout.show(this.toolbarPanel, "magic");
             }
         });
 
@@ -89,6 +101,8 @@ public class RequestResponseToolbar extends JPanel {
         column.add(this.infoToolbarTab.getButton());
         column.add(Box.createVerticalStrut(6));
         column.add(this.notesToolbarTab.getButton());
+        column.add(Box.createVerticalStrut(6));
+        column.add(this.magicToolbarTab.getButton());
         add(column, BorderLayout.NORTH);
 
         if (Treepeater.api != null) {
@@ -160,12 +174,23 @@ public class RequestResponseToolbar extends JPanel {
         return this.notesToolbarTab.getButton();
     }
 
+    public AIToolbarTab getMagicToolbarTab() {
+        return this.magicToolbarTab;
+    }
+
+    public JButton getMagicButton() {
+        return this.magicToolbarTab.getButton();
+    }
+
     public void applyLocalTheme() {
         if (this.infoToolbarTab != null) {
             this.infoToolbarTab.applyLocalTheme();
         }
         if (this.notesToolbarTab != null) {
             this.notesToolbarTab.applyLocalTheme();
+        }
+        if (this.magicToolbarTab != null) {
+            this.magicToolbarTab.applyLocalTheme();
         }
         if (this.expandButton != null) {
             this.expandButton.setIcon(new DoubleArrowLeftIcon().withSize(24, 24).withColor(UIManager.getColor("Label.foreground")));

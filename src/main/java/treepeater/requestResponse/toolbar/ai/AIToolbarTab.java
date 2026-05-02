@@ -1,0 +1,291 @@
+package treepeater.requestResponse.toolbar.ai;
+
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Component;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.OptionalInt;
+import javax.swing.JComponent;
+import java.lang.reflect.InvocationTargetException;
+
+import javax.swing.BoxLayout;
+import javax.swing.JButton;
+import javax.swing.JPanel;
+import javax.swing.JTabbedPane;
+import javax.swing.JTextArea;
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
+import javax.swing.event.ChangeEvent;
+import javax.swing.event.ChangeListener;
+
+import treepeater.Treepeater;
+import treepeater.TreepeaterModel;
+import treepeater.ai.AgentChatSession;
+import treepeater.ai.AgentChatWorkspace;
+import treepeater.ai.AgentMode;
+import treepeater.ai.AgentModeToolPolicy;
+import treepeater.ai.AgentTabMention;
+import treepeater.ai.AgentToolContext;
+import treepeater.ai.ChatToolExecutor;
+import treepeater.ai.ChatTooling;
+import treepeater.ai.HttpTargetTools;
+import treepeater.ai.RepeaterTabAgentBridge;
+import treepeater.ai.StreamingChatClient;
+import treepeater.ai.model.LlmModelDefinition;
+import treepeater.ai.model.LlmModelOptionValues;
+import treepeater.components.StyledButton;
+import treepeater.icons.WandIcon;
+import treepeater.requestResponse.toolbar.ToolbarIconButton;
+import treepeater.requestResponse.toolbar.ToolbarTabTitle;
+import treepeater.tree.RequestTreeNode;
+
+public class AIToolbarTab implements AIChatHost {
+
+    private final ToolbarIconButton button;
+    private final JPanel content;
+    private final JTextArea disabledInfoArea;
+    private JTabbedPane chatTabPane;
+    private int nextChatTabIndex = 1;
+
+    private final TreepeaterModel model;
+    private final RepeaterTabAgentBridge agentBridge;
+    private boolean blockTabPersist;
+
+    public AIToolbarTab(TreepeaterModel model, RepeaterTabAgentBridge agentBridge) {
+        this.model = model;
+        this.button = new ToolbarIconButton(new WandIcon());
+        this.content = new JPanel(new BorderLayout());
+
+        this.agentBridge = agentBridge;
+        this.disabledInfoArea = null;
+
+        this.content.add(this.buildContent(), BorderLayout.CENTER);
+    }
+
+    private void saveWorkspaceToModel() {
+        if (this.model == null || this.chatTabPane == null) {
+            return;
+        }
+        if (this.blockTabPersist) {
+            return;
+        }
+        int n = this.chatTabPane.getTabCount();
+        List<AgentChatSession> list = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            Component c = this.chatTabPane.getComponentAt(i);
+            if (c instanceof AIAgentChatPanel p) {
+                list.add(p.toSessionSnapshot(this.chatTabPane.getTitleAt(i)));
+            }
+        }
+        this.model.setGlobalAgentChatWorkspace(
+                new AgentChatWorkspace(
+                        list, this.chatTabPane.getSelectedIndex(), this.nextChatTabIndex));
+    }
+
+    @Override
+    public StreamingChatClient clientForSelectedModel(LlmModelDefinition model, LlmModelOptionValues values) {
+        if (model == null) {
+            throw new IllegalStateException("No model selected");
+        }
+        if (Treepeater.api == null) {
+            throw new IllegalStateException("Burp API not available");
+        }
+        return model.provider().createClient(model, values != null ? values : model.defaults());
+    }
+
+    /** Built-in HTTP target tools; approval depends on {@link AgentMode}. */
+    @Override
+    public ChatTooling chatTooling(AgentMode mode) {
+        if (this.agentBridge == null) {
+            return ChatTooling.none();
+        }
+        AgentMode m = mode != null ? mode : AgentMode.ASK;
+        ChatToolExecutor exec = (name, argsJson) -> HttpTargetTools.execute(name, argsJson, this.agentBridge);
+        return new ChatTooling(
+                HttpTargetTools.definitions(),
+                exec,
+                () -> {
+                    AgentToolContext c = this.agentBridge.contextForAgent(OptionalInt.empty());
+                    return c != null ? c.currentHistoryIndex() : Integer.MIN_VALUE;
+                },
+                new AgentModeToolPolicy(m),
+                this.agentBridge);
+    }
+
+    @Override
+    public AgentToolContext agentToolContextForToolPreview() {
+        return this.agentBridge != null ? this.agentBridge.contextForAgent(OptionalInt.empty()) : null;
+    }
+
+    @Override
+    public List<AgentTabMention> agentTabMentionsForAtPopup() {
+        if (this.model == null) {
+            return List.of();
+        }
+        List<RequestTreeNode> tabs = this.model.getTabs();
+        if (tabs.isEmpty()) {
+            return List.of();
+        }
+        List<AgentTabMention> out = new ArrayList<>(tabs.size());
+        for (RequestTreeNode n : tabs) {
+            RequestTreeNode forPath = this.model.findRequestNodeInTreeById(n.getId());
+            if (forPath == null) {
+                forPath = n;
+            }
+            out.add(new AgentTabMention(n.getId(), AgentTabMention.slashPathForNode(forPath)));
+        }
+        return out;
+    }
+
+    @Override
+    public void runOnEdtAndWait(Runnable r) throws Exception {
+        if (SwingUtilities.isEventDispatchThread()) {
+            r.run();
+            return;
+        }
+        try {
+            SwingUtilities.invokeAndWait(r);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
+        } catch (InvocationTargetException e) {
+            Throwable c = e.getCause();
+            if (c instanceof Exception ex) {
+                throw ex;
+            }
+            if (c instanceof Error err) {
+                throw err;
+            }
+            throw new RuntimeException(c);
+        }
+    }
+
+    @Override
+    public Component dialogParent() {
+        return this.content;
+    }
+
+    @Override
+    public void logError(Throwable t) {
+        if (Treepeater.api != null) {
+            Treepeater.api.logging().logToError(t);
+        }
+    }
+
+    private static void applyDisabledInfoAreaTheme(JTextArea area) {
+        Color fg = UIManager.getColor("Label.foreground");
+        if (fg != null) {
+            area.setForeground(fg);
+        }
+    }
+
+    public JButton getButton() {
+        return this.button;
+    }
+
+    public JPanel getContent() {
+        return this.content;
+    }
+
+    public void applyLocalTheme() {
+        this.button.applyLocalTheme();
+        if (this.disabledInfoArea != null) {
+            applyDisabledInfoAreaTheme(this.disabledInfoArea);
+        }
+        if (this.chatTabPane != null) {
+            for (int i = 0; i < this.chatTabPane.getTabCount(); i++) {
+                Component tabTitle = this.chatTabPane.getTabComponentAt(i);
+                if (tabTitle instanceof JComponent j) {
+                    j.updateUI();
+                }
+                Component c = this.chatTabPane.getComponentAt(i);
+                if (c instanceof AIAgentChatPanel s) {
+                    s.refreshTranscriptThemes();
+                    s.applyInputPanelTheme();
+                    SwingUtilities.invokeLater(s::adjustInputAreaHeight);
+                }
+            }
+        }
+    }
+
+    private JPanel buildContent() {
+        JPanel panel = new JPanel(new BorderLayout());
+
+        JPanel northStack = new JPanel();
+        northStack.setLayout(new BoxLayout(northStack, BoxLayout.PAGE_AXIS));
+        northStack.setOpaque(false);
+        StyledButton newChatButton = new StyledButton("New chat");
+        newChatButton.setStyle(StyledButton.Style.DEFAULT);
+        newChatButton.addActionListener(e -> addNewChatTab());
+        northStack.add(new ToolbarTabTitle("AI", newChatButton));
+
+        panel.add(northStack, BorderLayout.NORTH);
+
+        this.chatTabPane = new JTabbedPane();
+        this.chatTabPane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
+        AgentChatWorkspace ws = this.model != null ? this.model.getGlobalAgentChatWorkspace() : AgentChatWorkspace.EMPTY;
+        this.nextChatTabIndex = Math.max(1, ws.nextChatTabIndex());
+        this.blockTabPersist = true;
+        try {
+            if (ws.sessions().isEmpty()) {
+                this.addNewChatTab();
+            } else {
+                for (AgentChatSession s : ws.sessions()) {
+                    AIAgentChatPanel session = new AIAgentChatPanel(this, this::saveWorkspaceToModel);
+                    String title = s.title();
+                    int index = this.chatTabPane.getTabCount();
+                    this.chatTabPane.addTab(title, session);
+                    this.chatTabPane.setTabComponentAt(
+                            index, new AIAgentChatTabTitle(title, () -> this.closeAgentChat(session)));
+                    session.loadFromSession(s);
+                }
+                int sel = ws.selectedSessionIndex();
+                if (sel >= 0 && sel < this.chatTabPane.getTabCount()) {
+                    this.chatTabPane.setSelectedIndex(sel);
+                }
+            }
+        } finally {
+            this.blockTabPersist = false;
+        }
+        this.chatTabPane.addChangeListener(
+                new ChangeListener() {
+                    @Override
+                    public void stateChanged(ChangeEvent e) {
+                        AIToolbarTab.this.saveWorkspaceToModel();
+                    }
+                });
+        panel.add(this.chatTabPane, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private void addNewChatTab() {
+        if (this.chatTabPane == null) {
+            return;
+        }
+        AIAgentChatPanel session = new AIAgentChatPanel(this, this::saveWorkspaceToModel);
+        String title = "Chat " + this.nextChatTabIndex++;
+        int index = this.chatTabPane.getTabCount();
+        this.chatTabPane.addTab(title, session);
+        this.chatTabPane.setTabComponentAt(index, new AIAgentChatTabTitle(title, () -> this.closeAgentChat(session)));
+        this.chatTabPane.setSelectedComponent(session);
+        this.saveWorkspaceToModel();
+    }
+
+    private void closeAgentChat(AIAgentChatPanel panel) {
+        if (this.chatTabPane == null || panel == null) {
+            return;
+        }
+        if (this.chatTabPane.indexOfComponent(panel) < 0) {
+            return;
+        }
+        panel.cancelInFlightChat();
+        this.chatTabPane.remove(panel);
+        if (this.chatTabPane.getTabCount() == 0) {
+            addNewChatTab();
+        } else {
+            this.saveWorkspaceToModel();
+        }
+    }
+}

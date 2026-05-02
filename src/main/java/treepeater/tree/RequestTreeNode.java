@@ -15,23 +15,22 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
     private String name;
     private HttpRequest request;
     private HttpResponse response;
-    /** User-authored notes for this request/response pair; persisted with the node. */
-    private String notes = "";
     private HashSet<RequestTreeNodeListener> listener;
     private final RequestHistory history;
 
-    public RequestTreeNode(int id, Status status, String name, HttpRequest request, HttpResponse response, RequestHistory history) {
-        this(id, status, name, request, response, history, "");
-    }
-
-    public RequestTreeNode(int id, Status status, String name, HttpRequest request, HttpResponse response, RequestHistory history, String notes) {
+    public RequestTreeNode(
+            int id,
+            Status status,
+            String name,
+            HttpRequest request,
+            HttpResponse response,
+            RequestHistory history) {
         super(name);
         this.id = id;
         this.status = status != null ? status : StatusRegistry.getDefault();
         this.name = name != null ? name : "#" + id;
         this.request = request;
         this.response = response;
-        this.notes = notes != null ? notes : "";
         this.listener = new HashSet<>();
         this.history = history;
     }
@@ -48,15 +47,20 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
         this.history = new RequestHistory();
     }
 
-    public RequestTreeNode(int id, Status status, String name, HttpRequest request, HttpResponse response, HashSet<RequestTreeNodeListener> l, String notes) {
+    public RequestTreeNode(
+            int id,
+            Status status,
+            String name,
+            HttpRequest request,
+            HttpResponse response,
+            HashSet<RequestTreeNodeListener> l) {
         super(name);
         this.id = id;
         this.status = status != null ? status : StatusRegistry.getDefault();
         this.name = name != null ? name : "#" + id;
         this.request = request;
         this.response = response;
-        this.notes = notes != null ? notes : "";
-        this.listener = l;
+        this.listener = l != null ? l : new HashSet<>();
         this.history = new RequestHistory();
     }
 
@@ -68,8 +72,7 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
         this.status = copy.getStatus();
         this.request = copy.request;
         this.response = copy.response;
-        this.notes = copy.notes != null ? copy.notes : "";
-        this.listener = copy.listener;
+        this.listener = copy.listener != null ? new HashSet<>(copy.listener) : new HashSet<>();
         this.history = copy.history;
     }
 
@@ -96,11 +99,15 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
     }
 
     public void addListener(RequestTreeNodeListener l) {
-        this.listener.add(l);
+        if (l != null) {
+            this.listener.add(l);
+        }
     }
 
     public void removeListener(RequestTreeNodeListener l) {
-        this.listener.remove(l);
+        if (l != null) {
+            this.listener.remove(l);
+        }
     }
 
     public void select() {
@@ -118,15 +125,6 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
 
     public void setResponse(HttpResponse r) {
         this.response = r;
-        Treepeater.saveState();
-    }
-
-    public String getNotes() {
-        return this.notes != null ? this.notes : "";
-    }
-
-    public void setNotes(String notes) {
-        this.notes = notes != null ? notes : "";
         Treepeater.saveState();
     }
 

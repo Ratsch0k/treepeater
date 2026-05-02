@@ -9,6 +9,9 @@ import java.awt.Graphics;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -22,15 +25,19 @@ import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPasswordField;
 import javax.swing.JSeparator;
 import javax.swing.JTextArea;
+import javax.swing.JTextField;
 import javax.swing.ListCellRenderer;
 import javax.swing.ListSelectionModel;
 import javax.swing.UIManager;
 
 import burp.api.montoya.ui.settings.SettingsPanelWithData;
 import treepeater.Treepeater;
+import treepeater.ai.ollama.OllamaProvider;
 import treepeater.requestResponse.Status;
 
 /**
@@ -40,6 +47,8 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
     private static final int ROW_GAP = 10;
     private static final int SECTION_GAP = 20;
     private static final int INNER_SECTION_GAP = 16;
+    /** Padding around each LLM settings row (label + field). */
+    private static final int LLM_ROW_PADDING = 8;
 
     private final TreepeaterSettings settings;
     private final JPanel root;
@@ -62,6 +71,8 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
 
         this.root.add(new JSeparator(JSeparator.HORIZONTAL));
 
+
+
         this.root.add(this.createTitledSection(
             "Status",
             "Configure the statuses available for Treepeater nodes. " +
@@ -69,6 +80,18 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
             "Each status has a name, background and border/icon color, and an SVG icon.",
             this.createStatusPanel()
         ));
+
+        this.root.add(new JSeparator(JSeparator.HORIZONTAL));
+
+        JPanel llmPanel = this.createTitledSection(
+            "LLMs",
+            "Configure connection details for Ollama, Anthropic, and Azure OpenAI / Microsoft Foundry. "
+                + "The AI tab reads these values from here; pick the provider and model (or deployment name) in the AI toolbar.",
+            this.createLlmSettingsPanel()
+        );
+        llmPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, SECTION_GAP, 0));
+        this.root.add(llmPanel);
+
 
     }
 
@@ -159,6 +182,253 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
 
         parent.add(hotkeyLabel, labelGbc);
         parent.add(hotkeyButton, buttonGbc);
+        return row + 1;
+    }
+
+    private JComponent createLlmSettingsPanel() {
+        JPanel outer = new JPanel();
+        outer.setLayout(new BoxLayout(outer, BoxLayout.Y_AXIS));
+        outer.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JPanel ollama = new JPanel();
+        ollama.setLayout(new BoxLayout(ollama, BoxLayout.Y_AXIS));
+        ollama.setAlignmentX(Component.LEFT_ALIGNMENT);
+        ollama.setBorder(BorderFactory.createTitledBorder("Ollama"));
+
+        JPanel ollamaFields = new JPanel(new GridBagLayout());
+        ollamaFields.setAlignmentX(Component.LEFT_ALIGNMENT);
+        int row = 0;
+        row = this.addPersistedTextRow(
+                ollamaFields,
+                row,
+                "Base URL:",
+                this.settings.getLlmOllamaBaseUrl(),
+                this.settings::setLlmOllamaBaseUrl,
+                false);
+        ollama.add(ollamaFields);
+        ollama.add(Box.createVerticalStrut(ROW_GAP));
+        ollama.add(this.createOllamaModelsPanel());
+
+        JPanel anthropic = new JPanel(new GridBagLayout());
+        anthropic.setAlignmentX(Component.LEFT_ALIGNMENT);
+        anthropic.setBorder(BorderFactory.createTitledBorder("Anthropic"));
+        row = 0;
+        String apiKey = this.settings.getLlmAnthropicApiKey();
+        row = this.addPersistedTextRow(
+                anthropic,
+                row,
+                "API key:",
+                apiKey != null ? apiKey : "",
+                this.settings::setLlmAnthropicApiKey,
+                true);
+
+        JPanel azure = new JPanel(new GridBagLayout());
+        azure.setAlignmentX(Component.LEFT_ALIGNMENT);
+        azure.setBorder(BorderFactory.createTitledBorder("Azure OpenAI / Foundry"));
+        row = 0;
+        String azureEndpoint = this.settings.getLlmAzureOpenAiEndpoint();
+        row = this.addPersistedTextRow(
+                azure,
+                row,
+                "Endpoint:",
+                azureEndpoint != null ? azureEndpoint : "",
+                this.settings::setLlmAzureOpenAiEndpoint,
+                false);
+        String azureKey = this.settings.getLlmAzureOpenAiApiKey();
+        row = this.addPersistedTextRow(
+                azure,
+                row,
+                "API key:",
+                azureKey != null ? azureKey : "",
+                this.settings::setLlmAzureOpenAiApiKey,
+                true);
+
+        outer.add(ollama);
+        outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
+        outer.add(anthropic);
+        outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
+        outer.add(azure);
+        return outer;
+    }
+
+    private JComponent createOllamaModelsPanel() {
+        JPanel wrapper = new JPanel();
+        wrapper.setLayout(new BoxLayout(wrapper, BoxLayout.Y_AXIS));
+        wrapper.setAlignmentX(Component.LEFT_ALIGNMENT);
+        wrapper.setOpaque(false);
+        wrapper.setBorder(BorderFactory.createEmptyBorder(0, LLM_ROW_PADDING, LLM_ROW_PADDING, LLM_ROW_PADDING));
+
+        JLabel modelsLabel = new JLabel("Models:");
+        modelsLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        wrapper.add(modelsLabel);
+        wrapper.add(Box.createVerticalStrut(4));
+
+        JTextArea warning = new JTextArea(
+                "\u26A0 Models listed here must be pulled/installed in your Ollama instance before they can be used. "
+                        + "Run \"ollama pull <model>\" for each model you add.");
+        warning.setEditable(false);
+        warning.setFocusable(false);
+        warning.setLineWrap(true);
+        warning.setWrapStyleWord(true);
+        warning.setOpaque(false);
+        warning.setBorder(null);
+        warning.setFont(UIManager.getFont("Label.font"));
+        warning.setForeground(UIManager.getColor("Objects.YellowDark") != null
+                ? UIManager.getColor("Objects.YellowDark")
+                : new Color(0xB8860B));
+        warning.setAlignmentX(Component.LEFT_ALIGNMENT);
+        wrapper.add(warning);
+        wrapper.add(Box.createVerticalStrut(8));
+
+        DefaultListModel<String> listModel = new DefaultListModel<>();
+        List<String> persisted = this.settings.getOllamaModels();
+        if (persisted != null) {
+            persisted.forEach(listModel::addElement);
+        } else {
+            for (String m : OllamaProvider.FALLBACK_MODELS) {
+                listModel.addElement(m);
+            }
+        }
+
+        JList<String> modelList = new JList<>(listModel);
+        modelList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        modelList.setVisibleRowCount(6);
+        modelList.setFixedCellHeight(24);
+        modelList.setPreferredSize(new Dimension(280, 144));
+        modelList.setMaximumSize(new Dimension(280, 144));
+        modelList.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor"), 1),
+                BorderFactory.createEmptyBorder(4, 8, 4, 8)));
+        modelList.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JButton addBtn = new JButton("Add");
+        JButton removeBtn = new JButton("Remove");
+        removeBtn.setEnabled(false);
+
+        modelList.addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                removeBtn.setEnabled(modelList.getSelectedIndex() >= 0);
+            }
+        });
+
+        Runnable persistModels = () -> {
+            List<String> models = new ArrayList<>(listModel.size());
+            for (int i = 0; i < listModel.size(); i++) {
+                models.add(listModel.get(i));
+            }
+            this.settings.setOllamaModels(models);
+        };
+
+        addBtn.addActionListener(e -> {
+            String name = JOptionPane.showInputDialog(
+                    this.root,
+                    "Enter the Ollama model name (e.g. llama3.2, mistral, codellama):",
+                    "Add Ollama Model",
+                    JOptionPane.PLAIN_MESSAGE);
+            if (name != null && !name.trim().isEmpty()) {
+                String trimmed = name.trim();
+                for (int i = 0; i < listModel.size(); i++) {
+                    if (listModel.get(i).equalsIgnoreCase(trimmed)) {
+                        return;
+                    }
+                }
+                listModel.addElement(trimmed);
+                persistModels.run();
+            }
+        });
+
+        removeBtn.addActionListener(e -> {
+            int idx = modelList.getSelectedIndex();
+            if (idx >= 0) {
+                listModel.remove(idx);
+                int newSel = Math.min(idx, listModel.size() - 1);
+                if (newSel >= 0) modelList.setSelectedIndex(newSel);
+                persistModels.run();
+            }
+        });
+
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        buttons.setOpaque(false);
+        buttons.setAlignmentX(Component.LEFT_ALIGNMENT);
+        buttons.add(addBtn);
+        buttons.add(removeBtn);
+
+        wrapper.add(modelList);
+        wrapper.add(Box.createVerticalStrut(4));
+        wrapper.add(buttons);
+
+        return wrapper;
+    }
+
+    private int addPersistedTextRow(
+            JPanel parent,
+            int row,
+            String labelText,
+            String initial,
+            Consumer<String> setter,
+            boolean password) {
+        JLabel rowLabel = new JLabel(labelText);
+        JComponent field;
+        if (password) {
+            JPasswordField pf = new JPasswordField(initial, 40);
+            field = pf;
+            pf.addFocusListener(new FocusAdapter() {
+                @Override
+                public void focusLost(FocusEvent e) {
+                    setter.accept(new String(pf.getPassword()).trim());
+                }
+            });
+        } else {
+            JTextField tf = new JTextField(initial, 40);
+            field = tf;
+            tf.addFocusListener(new FocusAdapter() {
+                @Override
+                public void focusLost(FocusEvent e) {
+                    setter.accept(tf.getText().trim());
+                }
+            });
+        }
+
+        JPanel rowPanel = new JPanel(new GridBagLayout());
+        rowPanel.setOpaque(false);
+        rowPanel.setBorder(BorderFactory.createEmptyBorder(
+                LLM_ROW_PADDING,
+                LLM_ROW_PADDING,
+                LLM_ROW_PADDING,
+                LLM_ROW_PADDING));
+
+        Insets labelInsets = new Insets(0, 0, 0, 8);
+        Insets fieldInsets = new Insets(0, 0, 0, 0);
+
+        GridBagConstraints labelGbc = new GridBagConstraints();
+        labelGbc.gridx = 0;
+        labelGbc.gridy = 0;
+        labelGbc.anchor = GridBagConstraints.WEST;
+        labelGbc.fill = GridBagConstraints.NONE;
+        labelGbc.weightx = 0;
+        labelGbc.insets = labelInsets;
+
+        GridBagConstraints fieldGbc = new GridBagConstraints();
+        fieldGbc.gridx = 1;
+        fieldGbc.gridy = 0;
+        fieldGbc.anchor = GridBagConstraints.WEST;
+        fieldGbc.fill = GridBagConstraints.HORIZONTAL;
+        fieldGbc.weightx = 1;
+        fieldGbc.insets = fieldInsets;
+
+        rowPanel.add(rowLabel, labelGbc);
+        rowPanel.add(field, fieldGbc);
+
+        GridBagConstraints rowGbc = new GridBagConstraints();
+        rowGbc.gridx = 0;
+        rowGbc.gridy = row;
+        rowGbc.gridwidth = 2;
+        rowGbc.anchor = GridBagConstraints.WEST;
+        rowGbc.fill = GridBagConstraints.HORIZONTAL;
+        rowGbc.weightx = 1;
+        rowGbc.insets = new Insets(row > 0 ? ROW_GAP : 0, 0, 0, 0);
+
+        parent.add(rowPanel, rowGbc);
         return row + 1;
     }
 
@@ -401,7 +671,18 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
 
     @Override
     public Set<String> keywords() {
-        return Set.of("Treepeater", "hotkey", "shortcut", "keyboard", "repeater");
+        return Set.of(
+                "Treepeater",
+                "hotkey",
+                "shortcut",
+                "keyboard",
+                "repeater",
+                "LLM",
+                "Ollama",
+                "Anthropic",
+                "AI",
+                "model",
+                "API");
     }
 
     @Override

@@ -1,17 +1,24 @@
 package treepeater.tree;
 import java.awt.Rectangle;
+import java.awt.event.ActionEvent;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
+import javax.swing.AbstractAction;
+import javax.swing.ActionMap;
 import javax.swing.DropMode;
+import javax.swing.InputMap;
 import javax.swing.JMenuItem;
 import javax.swing.JPopupMenu;
 import javax.swing.JTree;
 import javax.swing.JViewport;
+import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreePath;
@@ -23,10 +30,13 @@ import treepeater.settings.StatusRegistry;
 import treepeater.tree.CustomTreeCellEditor.ProgrammaticEdit;
 
 public class RequestTree extends JTree {
+    private static final String MAP_KEY_ACTIVATE_SELECTION = "treepeater.activateTreeSelection";
+
     private FolderTreeNode root;
     private DefaultTreeModel model;
     private final CustomTreeUI ui;
     private CreateFolderHandler createFolderHandler;
+    private Consumer<RequestTreeNode> activateRequestFromKeyboardFollowUp;
 
     @FunctionalInterface
     public interface CreateFolderHandler {
@@ -35,6 +45,14 @@ public class RequestTree extends JTree {
 
     public void setCreateFolderHandler(CreateFolderHandler handler) {
         this.createFolderHandler = handler;
+    }
+
+    /**
+     * Runs on the EDT after {@link RequestTreeNode#select()} when the user activates the selected
+     * row with Enter/Space (typically to focus the request editor).
+     */
+    public void setActivateRequestFromKeyboardFollowUp(Consumer<RequestTreeNode> followUp) {
+        this.activateRequestFromKeyboardFollowUp = followUp;
     }
 
     public RequestTree() {
@@ -107,6 +125,17 @@ public class RequestTree extends JTree {
                 }
             }
         });
+        InputMap inputMap = this.getInputMap(WHEN_FOCUSED);
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0, false), MAP_KEY_ACTIVATE_SELECTION);
+        inputMap.put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, 0, false), MAP_KEY_ACTIVATE_SELECTION);
+        ActionMap actionMap = this.getActionMap();
+        actionMap.put(MAP_KEY_ACTIVATE_SELECTION,
+                new AbstractAction() {
+                    @Override
+                    public void actionPerformed(ActionEvent ev) {
+                        RequestTree.this.activateSelectionFromKeyboard();
+                    }
+                });
         this.ui = new CustomTreeUI();
         this.setUI(ui);
         this.root = new FolderTreeNode(0, StatusRegistry.getDefault(), "Treepeater");
@@ -128,6 +157,30 @@ public class RequestTree extends JTree {
                 RequestTree.this.ui.invalidateNodeLayoutCache();
             }
         });
+    }
+
+    private void activateSelectionFromKeyboard() {
+        if (this.isEditing()) {
+            return;
+        }
+        TreePath path = this.getSelectionPath();
+        if (path == null) {
+            return;
+        }
+        Object last = path.getLastPathComponent();
+        if (last instanceof FolderTreeNode) {
+            if (this.isExpanded(path)) {
+                this.collapsePath(path);
+            } else {
+                this.expandPath(path);
+            }
+        } else if (last instanceof RequestTreeNode rn) {
+            rn.select();
+            Consumer<RequestTreeNode> followUp = this.activateRequestFromKeyboardFollowUp;
+            if (followUp != null) {
+                SwingUtilities.invokeLater(() -> followUp.accept(rn));
+            }
+        }
     }
 
     private void handleRightClick(MouseEvent e) {

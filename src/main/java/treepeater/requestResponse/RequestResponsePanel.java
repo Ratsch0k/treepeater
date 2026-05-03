@@ -1,6 +1,8 @@
 package treepeater.requestResponse;
 
 import java.awt.BorderLayout;
+import java.awt.Component;
+import java.awt.Container;
 import java.awt.Font;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -208,6 +210,46 @@ public class RequestResponsePanel extends JPanel {
         this.hotkeyHandler = new HotkeyHandler();
         this.populateHotkeyActions();
         RequestResponseHotkeyInstaller.install(this, this.hotkeyHandler, this.hotkeyActions, this.hotkeyHandlerRegistered);
+    }
+
+    /**
+     * Moves keyboard focus into this tab's HTTP request editor (Burp-provided UI).
+     */
+    public void focusRequestEditor() {
+        if (this.requestEditor == null) {
+            return;
+        }
+        Component root = this.requestEditor.uiComponent();
+        if (root == null) {
+            return;
+        }
+        SwingUtilities.invokeLater(() -> requestFocusPreferDescendant(root));
+    }
+
+    private static void requestFocusPreferDescendant(Component root) {
+        Component candidate = root;
+        if (!candidate.isFocusable() && root instanceof Container c) {
+            Component inner = findFirstFocusableDescendant(c);
+            if (inner != null) {
+                candidate = inner;
+            }
+        }
+        candidate.requestFocusInWindow();
+    }
+
+    private static Component findFirstFocusableDescendant(Container parent) {
+        for (Component child : parent.getComponents()) {
+            if (child.isShowing() && child.isFocusable() && child.isEnabled()) {
+                return child;
+            }
+            if (child instanceof Container c) {
+                Component inner = findFirstFocusableDescendant(c);
+                if (inner != null) {
+                    return inner;
+                }
+            }
+        }
+        return null;
     }
 
     @Override

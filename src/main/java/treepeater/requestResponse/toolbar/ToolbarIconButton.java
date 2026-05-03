@@ -15,10 +15,14 @@ public class ToolbarIconButton extends JButton {
     }
 
     public void applyLocalTheme() {
+        applyLocalTheme(24);
+    }
+
+    public void applyLocalTheme(int iconSize) {
         RequestResponsePanelUi.styleAsFlatButton(this);
         RequestResponsePanelUi.installHoverBackground(this);
         this.setFont(this.getFont().deriveFont(this.getFont().getSize2D() - 1f));
         this.setAlignmentX(CENTER_ALIGNMENT);
-        this.setIcon(this.icon.withSize(24, 24).withColor(UIManager.getColor("Label.foreground")));
+        this.setIcon(this.icon.withSize(iconSize, iconSize).withColor(UIManager.getColor("Label.foreground")));
     }
 }

@@ -3,7 +3,6 @@ import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.event.ActionEvent;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.lang.reflect.InvocationTargetException;
@@ -12,8 +11,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.OptionalInt;
 
-import javax.swing.AbstractAction;
-import javax.swing.JButton;
+import javax.swing.BorderFactory;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -36,8 +34,10 @@ import treepeater.ai.HttpTargetTools;
 import treepeater.ai.RepeaterTabAgentBridge;
 import treepeater.ai.RepeaterTabQueryMatcher;
 import treepeater.ai.SearchTabRow;
+import treepeater.icons.CreateNewFolderIcon;
 import treepeater.icons.DoubleArrowLeftIcon;
 import treepeater.icons.DoubleArrowRightIcon;
+import treepeater.icons.FileExportIcon;
 import treepeater.tree.CustomTreeCellEditor.ProgrammaticEdit;
 import treepeater.tree.FolderTreeNode;
 import treepeater.tree.RequestTreeNode;
@@ -47,9 +47,12 @@ import treepeater.requestResponse.RequestResponsePanel;
 import treepeater.requestResponse.RequestResponseTab;
 import treepeater.requestResponse.toolbar.RequestResponseToolbar;
 import treepeater.requestResponse.toolbar.RequestResponseToolbarListener;
+import treepeater.requestResponse.toolbar.ToolbarIconButton;
 
 public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarListener, RepeaterTabAgentBridge {
     private static final Dimension MIN_LEFT_PANEL_SIZE = new Dimension(240, 0);
+
+    private static final int TREE_PANEL_TOOLBAR_ICON_SIZE = 20;
 
     private static final int EXPAND_PANEL_MIN_OPEN_WIDTH = 120;
 
@@ -71,6 +74,9 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
     private double expandSplitEditorWidthFraction = 0.78;
 
     private RequestResponsePanel panelBoundForInfo;
+
+    private ToolbarIconButton treePanelNewFolderButton;
+    private ToolbarIconButton treePanelSyncButton;
 
     public TreepeaterUI(TreepeaterModel model) {
         super(JSplitPane.HORIZONTAL_SPLIT);
@@ -150,6 +156,8 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
                 TreepeaterNode root = (TreepeaterNode) model.getTree().getTreeModel().getRoot();
                 if (root.getChildCount() == 0) {
                     treePanelActive = false;
+                    TreepeaterUI.this.treePanelNewFolderButton = null;
+                    TreepeaterUI.this.treePanelSyncButton = null;
                     TreepeaterUI.this.setLeftComponent(TreepeaterUI.this.buildDefaultLeftPanel());
                 }
             }
@@ -419,6 +427,12 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         if (this.sideToolbar != null) {
             this.sideToolbar.applyLocalTheme();
         }
+        if (this.treePanelNewFolderButton != null) {
+            this.treePanelNewFolderButton.applyLocalTheme(TREE_PANEL_TOOLBAR_ICON_SIZE);
+        }
+        if (this.treePanelSyncButton != null) {
+            this.treePanelSyncButton.applyLocalTheme(TREE_PANEL_TOOLBAR_ICON_SIZE);
+        }
         SwingUtilities.invokeLater(this::applyExpandDividerInteractionState);
     }
 
@@ -513,9 +527,16 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
 
         leftPanel.add(scrollPane, BorderLayout.CENTER);
 
-        JPanel buttonBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 2));
+        JPanel topBar = new JPanel(new BorderLayout());
+        JLabel treeTitle = new JLabel("Treepeater");
+        treeTitle.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 0));
+        topBar.add(treeTitle, BorderLayout.LINE_START);
 
-        JButton newFolderButton = new JButton("New Folder");
+        JPanel buttonStrip = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 2));
+
+        ToolbarIconButton newFolderButton = new ToolbarIconButton(new CreateNewFolderIcon());
+        newFolderButton.applyLocalTheme(TREE_PANEL_TOOLBAR_ICON_SIZE);
+        newFolderButton.setToolTipText("Create a new folder under the selected item (or at the root)");
         newFolderButton.addActionListener(ev -> {
             TreepeaterNode selected = null;
             if (this.model.getTree().getSelectionPath() != null) {
@@ -529,23 +550,26 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
                 this.model.getTree().startProgrammaticEditForNode(folder, ProgrammaticEdit.RENAME);
             }
         });
-        buttonBar.add(newFolderButton);
+        buttonStrip.add(newFolderButton);
 
-        JButton syncButton = new JButton("Sync");
-        syncButton.addActionListener(new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                List<RequestTreeNodeSimple> allRequests = TreepeaterUI.this.model.getTree().toSimpleRepeaterList();
+        ToolbarIconButton syncButton = new ToolbarIconButton(new FileExportIcon());
+        syncButton.applyLocalTheme(TREE_PANEL_TOOLBAR_ICON_SIZE);
+        syncButton.setToolTipText("Send all requests in the tree to Repeater");
+        syncButton.addActionListener(e -> {
+            List<RequestTreeNodeSimple> allRequests = TreepeaterUI.this.model.getTree().toSimpleRepeaterList();
 
-                for (int idx = 0; idx < allRequests.size(); idx++) {
-                    RequestTreeNodeSimple node = allRequests.get(idx);
-                    Treepeater.api.repeater().sendToRepeater(node.request, node.name);
-                }
+            for (int idx = 0; idx < allRequests.size(); idx++) {
+                RequestTreeNodeSimple node = allRequests.get(idx);
+                Treepeater.api.repeater().sendToRepeater(node.request, node.name);
             }
         });
-        buttonBar.add(syncButton);
+        buttonStrip.add(syncButton);
 
-        leftPanel.add(buttonBar, BorderLayout.PAGE_END);
+        topBar.add(buttonStrip, BorderLayout.LINE_END);
+        leftPanel.add(topBar, BorderLayout.PAGE_START);
+
+        this.treePanelNewFolderButton = newFolderButton;
+        this.treePanelSyncButton = syncButton;
         
         return leftPanel;
     }

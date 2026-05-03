@@ -28,9 +28,11 @@ public class Treepeater implements BurpExtension {
     private static StatusRegistry statusRegistry;
     private static TreepeaterModel model;
     private static TreepeaterPersistence persistence;
+    private static volatile boolean dirty = false;
     DefaultMutableTreeNode root;
 
     private Registration sendHotKeyRegistration;
+    private javax.swing.Timer autoSaveTimer;
 
     @Override
     public void initialize(MontoyaApi montoyaApi) {
@@ -72,7 +74,13 @@ public class Treepeater implements BurpExtension {
             Treepeater.model = new TreepeaterModel();
         }
 
-        montoyaApi.extension().registerUnloadingHandler(() -> Treepeater.persistence.saveModel(Treepeater.model));
+        montoyaApi.extension().registerUnloadingHandler(() -> {
+            if (this.autoSaveTimer != null) {
+                this.autoSaveTimer.stop();
+            }
+            Treepeater.persistence.saveStatusRegistry(Treepeater.statusRegistry);
+            Treepeater.persistence.saveModel(Treepeater.model);
+        });
 
         TreepeaterUI ui = new TreepeaterUI(model);
 
@@ -108,6 +116,16 @@ public class Treepeater implements BurpExtension {
                 this.sendHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(newHotkey, sendHotKeyHandler);
             }
         });
+
+        // Save the full state every 2 minutes when there are unsaved changes.
+        this.autoSaveTimer = new javax.swing.Timer(120_000, e -> {
+            if (Treepeater.dirty) {
+                Treepeater.dirty = false;
+                Treepeater.persistence.saveStatusRegistry(Treepeater.statusRegistry);
+                Treepeater.persistence.saveModel(Treepeater.model);
+            }
+        });
+        this.autoSaveTimer.start();
     }
 
     public java.util.Set<EnhancedCapability> enhancedCapabilities() {
@@ -119,13 +137,10 @@ public class Treepeater implements BurpExtension {
     }
 
     /**
-     * Save the current state of the model using a background thread.
+     * Mark the state as dirty so it will be persisted on the next auto-save tick.
      */
     public static void saveState() {
-        SwingUtilities.invokeLater(() ->  {
-            Treepeater.persistence.saveStatusRegistry(Treepeater.statusRegistry);
-            Treepeater.persistence.saveModel(Treepeater.model);
-        });
+        Treepeater.dirty = true;
     }
 
     private static void sendSelectionToTreepeater(

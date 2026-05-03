@@ -2,7 +2,7 @@ package treepeater;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
-import java.awt.event.ActionEvent;
+import java.awt.FlowLayout;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.lang.reflect.InvocationTargetException;
@@ -11,8 +11,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.OptionalInt;
 
-import javax.swing.AbstractAction;
-import javax.swing.JButton;
+import javax.swing.BorderFactory;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -35,17 +34,25 @@ import treepeater.ai.HttpTargetTools;
 import treepeater.ai.RepeaterTabAgentBridge;
 import treepeater.ai.RepeaterTabQueryMatcher;
 import treepeater.ai.SearchTabRow;
+import treepeater.icons.CreateNewFolderIcon;
 import treepeater.icons.DoubleArrowLeftIcon;
 import treepeater.icons.DoubleArrowRightIcon;
+import treepeater.icons.FileExportIcon;
+import treepeater.tree.CustomTreeCellEditor.ProgrammaticEdit;
+import treepeater.tree.FolderTreeNode;
+import treepeater.tree.RequestTreeNode;
+import treepeater.tree.TreepeaterNode;
+import treepeater.draggable.RequestTreeNodeSimple;
 import treepeater.requestResponse.RequestResponsePanel;
 import treepeater.requestResponse.RequestResponseTab;
 import treepeater.requestResponse.toolbar.RequestResponseToolbar;
 import treepeater.requestResponse.toolbar.RequestResponseToolbarListener;
-import treepeater.tree.RequestTreeNode;
-import treepeater.draggable.RequestTreeNodeSimple;
+import treepeater.requestResponse.toolbar.ToolbarIconButton;
 
 public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarListener, RepeaterTabAgentBridge {
     private static final Dimension MIN_LEFT_PANEL_SIZE = new Dimension(240, 0);
+
+    private static final int TREE_PANEL_TOOLBAR_ICON_SIZE = 20;
 
     private static final int EXPAND_PANEL_MIN_OPEN_WIDTH = 120;
 
@@ -67,6 +74,9 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
     private double expandSplitEditorWidthFraction = 0.78;
 
     private RequestResponsePanel panelBoundForInfo;
+
+    private ToolbarIconButton treePanelNewFolderButton;
+    private ToolbarIconButton treePanelSyncButton;
 
     public TreepeaterUI(TreepeaterModel model) {
         super(JSplitPane.HORIZONTAL_SPLIT);
@@ -99,6 +109,8 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
 
         this.setDividerLocation(0.3);
         this.resetToPreferredSizes();
+
+        model.getTree().setCreateFolderHandler(model::createFolder);
 
         if (model.getRequestCount() > 0) {
             this.treePanelActive = true;
@@ -141,9 +153,11 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
 
             @Override
             public void treeNodesRemoved(TreeModelEvent e) {
-                RequestTreeNode root = (RequestTreeNode) model.getTree().getTreeModel().getRoot();
+                TreepeaterNode root = (TreepeaterNode) model.getTree().getTreeModel().getRoot();
                 if (root.getChildCount() == 0) {
                     treePanelActive = false;
+                    TreepeaterUI.this.treePanelNewFolderButton = null;
+                    TreepeaterUI.this.treePanelSyncButton = null;
                     TreepeaterUI.this.setLeftComponent(TreepeaterUI.this.buildDefaultLeftPanel());
                 }
             }
@@ -151,7 +165,7 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
             @Override
             public void treeStructureChanged(TreeModelEvent e) {
             }
-            
+
         });
 
 
@@ -217,7 +231,14 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         for (RequestTreeNode n : this.model.getTabs()) {
             if (n.getId() == id) {
                 RequestResponsePanel p = this.tabMap.get(n);
-                return p != null ? p.buildAgentToolContextForAi() : null;
+                if (p != null) {
+                    return p.buildAgentToolContextForAi();
+                }
+            }
+        }
+        for (RequestResponsePanel p : this.tabMap.values()) {
+            if (p != null && p.getRequestNodeId() == id) {
+                return p.buildAgentToolContextForAi();
             }
         }
         return null;
@@ -251,6 +272,14 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
 
         for (RequestTreeNode node : tabs) {
             RequestResponsePanel p = this.tabMap.get(node);
+            if (p == null) {
+                for (RequestResponsePanel cand : this.tabMap.values()) {
+                    if (cand != null && cand.getRequestNodeId() == node.getId()) {
+                        p = cand;
+                        break;
+                    }
+                }
+            }
             String method = "";
             String url = "";
             if (p != null) {
@@ -398,6 +427,12 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         if (this.sideToolbar != null) {
             this.sideToolbar.applyLocalTheme();
         }
+        if (this.treePanelNewFolderButton != null) {
+            this.treePanelNewFolderButton.applyLocalTheme(TREE_PANEL_TOOLBAR_ICON_SIZE);
+        }
+        if (this.treePanelSyncButton != null) {
+            this.treePanelSyncButton.applyLocalTheme(TREE_PANEL_TOOLBAR_ICON_SIZE);
+        }
         SwingUtilities.invokeLater(this::applyExpandDividerInteractionState);
     }
 
@@ -421,7 +456,12 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         this.requestResponseTabbedPane.add(node.getName(), panel);
 
         RequestResponseTab tab = new RequestResponseTab(node);
-        tab.addActionListener(e -> this.model.removeTab(index));
+        tab.addActionListener(e -> {
+            int i = this.requestResponseTabbedPane.indexOfComponent(panel);
+            if (i >= 0) {
+                this.model.removeTab(i);
+            }
+        });
         this.requestResponseTabbedPane.setTabComponentAt(index, tab);
         this.requestResponseTabbedPane.setSelectedIndex(index);
         tabMap.put(node, panel);
@@ -483,25 +523,60 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
 
         JScrollPane scrollPane = new JScrollPane(this.model.getTree());
         this.model.getTree().setViewportContext(scrollPane.getViewport());
+        this.model.getTree().setActivateRequestFromKeyboardFollowUp(node -> {
+            RequestResponsePanel panel = this.tabMap.get(node);
+            if (panel != null) {
+                panel.focusRequestEditor();
+            }
+        });
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
         scrollPane.setMinimumSize(MIN_LEFT_PANEL_SIZE);
 
         leftPanel.add(scrollPane, BorderLayout.CENTER);
 
-        JButton syncButton = new JButton("Sync");
-        syncButton.addActionListener(new AbstractAction() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                List<RequestTreeNodeSimple> allRequests = TreepeaterUI.this.model.getTree().toSimpleRepeaterList();
+        JPanel topBar = new JPanel(new BorderLayout());
+        JLabel treeTitle = new JLabel("Treepeater");
+        treeTitle.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 0));
+        topBar.add(treeTitle, BorderLayout.LINE_START);
 
-                for (int idx = 0; idx < allRequests.size(); idx++) {
-                    RequestTreeNodeSimple node = allRequests.get(idx);
-                    Treepeater.api.repeater().sendToRepeater(node.request, node.name);
+        JPanel buttonStrip = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 2));
+
+        ToolbarIconButton newFolderButton = new ToolbarIconButton(new CreateNewFolderIcon());
+        newFolderButton.applyLocalTheme(TREE_PANEL_TOOLBAR_ICON_SIZE);
+        newFolderButton.setToolTipText("Create a new folder under the selected item (or at the root)");
+        newFolderButton.addActionListener(ev -> {
+            TreepeaterNode selected = null;
+            if (this.model.getTree().getSelectionPath() != null) {
+                Object comp = this.model.getTree().getSelectionPath().getLastPathComponent();
+                if (comp instanceof TreepeaterNode) {
+                    selected = (TreepeaterNode) comp;
                 }
             }
-            
+            FolderTreeNode folder = this.model.createFolder(selected);
+            if (folder != null) {
+                this.model.getTree().startProgrammaticEditForNode(folder, ProgrammaticEdit.RENAME);
+            }
         });
+        buttonStrip.add(newFolderButton);
 
-        leftPanel.add(syncButton, BorderLayout.PAGE_END);
+        ToolbarIconButton syncButton = new ToolbarIconButton(new FileExportIcon());
+        syncButton.applyLocalTheme(TREE_PANEL_TOOLBAR_ICON_SIZE);
+        syncButton.setToolTipText("Send all requests in the tree to Repeater");
+        syncButton.addActionListener(e -> {
+            List<RequestTreeNodeSimple> allRequests = TreepeaterUI.this.model.getTree().toSimpleRepeaterList();
+
+            for (int idx = 0; idx < allRequests.size(); idx++) {
+                RequestTreeNodeSimple node = allRequests.get(idx);
+                Treepeater.api.repeater().sendToRepeater(node.request, node.name);
+            }
+        });
+        buttonStrip.add(syncButton);
+
+        topBar.add(buttonStrip, BorderLayout.LINE_END);
+        leftPanel.add(topBar, BorderLayout.PAGE_START);
+
+        this.treePanelNewFolderButton = newFolderButton;
+        this.treePanelSyncButton = syncButton;
         
         return leftPanel;
     }

@@ -27,6 +27,7 @@ public class TreepeaterSettings {
     public static final String EDIT_TARGET_HOTKEY_SETTING = "EDIT_TARGET_HOTKEY";
     public static final String TAB_PREVIOUS_HOTKEY_SETTING = "TAB_PREVIOUS_HOTKEY";
     public static final String TAB_NEXT_HOTKEY_SETTING = "TAB_NEXT_HOTKEY";
+    public static final String FOCUS_TREE_HOTKEY_SETTING = "FOCUS_TREE_HOTKEY";
 
     /**
      * Base name for user preference keys of the global default status list.
@@ -84,6 +85,7 @@ public class TreepeaterSettings {
         STRING_PREFERENCE_DEFAULTS.put(EDIT_TARGET_HOTKEY_SETTING, "Ctrl+L");
         STRING_PREFERENCE_DEFAULTS.put(TAB_PREVIOUS_HOTKEY_SETTING, "Ctrl+Alt+Left");
         STRING_PREFERENCE_DEFAULTS.put(TAB_NEXT_HOTKEY_SETTING, "Ctrl+Alt+Right");
+        STRING_PREFERENCE_DEFAULTS.put(FOCUS_TREE_HOTKEY_SETTING, "Ctrl+Alt+T");
         STRING_PREFERENCE_DEFAULTS.put(LLM_OLLAMA_BASE_URL_SETTING, "http://127.0.0.1:11434");
     }
 
@@ -203,6 +205,15 @@ public class TreepeaterSettings {
     public void setTabNextHotkey(String hotkey) {
         this.preferences.setString(TAB_NEXT_HOTKEY_SETTING, hotkey);
         this.notifyListeners(TAB_NEXT_HOTKEY_SETTING, hotkey);
+    }
+
+    public String getFocusTreeHotkey() {
+        return this.getStringWithDefault(FOCUS_TREE_HOTKEY_SETTING);
+    }
+
+    public void setFocusTreeHotkey(String hotkey) {
+        this.preferences.setString(FOCUS_TREE_HOTKEY_SETTING, hotkey);
+        this.notifyListeners(FOCUS_TREE_HOTKEY_SETTING, hotkey);
     }
 
     public String getLlmOllamaBaseUrl() {

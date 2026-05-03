@@ -231,11 +231,12 @@ public class AnthropicStreamingChatClient implements StreamingChatClient {
         MessageCreateParams.Builder paramsBuilder =
                 MessageCreateParams.builder()
                         .model(Model.of(this.config.model()))
-                        .maxTokens(ANTHROPIC_MAX_OUTPUT_TOKENS)
-                        .outputConfig(
-                                OutputConfig.builder()
-                                        .effort(this.config.outputEffort())
-                                        .build());
+                        .maxTokens(ANTHROPIC_MAX_OUTPUT_TOKENS);
+        this.config.outputEffort()
+                .ifPresent(
+                        effort ->
+                                paramsBuilder.outputConfig(
+                                        OutputConfig.builder().effort(effort).build()));
         applyExtendedThinkingConfig(paramsBuilder);
 
         if (tooling != null && tooling.isActive()) {

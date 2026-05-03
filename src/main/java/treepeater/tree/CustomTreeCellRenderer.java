@@ -15,13 +15,13 @@ public class CustomTreeCellRenderer extends DefaultTreeCellRenderer {
 
     @Override
     public Component getTreeCellRendererComponent(JTree tree, Object value, boolean selected, boolean expanded, boolean leaf, int row, boolean hasFocus) {
-        if (!(value instanceof RequestTreeNode)) {
+        if (!(value instanceof TreepeaterNode)) {
             return super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, hasFocus);
         }
         if (this.cell == null) {
             this.cell = new CustomTreeCell();
         }
-        this.cell.setNode((RequestTreeNode) value);
+        this.cell.setNode((TreepeaterNode) value);
         return this.cell;
     }
 }

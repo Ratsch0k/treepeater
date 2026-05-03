@@ -12,12 +12,15 @@ import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 import treepeater.ai.AgentChatWorkspace;
 import treepeater.requestResponse.RequestHistory;
+import treepeater.settings.StatusRegistry;
 
+import treepeater.tree.FolderTreeNode;
 import treepeater.tree.RequestTree;
 import treepeater.tree.RequestTreeNode;
-import treepeater.tree.RequestTreeNodeListener;
+import treepeater.tree.TreepeaterNode;
+import treepeater.tree.TreepeaterNodeListener;
 
-public class TreepeaterModel implements RequestTreeNodeListener {
+public class TreepeaterModel implements TreepeaterNodeListener {
     private RequestTree tree;
     private LinkedList<RequestTreeNode> tabs;
     private RequestTreeNode activeNode;
@@ -48,7 +51,7 @@ public class TreepeaterModel implements RequestTreeNodeListener {
                 globalAgentChatWorkspace != null ? globalAgentChatWorkspace : AgentChatWorkspace.EMPTY;
         this.listeners = new HashSet<>();
 
-        this.listenToAllNodes((RequestTreeNode) this.tree.getTreeModel().getRoot());
+        this.listenToAllNodes((TreepeaterNode) this.tree.getTreeModel().getRoot());
     }
 
     public TreepeaterModel() {
@@ -87,10 +90,10 @@ public class TreepeaterModel implements RequestTreeNodeListener {
         Treepeater.saveState();
     }
 
-    private void listenToAllNodes(RequestTreeNode node) {
+    private void listenToAllNodes(TreepeaterNode node) {
         int childCount = node.getChildCount();
         for (int i = 0; i < childCount; i++) {
-            RequestTreeNode child = (RequestTreeNode) node.getChildAt(i);
+            TreepeaterNode child = (TreepeaterNode) node.getChildAt(i);
             child.addListener(this);
             this.listenToAllNodes(child);
         }
@@ -110,45 +113,43 @@ public class TreepeaterModel implements RequestTreeNodeListener {
         Treepeater.saveState();
     }
 
-    public void removeNodeFromTree(RequestTreeNode node) {
+    public void removeNodeFromTree(TreepeaterNode node) {
         if (node == null) {
             return;
         }
         Object rootObj = this.tree.getTreeModel().getRoot();
-        if (!(rootObj instanceof RequestTreeNode root)) {
+        if (!(rootObj instanceof TreepeaterNode root)) {
             return;
         }
         if (node == root || node.getParent() == null) {
             return;
         }
-        List<RequestTreeNode> subtree = new ArrayList<>();
+        List<TreepeaterNode> subtree = new ArrayList<>();
         collectSubtreeNodes(node, subtree);
-        Set<RequestTreeNode> removed = new HashSet<>(subtree);
+        Set<TreepeaterNode> removed = new HashSet<>(subtree);
         for (int i = this.tabs.size() - 1; i >= 0; i--) {
             if (removed.contains(this.tabs.get(i))) {
                 this.removeTab(i);
             }
         }
-        for (RequestTreeNode n : subtree) {
+        for (TreepeaterNode n : subtree) {
             n.removeListener(this);
         }
         this.tree.getTreeModel().removeNodeFromParent(node);
         Treepeater.saveState();
     }
 
-    private static void collectSubtreeNodes(RequestTreeNode n, List<RequestTreeNode> out) {
+    private static void collectSubtreeNodes(TreepeaterNode n, List<TreepeaterNode> out) {
         out.add(n);
         for (int i = 0; i < n.getChildCount(); i++) {
-            collectSubtreeNodes((RequestTreeNode) n.getChildAt(i), out);
+            collectSubtreeNodes((TreepeaterNode) n.getChildAt(i), out);
         }
     }
 
     public void removeTab(int idx) {
         RequestTreeNode node = this.tabs.get(idx);
 
-        // Identify if the active node is the one being closed
         if (idx == this.tabs.indexOf(this.activeNode)) {
-            // If it is, set the active node to the next one
             if (idx < this.tabs.size() - 1) {
                 this.activeNode = this.tabs.get(idx + 1);
             } else if (idx > 0) {
@@ -174,9 +175,29 @@ public class TreepeaterModel implements RequestTreeNodeListener {
         Treepeater.saveState();
     }
 
-    public void insertNodeInto(RequestTreeNode child, RequestTreeNode parent, int index) {
+    public void insertNodeInto(TreepeaterNode child, TreepeaterNode parent, int index) {
         this.tree.insertNodeInto(child, parent, index);
         Treepeater.saveState();
+    }
+
+    public FolderTreeNode createFolder(TreepeaterNode parent) {
+        this.requestCount += 1;
+        FolderTreeNode folder = new FolderTreeNode(this.requestCount, StatusRegistry.getDefault(), "New Folder");
+        folder.addListener(this);
+
+        TreepeaterNode target = parent;
+        if (target == null) {
+            target = (TreepeaterNode) this.tree.getTreeModel().getRoot();
+        }
+        if (!(target instanceof FolderTreeNode)) {
+            target = (TreepeaterNode) target.getParent();
+            if (target == null) {
+                target = (TreepeaterNode) this.tree.getTreeModel().getRoot();
+            }
+        }
+        this.tree.insertNodeInto(folder, target, target.getChildCount());
+        Treepeater.saveState();
+        return folder;
     }
 
     /**
@@ -186,7 +207,7 @@ public class TreepeaterModel implements RequestTreeNodeListener {
      */
     public RequestTreeNode copyAsSiblingUnderSameParent(RequestTreeNode source, HttpRequest request, HttpResponse response) {
         TreeNode parentRaw = source.getParent();
-        if (!(parentRaw instanceof RequestTreeNode parent)) {
+        if (!(parentRaw instanceof TreepeaterNode parent)) {
             return null;
         }
 
@@ -231,8 +252,10 @@ public class TreepeaterModel implements RequestTreeNodeListener {
     }
 
     @Override
-    public void onSelect(RequestTreeNode node) {
-        this.addTab(node);
+    public void onSelect(TreepeaterNode node) {
+        if (node instanceof RequestTreeNode requestNode) {
+            this.addTab(requestNode);
+        }
     }
 
     @Override
@@ -255,18 +278,18 @@ public class TreepeaterModel implements RequestTreeNodeListener {
      */
     public RequestTreeNode findRequestNodeInTreeById(int id) {
         Object root = this.tree.getTreeModel().getRoot();
-        if (!(root instanceof RequestTreeNode r)) {
+        if (!(root instanceof TreepeaterNode r)) {
             return null;
         }
         return findRequestNodeInTreeById(r, id);
     }
 
-    private static RequestTreeNode findRequestNodeInTreeById(RequestTreeNode node, int id) {
-        if (node.getId() == id) {
-            return node;
+    private static RequestTreeNode findRequestNodeInTreeById(TreepeaterNode node, int id) {
+        if (node instanceof RequestTreeNode rn && rn.getId() == id) {
+            return rn;
         }
         for (int i = 0; i < node.getChildCount(); i++) {
-            RequestTreeNode c = (RequestTreeNode) node.getChildAt(i);
+            TreepeaterNode c = (TreepeaterNode) node.getChildAt(i);
             RequestTreeNode f = findRequestNodeInTreeById(c, id);
             if (f != null) {
                 return f;
@@ -276,7 +299,7 @@ public class TreepeaterModel implements RequestTreeNodeListener {
     }
 
     @Override
-    public void onDelete(RequestTreeNode node) {
+    public void onDelete(TreepeaterNode node) {
         this.removeNodeFromTree(node);
     }
 }

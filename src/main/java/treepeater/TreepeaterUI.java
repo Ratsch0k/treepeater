@@ -165,7 +165,7 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
             @Override
             public void treeStructureChanged(TreeModelEvent e) {
             }
-            
+
         });
 
 

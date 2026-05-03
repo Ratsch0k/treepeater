@@ -210,11 +210,15 @@ public class RequestTree extends JTree {
 
     public void insertRootNode(TreepeaterNode node) {
         this.model.insertNodeInto(node, this.root, this.root.getChildCount());
-        this.model.nodeStructureChanged(this.root);
     }
 
     public void insertNodeInto(TreepeaterNode child, TreepeaterNode parent, int index) {
         this.model.insertNodeInto(child, parent, index);
+    }
+
+    /** Call once after persistence has attached all top-level nodes (offline-built subtrees). */
+    public void syncUiAfterBulkLoad() {
+        this.model.nodeStructureChanged(this.root);
     }
 
     public List<RequestTreeNodeSimple> toSimpleRepeaterList() {

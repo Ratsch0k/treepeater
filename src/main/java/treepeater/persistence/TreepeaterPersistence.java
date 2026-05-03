@@ -405,6 +405,9 @@ public class TreepeaterPersistence {
             TreepeaterNode child = this.loadTreeNode(childObject, legacyUiByNodeId);
             tree.insertRootNode(child);
         }
+        if (childCount > 0) {
+            tree.syncUiAfterBulkLoad();
+        }
 
         return tree;
     }

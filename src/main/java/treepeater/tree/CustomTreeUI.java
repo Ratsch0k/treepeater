@@ -8,6 +8,8 @@ import java.awt.Graphics2D;
 import java.awt.Insets;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseMotionAdapter;
@@ -18,6 +20,7 @@ import javax.swing.JComponent;
 import javax.swing.JTree;
 import javax.swing.JViewport;
 import javax.swing.UIManager;
+import javax.swing.event.TreeSelectionListener;
 import javax.swing.plaf.basic.BasicTreeUI;
 import javax.swing.tree.AbstractLayoutCache;
 import javax.swing.tree.TreePath;
@@ -71,6 +74,8 @@ public class CustomTreeUI extends BasicTreeUI {
     private int hoverRow = -1;
     private MouseMotionAdapter motion;
     private MouseAdapter mouse;
+    private TreeSelectionListener selectionListener;
+    private FocusAdapter focusListener;
 
     /**
      * We have to keep track of the viewport context to get the width of the tree.
@@ -168,12 +173,52 @@ public class CustomTreeUI extends BasicTreeUI {
         };
         t.addMouseMotionListener(motion);
         t.addMouseListener(mouse);
+
+        selectionListener = e -> {
+            for (TreePath p : e.getPaths()) {
+                repaintRowStrip(t, t.getRowForPath(p));
+            }
+            TreePath oldLead = e.getOldLeadSelectionPath();
+            if (oldLead != null) {
+                repaintRowStrip(t, t.getRowForPath(oldLead));
+            }
+            TreePath newLead = e.getNewLeadSelectionPath();
+            if (newLead != null) {
+                repaintRowStrip(t, t.getRowForPath(newLead));
+            }
+        };
+        focusListener = new FocusAdapter() {
+            @Override
+            public void focusGained(FocusEvent ev) {
+                repaintSelectionAffectedRows(t);
+            }
+
+            @Override
+            public void focusLost(FocusEvent ev) {
+                repaintSelectionAffectedRows(t);
+            }
+        };
+        t.addTreeSelectionListener(selectionListener);
+        t.addFocusListener(focusListener);
     }
 
     /**
      * Repaints the full tree width for {@code row} so {@link #paintFullWidthRowStrip} runs after
      * model data used only for row chrome (e.g. status colors) changes without touching child components.
      */
+    static void repaintSelectionAffectedRows(JTree tree) {
+        int[] rows = tree.getSelectionRows();
+        if (rows != null) {
+            for (int r : rows) {
+                repaintRowStrip(tree, r);
+            }
+        }
+        int lead = tree.getLeadSelectionRow();
+        if (lead >= 0) {
+            repaintRowStrip(tree, lead);
+        }
+    }
+
     static void repaintRowStrip(JTree tree, int row) {
         if (row < 0) {
             return;
@@ -193,8 +238,16 @@ public class CustomTreeUI extends BasicTreeUI {
         if (mouse != null) {
             t.removeMouseListener(mouse);
         }
+        if (selectionListener != null) {
+            t.removeTreeSelectionListener(selectionListener);
+        }
+        if (focusListener != null) {
+            t.removeFocusListener(focusListener);
+        }
         motion = null;
         mouse = null;
+        selectionListener = null;
+        focusListener = null;
         super.uninstallUI(c);
     }
 
@@ -348,15 +401,20 @@ public class CustomTreeUI extends BasicTreeUI {
         }
     }
 
+    private Color lookupSelectionBlendColor(boolean focusOwner) {
+        return UIManager.getColor(focusOwner ? "Tree.selectionBackground" : "Tree.selectionInactiveBackground");
+    }
+
     /**
      * Paints a full-width row strip.
-     * 
+     *
      * The background for each row is a rounded colored rectangle.
      * The fill color is determined by the status of the node.
-     * @param g the graphics context
+     *
+     * @param g       the graphics context
      * @param bounds the bounds of the row
-     * @param path the path of the row
-     * @param row the row index
+     * @param path   the path of the row
+     * @param row    the row index
      */
     private void paintFullWidthRowStrip(Graphics g, Rectangle bounds, TreePath path, int row) {
         if (tree == null || path == null || bounds == null) {
@@ -370,14 +428,25 @@ public class CustomTreeUI extends BasicTreeUI {
         Object component = path.getLastPathComponent();
         Color fill;
         Color border;
-        if (component instanceof TreepeaterNode) {
-            Status status = ((TreepeaterNode) component).getStatus();
+        if (component instanceof TreepeaterNode node) {
+            Status status = node.getStatus();
 
             fill = status.getBackgroundColor();
             border = status.getBorderColor();
         } else {
             fill = UIManager.getColor("Button.default.background");
             border = UIManager.getColor("Button.default.border");
+        }
+
+        boolean rowSelected = tree.isRowSelected(row);
+        boolean focusOwner = tree.isFocusOwner();
+        int leadRow = tree.getLeadSelectionRow();
+
+        if (rowSelected) {
+            Color tint = lookupSelectionBlendColor(focusOwner);
+            float blend = focusOwner ? 0.38f : 0.26f;
+            fill = Utilities.interpolateColor(fill, tint, blend);
+            border = Utilities.interpolateColor(border, tint, focusOwner ? 0.52f : 0.38f);
         }
 
         Color hoverFill = Utilities.interpolateColor(fill, border, 0.2f);
@@ -392,12 +461,26 @@ public class CustomTreeUI extends BasicTreeUI {
         Graphics2D g2 = (Graphics2D) g.create();
         try {
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            RoundRectangle2D rr = new RoundRectangle2D.Float(x, y, w, h, ARC, ARC);
+            RoundRectangle2D.Float rr =
+                    new RoundRectangle2D.Float(x, y, w, h, ARC, ARC);
             g2.setColor(fill);
             g2.fill(rr);
             g2.setColor(border);
             g2.setStroke(new BasicStroke(1f));
             g2.draw(rr);
+
+            boolean keyboardFocusedLeaf = rowSelected && focusOwner && leadRow >= 0 && row == leadRow;
+            if (keyboardFocusedLeaf) {
+                float inset = 3f;
+                float innerArc = Math.max(4f, ARC - 6f);
+                RoundRectangle2D inner = new RoundRectangle2D.Float(
+                        x + inset, y + inset, w - 2 * inset, h - 2 * inset, innerArc, innerArc);
+                Color fg = UIManager.getColor("Label.foreground");
+                Color cue = Utilities.interpolateColor(fill, fg != null ? fg : Color.DARK_GRAY, 0.55f);
+                g2.setColor(cue);
+                g2.setStroke(new BasicStroke(2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                g2.draw(inner);
+            }
         } finally {
             g2.dispose();
         }

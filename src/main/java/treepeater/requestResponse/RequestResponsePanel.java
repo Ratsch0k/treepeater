@@ -290,6 +290,7 @@ public class RequestResponsePanel extends JPanel {
         this.hotkeyActions.put(TreepeaterSettings.EDIT_TARGET_HOTKEY_SETTING, () -> this.editTargetButton.doClick());
         this.hotkeyActions.put(TreepeaterSettings.TAB_PREVIOUS_HOTKEY_SETTING, this.selectPreviousRequestResponseTab);
         this.hotkeyActions.put(TreepeaterSettings.TAB_NEXT_HOTKEY_SETTING, this.selectNextRequestResponseTab);
+        this.hotkeyActions.put(TreepeaterSettings.FOCUS_TREE_HOTKEY_SETTING, this::handleFocusTree);
     }
 
     private void handleSendRequest() {
@@ -320,6 +321,18 @@ public class RequestResponsePanel extends JPanel {
 
     private void handleChangeStatus() {
         SwingUtilities.invokeLater(() -> this.tree.startProgrammaticEditForNode(this.node, ProgrammaticEdit.STATUS));
+    }
+
+    private void handleFocusTree() {
+        SwingUtilities.invokeLater(() -> {
+            RequestTreeNode active = this.model.getActiveNode();
+            if (active != null) {
+                TreePath path = new TreePath(active.getPath());
+                this.tree.setSelectionPath(path);
+                this.tree.scrollPathToVisible(path);
+            }
+            this.tree.requestFocusInWindow();
+        });
     }
 
     public void setRequest(HttpRequest request) {

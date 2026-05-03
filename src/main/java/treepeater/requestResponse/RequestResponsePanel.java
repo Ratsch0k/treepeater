@@ -1,6 +1,8 @@
 package treepeater.requestResponse;
 
 import java.awt.BorderLayout;
+import java.awt.Component;
+import java.awt.Container;
 import java.awt.Font;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -13,6 +15,7 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -43,12 +46,13 @@ public class RequestResponsePanel extends JPanel {
 
     private final TreepeaterModel model;
     private final RequestTree tree;
-    private RequestTreeNode node;
+    private final RequestTreeNode node;
 
     private HttpRequestEditor requestEditor;
     private HttpResponseEditor responseEditor;
 
     private CustomButton sendButton;
+    private JCheckBox updateContentLengthCheckBox;
     private JButton cancelButton;
     private JPanel topBar;
     private JPanel topBarWrapper;
@@ -112,6 +116,11 @@ public class RequestResponsePanel extends JPanel {
         this.sendButton = new CustomButton("Send");
         this.sendButton.setBorder(BorderFactory.createEmptyBorder(3, 0, 3, 0));
 
+        this.updateContentLengthCheckBox = new JCheckBox("Update Content-Length");
+        this.updateContentLengthCheckBox.setSelected(true);
+        this.updateContentLengthCheckBox.setToolTipText(
+                "When enabled, Content-Length is set from the request body before sending (omitted for chunked encoding).");
+
         this.cancelButton = new JButton();
 
         this.httpTarget.initFromRequest(this.node.getRequest());
@@ -127,6 +136,9 @@ public class RequestResponsePanel extends JPanel {
         this.topBar.add(this.historyBackSplitButton);
         this.topBar.add(Box.createHorizontalStrut(4));
         this.topBar.add(this.historyForwardSplitButton);
+
+        this.topBar.add(Box.createHorizontalStrut(6));
+        this.topBar.add(this.updateContentLengthCheckBox);
 
         this.topBar.add(Box.createHorizontalGlue());
         this.topBar.add(this.targetValueLabel);
@@ -174,14 +186,14 @@ public class RequestResponsePanel extends JPanel {
         this.historyNavigator.refreshNavState();
 
         new RequestResponseSendCoordinator(
-                this.requestEditor,
-                this.node,
                 this.httpTarget,
                 this.sendButton,
                 this.cancelButton,
+                this::prepareAndCommitRequestForSend,
                 (snapshot, response, time, label) -> {
                     this.setResponse(response);
                     this.addToHistory(snapshot, response, time, label);
+                    this.refreshTreeAndRequestListenersAfterSendResponse();
                 }).registerActions();
 
         this.splitPane.setLeftComponent(RequestResponsePanelUi.makeHeaderPanel("Request", this.requestEditor.uiComponent()));
@@ -198,6 +210,46 @@ public class RequestResponsePanel extends JPanel {
         this.hotkeyHandler = new HotkeyHandler();
         this.populateHotkeyActions();
         RequestResponseHotkeyInstaller.install(this, this.hotkeyHandler, this.hotkeyActions, this.hotkeyHandlerRegistered);
+    }
+
+    /**
+     * Moves keyboard focus into this tab's HTTP request editor (Burp-provided UI).
+     */
+    public void focusRequestEditor() {
+        if (this.requestEditor == null) {
+            return;
+        }
+        Component root = this.requestEditor.uiComponent();
+        if (root == null) {
+            return;
+        }
+        SwingUtilities.invokeLater(() -> requestFocusPreferDescendant(root));
+    }
+
+    private static void requestFocusPreferDescendant(Component root) {
+        Component candidate = root;
+        if (!candidate.isFocusable() && root instanceof Container c) {
+            Component inner = findFirstFocusableDescendant(c);
+            if (inner != null) {
+                candidate = inner;
+            }
+        }
+        candidate.requestFocusInWindow();
+    }
+
+    private static Component findFirstFocusableDescendant(Container parent) {
+        for (Component child : parent.getComponents()) {
+            if (child.isShowing() && child.isFocusable() && child.isEnabled()) {
+                return child;
+            }
+            if (child instanceof Container c) {
+                Component inner = findFirstFocusableDescendant(c);
+                if (inner != null) {
+                    return inner;
+                }
+            }
+        }
+        return null;
     }
 
     @Override
@@ -223,6 +275,9 @@ public class RequestResponsePanel extends JPanel {
         if (this.splitPane != null && Treepeater.api != null) {
             Treepeater.api.userInterface().applyThemeToComponent(this.splitPane);
         }
+        if (this.updateContentLengthCheckBox != null && Treepeater.api != null) {
+            Treepeater.api.userInterface().applyThemeToComponent(this.updateContentLengthCheckBox);
+        }
     }
 
     private void populateHotkeyActions() {
@@ -235,6 +290,7 @@ public class RequestResponsePanel extends JPanel {
         this.hotkeyActions.put(TreepeaterSettings.EDIT_TARGET_HOTKEY_SETTING, () -> this.editTargetButton.doClick());
         this.hotkeyActions.put(TreepeaterSettings.TAB_PREVIOUS_HOTKEY_SETTING, this.selectPreviousRequestResponseTab);
         this.hotkeyActions.put(TreepeaterSettings.TAB_NEXT_HOTKEY_SETTING, this.selectNextRequestResponseTab);
+        this.hotkeyActions.put(TreepeaterSettings.FOCUS_TREE_HOTKEY_SETTING, this::handleFocusTree);
     }
 
     private void handleSendRequest() {
@@ -267,8 +323,19 @@ public class RequestResponsePanel extends JPanel {
         SwingUtilities.invokeLater(() -> this.tree.startProgrammaticEditForNode(this.node, ProgrammaticEdit.STATUS));
     }
 
+    private void handleFocusTree() {
+        SwingUtilities.invokeLater(() -> {
+            RequestTreeNode active = this.model.getActiveNode();
+            if (active != null) {
+                TreePath path = new TreePath(active.getPath());
+                this.tree.setSelectionPath(path);
+                this.tree.scrollPathToVisible(path);
+            }
+            this.tree.requestFocusInWindow();
+        });
+    }
+
     public void setRequest(HttpRequest request) {
-        Treepeater.api.logging().logToOutput("setRequest: " + request.url());
         this.requestEditor.setRequest(request);
         this.node.setRequest(request);
         Treepeater.saveState();
@@ -314,6 +381,15 @@ public class RequestResponsePanel extends JPanel {
         for (RequestResponseChangeListener listener : this.requestResponseChangeListeners) {
             listener.onRequestChanged(request, response, received);
         }
+    }
+
+    /**
+     * Called on the EDT when the HTTP response has been received and applied ({@link RequestResponseSendCoordinator}
+     * completion path). Refreshes the tree method prefix and {@link RequestResponseChangeListener} request snapshot.
+     */
+    private void refreshTreeAndRequestListenersAfterSendResponse() {
+        this.tree.getTreeModel().nodeChanged(this.node);
+        this.notifyRequestChanged();
     }
 
     private void notifyResponseChanged() {
@@ -433,6 +509,29 @@ public class RequestResponsePanel extends JPanel {
                 this::sendCurrentHttpRequestBlocking);
     }
 
+    /**
+     * EDT. Applies host/target and optionally syncs {@code Content-Length} to the body, returning the request that
+     * will actually be sent and stored on the node. The request editor document is left untouched so the user's
+     * undo history is preserved across sends; the content-length/target adjustments live only on the outgoing
+     * snapshot.
+     */
+    private HttpRequest prepareAndCommitRequestForSend() {
+        HttpRequest r = this.requestEditor.getRequest();
+        r = this.httpTarget.applyToRequest(r);
+        if (this.updateContentLengthCheckBox.isSelected()) {
+            r = RequestContentLength.syncContentLengthToBody(r);
+        }
+        this.node.setRequest(r);
+        return r;
+    }
+
+    /**
+     * Sends the live editor request (target applied), then updates the response editor and send history on the EDT,
+     * matching the Send button. Blocks until the HTTP exchange finishes. Call from a background thread; uses {@link
+     * SwingUtilities#invokeAndWait} for UI segments.
+     *
+     * @return HTTP status code of the response
+     */
     private int sendCurrentHttpRequestBlocking() throws Exception {
         if (Treepeater.api == null) {
             throw new IllegalStateException("Burp API unavailable");
@@ -441,11 +540,7 @@ public class RequestResponsePanel extends JPanel {
         final String[] targetLabel = new String[1];
         SwingUtilities.invokeAndWait(
                 () -> {
-                    HttpRequest r = this.requestEditor.getRequest();
-                    r = this.httpTarget.applyToRequest(r);
-                    this.requestEditor.setRequest(r);
-                    this.node.setRequest(r);
-                    prepared[0] = r;
+                    prepared[0] = this.prepareAndCommitRequestForSend();
                     targetLabel[0] = this.httpTarget.statusLineLabel();
                 });
 

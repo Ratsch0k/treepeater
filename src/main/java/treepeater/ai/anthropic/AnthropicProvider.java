@@ -53,7 +53,7 @@ public final class AnthropicProvider implements LlmProvider {
                 displayName,
                 List.of(),
                 Map.of(),
-                LlmModelOptionValues.of(ModelOptions.EFFORT, EffortLevel.MEDIUM));
+                LlmModelOptionValues.EMPTY);
     }
 
     @Override
@@ -92,15 +92,19 @@ public final class AnthropicProvider implements LlmProvider {
         if (model == null || model.modelId().isBlank()) {
             throw new IllegalStateException("No Anthropic model id");
         }
-        EffortLevel effort = values != null
-                ? values.getOrDefault(ModelOptions.EFFORT, EffortLevel.MEDIUM)
-                : EffortLevel.MEDIUM;
+        boolean supportsEffort = model.supportedOptions().contains(ModelOptions.EFFORT);
+        Optional<OutputConfig.Effort> outputEffort = supportsEffort
+                ? Optional.of(
+                        mapEffort(values != null
+                                ? values.getOrDefault(ModelOptions.EFFORT, EffortLevel.MEDIUM)
+                                : EffortLevel.MEDIUM))
+                : Optional.empty();
         boolean wantsThinking =
                 values != null && Boolean.TRUE.equals(values.get(ModelOptions.EXTENDED_THINKING));
         AnthropicClientConfig.ThinkingMode mode =
                 thinkingModeFor(model, wantsThinking);
         return new AnthropicStreamingChatClient(
-                new AnthropicClientConfig(apiKey, model.modelId(), mode, mapEffort(effort)));
+                new AnthropicClientConfig(apiKey, model.modelId(), mode, outputEffort));
     }
 
     /**

@@ -13,7 +13,6 @@ import javax.swing.event.DocumentListener;
 import treepeater.TreepeaterModel;
 import treepeater.icons.NotesIcon;
 
-
 public class NotesToolbarTab {
     private final ToolbarIconButton button;
     private final JPanel content;
@@ -27,6 +26,8 @@ public class NotesToolbarTab {
         this.notesArea.setText(model.getGlobalNotes());
         this.notesArea.setLineWrap(true);
         this.notesArea.setWrapStyleWord(true);
+
+        this.content.add(this.buildContent(), BorderLayout.CENTER);
 
         this.notesArea.getDocument().addDocumentListener(new DocumentListener() {
             @Override
@@ -44,8 +45,6 @@ public class NotesToolbarTab {
                 model.setGlobalNotes(NotesToolbarTab.this.notesArea.getText());
             }
         });
-
-        this.content.add(this.buildContent(), BorderLayout.CENTER);
     }
 
     public JButton getButton() {

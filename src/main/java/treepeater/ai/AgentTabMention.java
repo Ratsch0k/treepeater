@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.List;
 
 import treepeater.tree.RequestTreeNode;
+import treepeater.tree.TreepeaterNode;
 
 /**
  * One open repeater tab offered in the chat composer {@code @}-mention popup.
@@ -22,13 +23,14 @@ public record AgentTabMention(int requestNodeId, String pathLabel) {
             return "";
         }
         List<String> parts = new ArrayList<>();
-        for (RequestTreeNode cur = node; cur != null; ) {
+        for (TreepeaterNode cur = node; cur != null; ) {
             if (cur.getId() == SYNTHETIC_ROOT_ID) {
                 break;
             }
             String name = cur.getName();
             parts.add(name != null ? name : "#" + cur.getId());
-            if (!(cur.getParent() instanceof RequestTreeNode p)) {
+            TreepeaterNode p = cur.getParent() instanceof TreepeaterNode tn ? tn : null;
+            if (p == null) {
                 break;
             }
             cur = p;

@@ -7,7 +7,8 @@ import javax.swing.UIManager;
 
 import treepeater.icons.CloseIcon;
 import treepeater.tree.RequestTreeNode;
-import treepeater.tree.RequestTreeNodeListener;
+import treepeater.tree.TreepeaterNode;
+import treepeater.tree.TreepeaterNodeListener;
 
 import java.awt.FlowLayout;
 import java.awt.Insets;
@@ -20,7 +21,7 @@ public class RequestResponseTab extends JPanel {
     JButton closeButton;
 
     public HashSet<ActionListener> listeners;
-    
+
     public RequestResponseTab(RequestTreeNode node) {
         this.setLayout(new FlowLayout());
 
@@ -35,7 +36,7 @@ public class RequestResponseTab extends JPanel {
             public void actionPerformed(ActionEvent e) {
                 RequestResponseTab.this.listeners.forEach(l -> l.actionPerformed(e));
             }
-            
+
         });
         closeButton.setBorderPainted(false);
         closeButton.setContentAreaFilled(false);
@@ -45,11 +46,9 @@ public class RequestResponseTab extends JPanel {
         closeButton.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
         this.add(closeButton);
 
-        node.addListener(new RequestTreeNodeListener() {
-
+        node.addListener(new TreepeaterNodeListener() {
             @Override
-            public void onSelect(RequestTreeNode node) {
-
+            public void onSelect(TreepeaterNode n) {
             }
 
             @Override
@@ -59,9 +58,8 @@ public class RequestResponseTab extends JPanel {
             }
 
             @Override
-            public void onDelete(RequestTreeNode node) {
-                
-            }            
+            public void onDelete(TreepeaterNode n) {
+            }
         });
     }
 

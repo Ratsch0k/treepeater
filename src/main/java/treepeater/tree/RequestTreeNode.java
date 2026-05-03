@@ -1,121 +1,81 @@
 package treepeater.tree;
+
 import java.util.HashSet;
-import javax.swing.tree.DefaultMutableTreeNode;
 
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 import treepeater.Treepeater;
 import treepeater.requestResponse.RequestHistory;
 import treepeater.requestResponse.Status;
-import treepeater.settings.StatusRegistry;
 
-public class RequestTreeNode extends DefaultMutableTreeNode {
-    private final int id;
-    private Status status;
-    private String name;
+public class RequestTreeNode extends TreepeaterNode {
     private HttpRequest request;
     private HttpResponse response;
-    private HashSet<RequestTreeNodeListener> listener;
+    private String notes = "";
     private final RequestHistory history;
 
-    public RequestTreeNode(
-            int id,
-            Status status,
-            String name,
-            HttpRequest request,
-            HttpResponse response,
-            RequestHistory history) {
-        super(name);
-        this.id = id;
-        this.status = status != null ? status : StatusRegistry.getDefault();
-        this.name = name != null ? name : "#" + id;
+    public RequestTreeNode(int id, Status status, String name, HttpRequest request, HttpResponse response, RequestHistory history) {
+        this(id, status, name, request, response, history, "");
+    }
+
+    public RequestTreeNode(int id, Status status, String name, HttpRequest request, HttpResponse response, RequestHistory history, String notes) {
+        super(id, status, name);
         this.request = request;
         this.response = response;
-        this.listener = new HashSet<>();
+        this.notes = notes != null ? notes : "";
         this.history = history;
     }
 
     public RequestTreeNode(int id, String name, HttpRequest request, HttpResponse response) {
-        super(name);
-
-        this.id = id;
-        this.name = name;
-        this.status = StatusRegistry.getDefault();
+        super(id, null, name);
         this.request = request;
         this.response = response;
-        this.listener = new HashSet<>();
         this.history = new RequestHistory();
     }
 
+    /**
+     * Used when reconstructing a node from drag-and-drop transfer data; preserves {@code history} when non-null.
+     */
     public RequestTreeNode(
             int id,
             Status status,
             String name,
             HttpRequest request,
             HttpResponse response,
-            HashSet<RequestTreeNodeListener> l) {
-        super(name);
-        this.id = id;
-        this.status = status != null ? status : StatusRegistry.getDefault();
-        this.name = name != null ? name : "#" + id;
+            RequestHistory history,
+            HashSet<TreepeaterNodeListener> l,
+            String notes) {
+        super(id, status, name, l);
         this.request = request;
         this.response = response;
-        this.listener = l != null ? l : new HashSet<>();
-        this.history = new RequestHistory();
+        this.notes = notes != null ? notes : "";
+        this.history = history != null ? history : new RequestHistory();
     }
 
     public RequestTreeNode(RequestTreeNode copy) {
-        super(copy.getName());
-
-        this.id = copy.id;
-        this.name = copy.getName();
-        this.status = copy.getStatus();
+        super(copy.getId(), copy.getStatus(), copy.getName(), copy.getListeners());
         this.request = copy.request;
         this.response = copy.response;
-        this.listener = copy.listener != null ? new HashSet<>(copy.listener) : new HashSet<>();
+        this.notes = copy.notes != null ? copy.notes : "";
         this.history = copy.history;
     }
 
-    public Status getStatus() {
-        return this.status;
+    @Override
+    public boolean getAllowsChildren() {
+        return false;
     }
 
-    public void setStatus(Status status) {
-        this.status = status;
+    public String getNotes() {
+        return this.notes != null ? this.notes : "";
     }
 
-    public String getName() {
-        return this.name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
-        this.listener.forEach(l -> l.onNameChange(name));
+    public void setNotes(String n) {
+        String next = n != null ? n : "";
+        if (next.equals(this.notes)) {
+            return;
+        }
+        this.notes = next;
         Treepeater.saveState();
-    }
-
-    public void delete() {
-        this.listener.forEach(l -> l.onDelete(this));
-    }
-
-    public void addListener(RequestTreeNodeListener l) {
-        if (l != null) {
-            this.listener.add(l);
-        }
-    }
-
-    public void removeListener(RequestTreeNodeListener l) {
-        if (l != null) {
-            this.listener.remove(l);
-        }
-    }
-
-    public void select() {
-        this.listener.forEach(l -> l.onSelect(this));
-    }
-
-    public HashSet<RequestTreeNodeListener> getListeners() {
-        return this.listener;
     }
 
     public void setRequest(HttpRequest r) {
@@ -136,12 +96,7 @@ public class RequestTreeNode extends DefaultMutableTreeNode {
         return this.response;
     }
 
-    public int getId() {
-        return this.id;
-    }
-
     public RequestHistory getHistory() {
         return this.history;
     }
-
 }

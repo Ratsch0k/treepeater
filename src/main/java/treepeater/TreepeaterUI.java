@@ -523,6 +523,7 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
 
         JScrollPane scrollPane = new JScrollPane(this.model.getTree());
         this.model.getTree().setViewportContext(scrollPane.getViewport());
+        scrollPane.setBorder(BorderFactory.createEmptyBorder());
         scrollPane.setMinimumSize(MIN_LEFT_PANEL_SIZE);
 
         leftPanel.add(scrollPane, BorderLayout.CENTER);

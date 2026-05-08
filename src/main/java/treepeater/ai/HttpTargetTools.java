@@ -138,7 +138,7 @@ public final class HttpTargetTools {
     public static final int MAX_TAB_LIST_URL_CHARS = 512;
 
     private static final String REQ_NODE_ID_PROP =
-            "\"request_node_id\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Open repeater tab id from search_tabs rows; omit to use the UI-selected tab.\"}";
+            "\"request_node_id\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Tab id from search_tabs; omit=UI tab.\"}";
 
     private static final String OPTIONAL_TAB_PARAMS_SCHEMA =
             "{\"type\":\"object\",\"properties\":{" + REQ_NODE_ID_PROP + "},\"additionalProperties\":false}";
@@ -146,37 +146,37 @@ public final class HttpTargetTools {
     private static final String READ_MESSAGE_SCHEMA =
             "{\"type\":\"object\",\"properties\":{"
                     + REQ_NODE_ID_PROP
-                    + ",\"side\":{\"type\":\"string\",\"enum\":[\"request\",\"response\"],\"description\":\"Whether to read the stored request or response.\"},\"history_index\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"0-based history index; omit for the current entry.\"},\"offset\":{\"type\":\"integer\",\"minimum\":0,\"default\":0,\"description\":\"Byte offset into the raw wire message.\"},\"max_bytes\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":65536,\"default\":4096,\"description\":\"Maximum bytes to return in this call.\"}},\"required\":[\"side\"],\"additionalProperties\":false}";
+                    + ",\"side\":{\"type\":\"string\",\"enum\":[\"request\",\"response\"]},\"history_index\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"0-based; omit=current\"},\"offset\":{\"type\":\"integer\",\"minimum\":0,\"default\":0},\"max_bytes\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":65536,\"default\":4096}},\"required\":[\"side\"],\"additionalProperties\":false}";
 
     private static final String SEARCH_MESSAGE_SCHEMA =
             "{\"type\":\"object\",\"properties\":{"
                     + REQ_NODE_ID_PROP
-                    + ",\"side\":{\"type\":\"string\",\"enum\":[\"request\",\"response\"]},\"pattern\":{\"type\":\"string\",\"description\":\"Java java.util.regex pattern; use inline flags (?i), (?m), (?s) as needed.\"},\"history_index\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"0-based history index; omit for the current entry.\"},\"scope\":{\"type\":\"string\",\"enum\":[\"headers\",\"body\",\"all\"],\"default\":\"all\",\"description\":\"headers: only before CRLFCRLF; body: only after; all: full message.\"},\"max_matches\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100,\"default\":10,\"description\":\"Maximum matches to return.\"},\"context_bytes\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":512,\"default\":64,\"description\":\"Context bytes on each side of each match.\"}},\"required\":[\"side\",\"pattern\"],\"additionalProperties\":false}";
+                    + ",\"side\":{\"type\":\"string\",\"enum\":[\"request\",\"response\"]},\"pattern\":{\"type\":\"string\",\"description\":\"Java Pattern; (?i)(?m)(?s)\"},\"history_index\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"0-based; omit=current\"},\"scope\":{\"type\":\"string\",\"enum\":[\"headers\",\"body\",\"all\"],\"default\":\"all\"},\"max_matches\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100,\"default\":10},\"context_bytes\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":512,\"default\":64}},\"required\":[\"side\",\"pattern\"],\"additionalProperties\":false}";
 
     private static final String SEARCH_TABS_SCHEMA =
-            "{\"type\":\"object\",\"properties\":{\"offset\":{\"type\":\"integer\",\"minimum\":0,\"default\":0,\"description\":\"Index into the filtered tab list.\"},\"page_size\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":"
+            "{\"type\":\"object\",\"properties\":{\"offset\":{\"type\":\"integer\",\"minimum\":0,\"default\":0},\"page_size\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":"
                     + MAX_TAB_PAGE_SIZE
                     + ",\"default\":"
                     + DEFAULT_TAB_PAGE_SIZE
-                    + ",\"description\":\"Tabs per page (capped).\"},\"query\":{\"type\":\"string\",\"description\":\"Optional filter: match live request method and URL (e.g. POST /path or full https URL) or tab title substring; case-insensitive.\"}},\"additionalProperties\":false}";
+                    + "},\"query\":{\"type\":\"string\",\"description\":\"Filter method/URL or title; CI\"}},\"additionalProperties\":false}";
 
     private static final int MAX_SUBSTRING_REPLACEMENTS = 100_000;
 
     private static final String REPLACE_BODY_SCHEMA =
             "{\"type\":\"object\",\"properties\":{"
                     + REQ_NODE_ID_PROP
-                    + ",\"old_text\":{\"type\":\"string\",\"description\":\"Literal text to find (non-empty).\"},\"new_text\":{\"type\":\"string\",\"description\":\"Replacement text (may be empty to delete matches).\"},\"max_replacements\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":%d,\"default\":1,\"description\":\"Maximum non-overlapping replacements (left to right). Ignored when replace_all is true.\"},\"replace_all\":{\"type\":\"boolean\",\"default\":false,\"description\":\"If true, replace every occurrence; max_replacements is ignored.\"}},\"required\":[\"old_text\",\"new_text\"],\"additionalProperties\":false}"
+                    + ",\"old_text\":{\"type\":\"string\"},\"new_text\":{\"type\":\"string\"},\"max_replacements\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":%d,\"default\":1},\"replace_all\":{\"type\":\"boolean\",\"default\":false}},\"required\":[\"old_text\",\"new_text\"],\"additionalProperties\":false}"
                     .formatted(MAX_SUBSTRING_REPLACEMENTS);
 
     private static final String PATCH_LINES_SCHEMA =
             "{\"type\":\"object\",\"properties\":{"
                     + REQ_NODE_ID_PROP
-                    + ",\"start_line\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"First line to replace (1-based, inclusive).\"},\"end_line\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Last line to replace (1-based, inclusive).\"},\"content\":{\"type\":\"string\",\"description\":\"New text for that range; line breaks may be \\\\n or any Unicode line ending (split with Java \\\\R).\"}},\"required\":[\"start_line\",\"end_line\",\"content\"],\"additionalProperties\":false}";
+                    + ",\"start_line\":{\"type\":\"integer\",\"minimum\":1},\"end_line\":{\"type\":\"integer\",\"minimum\":1},\"content\":{\"type\":\"string\",\"description\":\"New lines; \\\\R linebreaks\"}},\"required\":[\"start_line\",\"end_line\",\"content\"],\"additionalProperties\":false}";
 
     private static final String SET_BODY_SCHEMA =
             "{\"type\":\"object\",\"properties\":{"
                     + REQ_NODE_ID_PROP
-                    + ",\"body_utf8\":{\"type\":\"string\",\"description\":\"Full new body as UTF-8 text.\"},\"body_base64\":{\"type\":\"string\",\"description\":\"Full new body as standard Base64 (mutually exclusive with body_utf8).\"}},\"additionalProperties\":false}";
+                    + ",\"body_utf8\":{\"type\":\"string\"},\"body_base64\":{\"type\":\"string\"}},\"additionalProperties\":false}";
 
     private static final int MAX_SEMANTIC_OPERATIONS = 32;
 
@@ -205,8 +205,8 @@ public final class HttpTargetTools {
                     + "\"properties\":{"
                     + "\"type\":{\"type\":\"string\",\"enum\":[\"header\",\"cookie\",\"json\",\"xml\",\"method\",\"url\"]},"
                     + "\"action\":{\"type\":\"string\",\"enum\":[\"set\",\"remove\"]},"
-                    + "\"key\":{\"type\":\"string\",\"description\":\"Header/cookie name; must be empty for method/url when set.\"},"
-                    + "\"path\":{\"type\":\"string\",\"description\":\"JSON Pointer (type json) or XPath 1.0 (type xml).\"},"
+                    + "\"key\":{\"type\":\"string\",\"description\":\"Header/cookie; empty for method|url set\"},"
+                    + "\"path\":{\"type\":\"string\",\"description\":\"JSON Pointer (json) or XPath (xml)\"},"
                     + "\"value\":{}"
                     + "},"
                     + "\"allOf\":"
@@ -228,81 +228,52 @@ public final class HttpTargetTools {
         return List.of(
                 new ChatToolDefinition(
                         GET_CURRENT_HTTP_TARGET,
-                        "Returns the current repeater HTTP target (what is configured for this tab right now): "
-                                + "scheme, host, port, SNI flag, method, full URL, and path, plus a send-history object "
-                                + "(current index, prev/next, entries with index/time/target label). "
-                                + "Optional `request_node_id` selects an open tab (from search_tabs); omit for the UI-selected tab. "
-                                + "Use read_http_message or search_http_message to inspect the raw request/response for a past send.",
+                        "Current tab: scheme, host, port, SNI, method, URL, path, send history. "
+                                + "Optional request_node_id (search_tabs). Raw wire: read_http_message / search_http_message.",
                         OPTIONAL_TAB_PARAMS_SCHEMA),
                 new ChatToolDefinition(
                         SEARCH_TABS,
-                        "Lists or searches open repeater tabs with pagination. Omit or blank `query` for all tabs (UI order). "
-                                + "With `query`, each tab matches if the live request method+URL matches (e.g. `POST /api/foo` or a "
-                                + "full https URL substring) **or** the tab title contains the query (case-insensitive). "
-                                + "Use returned `request_node_id` on other HTTP tools. Defaults: offset 0, page_size "
-                                + DEFAULT_TAB_PAGE_SIZE + " (max " + MAX_TAB_PAGE_SIZE + ").",
+                        "Paged open tabs. Empty query = all. Query matches live method+URL or title (CI). "
+                                + "Returns request_node_id. offset default 0; page_size default "
+                                + DEFAULT_TAB_PAGE_SIZE + " max " + MAX_TAB_PAGE_SIZE + ".",
                         SEARCH_TABS_SCHEMA),
                 new ChatToolDefinition(
                         READ_HTTP_MESSAGE,
-                        "Reads a byte range of the raw HTTP request or response for one history entry (start-line + "
-                                + "headers + CRLFCRLF + body, as serialized by the proxy). `side` selects request or response. "
-                                + "Defaults return the first 4096 bytes, usually enough for the start-line and all headers. "
-                                + "Returns `total_bytes`, `header_bytes` (first body byte; use it as `offset` on a follow-up "
-                                + "read), `has_more`, `next_offset`, and `text` (utf-8) or `base64` on binary slices. For "
-                                + "targeted values (a header, token in a body) prefer `search_http_message` to keep results small.",
+                        "Raw wire slice for one history entry (status-line, headers, body). side required. "
+                                + "Default first 1024B. Fields: total_bytes, header_bytes, has_more, next_offset, text|base64. "
+                                + "Needles: prefer search_http_message.",
                         READ_MESSAGE_SCHEMA),
                 new ChatToolDefinition(
                         SEARCH_HTTP_MESSAGE,
-                        "Regex search over the raw wire bytes of a request or response (same byte address space as "
-                                + "read_http_message). Returns up to `max_matches` matches (default 10, cap 100) with "
-                                + "absolute byte offsets, capture groups, and short `context_bytes` (default 64, cap 512) "
-                                + "on each side. `scope` restricts to headers, body, or the full message. Use Java regex "
-                                + "with inline flags: `(?i)` case-insensitive, `(?m)` ^ and $ per line, `(?s)` dot includes "
-                                + "newlines. Examples: `(?im)^Set-Cookie:\\\\s*(.+)$`, `name=\\\"csrf_token\\\"\\\\s+value=\\\""
-                                + "([^\\\"]+)\\\"`. Matching uses Latin-1 (byte offset equals char index); stick to ASCII "
-                                + "or byte patterns. Pattern length max 1024; the scan is limited to 1MB per call "
-                                + "(`scan_limited_bytes` when clipped); page with read_http_message past that.",
+                        "Regex on raw bytes (offsets align with read_http_message). max_matches 10 dflt /100 max; "
+                                + "context_bytes 64 dflt /512 max. scope headers|body|all. Java Pattern (?i)(?m)(?s). "
+                                + "Latin-1 indexing; pattern <=1024 chars; scan <=1MB (scan_limited_bytes when clipped).",
                         SEARCH_MESSAGE_SCHEMA),
                 new ChatToolDefinition(
                         REPLACE_IN_HTTP_REQUEST_BODY,
-                        "Replaces literal text in the **current** repeater request body only (live editor). "
-                                + "Body must be valid UTF-8; if not, use set_http_request_body with body_base64. "
-                                + "When max_replacements is 1 (default), old_text must match exactly once. "
-                                + "Use replace_all to change every occurrence.",
+                        "Literal find/replace in current request body (UTF-8). Non-UTF-8: set_http_request_body+base64. "
+                                + "Default max_replacements=1 needs single match; replace_all=all.",
                         REPLACE_BODY_SCHEMA),
                 new ChatToolDefinition(
                         PATCH_HTTP_REQUEST_BODY_LINES,
-                        "Replaces a 1-based inclusive range of **lines** in the **current** request body (UTF-8 text). "
-                                + "Lines are split with Unicode line breaks (Java \\R). Stored body is joined with \\n. "
-                                + "For non-text bodies use set_http_request_body.",
+                        "Replace 1-based inclusive line range in current body (UTF-8; Java \\R). Binary: set_http_request_body.",
                         PATCH_LINES_SCHEMA),
                 new ChatToolDefinition(
                         SET_HTTP_REQUEST_BODY,
-                        "Sets the **entire** body of the **current** repeater request. Provide either body_utf8 or "
-                                + "body_base64 (not both). bodyUtf8 / bodyBase64 are accepted as aliases. "
-                                + "body_utf8 may be a JSON string or a JSON object/array (serialized to compact JSON). "
-                                + "Use base64 for arbitrary bytes.",
+                        "Replace full current body. One of body_utf8|body_base64 (aliases bodyUtf8|bodyBase64). "
+                                + "Object/array body_utf8 serializes to compact JSON. Arbitrary bytes: base64.",
                         SET_BODY_SCHEMA),
                 new ChatToolDefinition(
                         APPLY_HTTP_REQUEST_SEMANTIC_CHANGES,
-                        "Applies a batch of typed changes to the **current** repeater request in one call. **Required:** "
-                                + "top-level `operations` (non-empty array). Each element has `type` (header|cookie|json|"
-                                + "xml|method|url) and `action` (set|remove), plus `key` and/or `path` and/or `value` as "
-                                + "required by that combination (see JSON Schema). Use `action: remove` to delete; use "
-                                + "`action: set` with `value: null` to store a **literal JSON null** in the body (json "
-                                + "type). `path` is a JSON Pointer (RFC 6901) for type json, or XPath 1.0 for type xml. "
-                                + "For method and url with `set`, `key` must be empty. Omit the `value` field entirely "
-                                + "on `remove` (when present, the call is rejected). If the body is not valid JSON or XML "
-                                + "for that operation, the error includes `op_index` and a hint to use read_http_message "
-                                + "or set_http_request_body. Minimal example: "
-                                + APPLY_HTTP_REQUEST_SEMANTIC_CHANGES_EXAMPLE_ARGS,
+                        "Batch edit current request. Required operations[] (non-empty). Per op: type header|cookie|json|"
+                                + "xml|method|url + action set|remove; fields per JSON Schema. remove: omit value. "
+                                + "json set value:null = literal null. path: RFC6901 (json) or XPath (xml). method|url set: "
+                                + "empty key. Bad body yields error op_index; fix via read/set body. Example in system prompt.",
                         APPLY_SEMANTIC_CHANGES_SCHEMA),
                 new ChatToolDefinition(
                         SEND_CURRENT_HTTP_REQUEST,
-                        "Sends the **current** repeater request (live editor, with target applied) and waits until the "
-                                + "response is received. Updates the response pane and send history like the Send button. "
-                                + "Returns only the HTTP status_code in the tool result (no body or headers). "
-                                + "Optional `request_node_id` selects which open tab to send from.",
+                        "Send current repeater request; wait for response. Updates UI/history. Result: status_code only. "
+                                + "Optional request_node_id.",
                         OPTIONAL_TAB_PARAMS_SCHEMA));
     }
 

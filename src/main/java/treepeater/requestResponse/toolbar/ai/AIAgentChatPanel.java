@@ -96,7 +96,6 @@ import com.formdev.flatlaf.FlatClientProperties;
 import burp.api.montoya.http.message.requests.HttpRequest;
 
 import treepeater.Treepeater;
-import treepeater.ai.AgentChatMessagesJsonLogger;
 import treepeater.ai.AgentChatSession;
 import treepeater.ai.AgentMode;
 import treepeater.ai.AgentSystemPrompt;

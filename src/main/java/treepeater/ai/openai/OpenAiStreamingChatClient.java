@@ -1,25 +1,12 @@
 package treepeater.ai.openai;
 
-import java.net.InetSocketAddress;
-import java.net.Proxy;
-import java.security.GeneralSecurityException;
-import java.security.SecureRandom;
-import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLSocketFactory;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -65,13 +52,6 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     /**
-     * TTFT diagnostics logger; off by default. Enable in code or via the JDK logging config to
-     * measure the impact of client reuse, prompt-cache routing, and per-round first-byte timing
-     * (e.g. {@code java.util.logging.Logger.getLogger("treepeater.ai.openai.tt").setLevel(Level.FINE)}).
-     */
-    private static final Logger TIMING = Logger.getLogger("treepeater.ai.openai.tt");
-
-    /**
      * Process-wide cache of {@link OpenAIClient} instances keyed on the fields that affect HTTP
      * client construction. Reusing the SDK client preserves the OkHttp connection pool and HTTP/2
      * session across user messages, so the TLS handshake to a forward proxy (e.g. Burp on
@@ -79,13 +59,6 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
      */
     private static final ConcurrentHashMap<ClientCacheKey, OpenAIClient> CLIENT_CACHE =
             new ConcurrentHashMap<>();
-
-    /**
-     * Lazily-built shared TLS artifacts for the trust-all configuration used when an HTTP proxy is
-     * present. All proxied configurations get the same trust-all socket factory, so this is a
-     * single global pair rather than per-config.
-     */
-    private static volatile TrustAllTls SHARED_TRUST_ALL_TLS;
 
     /** Wire-format type tags expected by the Responses API for assistant tool calls / their outputs. */
     private static final JsonValue TYPE_FUNCTION_CALL = JsonValue.from("function_call");
@@ -117,7 +90,7 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
             }
             ResponseCreateParams params =
                     buildParams(instructions, roundInput, tools, cacheKey, previousResponseId);
-            RoundResult rr = streamOneRound(client, params, session, round);
+            RoundResult rr = streamOneRound(client, params, session);
             previousResponseId = rr.responseId();
 
             ChatMessage assistant =
@@ -293,19 +266,14 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
     }
 
     private static RoundResult streamOneRound(
-            OpenAIClient client, ResponseCreateParams params, ChatStreamSession session, int round)
+            OpenAIClient client, ResponseCreateParams params, ChatStreamSession session)
             throws Exception {
-        boolean fineTiming = TIMING.isLoggable(Level.FINE);
-        long roundStartNs = fineTiming ? System.nanoTime() : 0L;
-        boolean firstChunkSeen = false;
-
         StringBuilder textOut = new StringBuilder();
         // Tool calls are referenced by SDK item id during streaming and finalized on outputItemDone.
         // Insertion order matters: ParallelToolExecution executes the calls in this exact order.
         Map<String, ResponsesToolStreamAccumulator> toolByItemId = new LinkedHashMap<>();
         Map<String, ResponsesToolStreamAccumulator> toolByCallId = new HashMap<>();
         String responseId = null;
-        boolean errored = false;
 
         try (StreamResponse<ResponseStreamEvent> stream = client.responses().createStreaming(params)) {
             Iterator<ResponseStreamEvent> it = stream.stream().iterator();
@@ -313,11 +281,6 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
                     && !session.isClosed()
                     && !Thread.currentThread().isInterrupted()) {
                 ResponseStreamEvent ev = it.next();
-                if (fineTiming && !firstChunkSeen) {
-                    firstChunkSeen = true;
-                    long ms = (System.nanoTime() - roundStartNs) / 1_000_000L;
-                    TIMING.fine("round=" + round + " first event after " + ms + "ms");
-                }
 
                 if (ev.isOutputTextDelta()) {
                     String d = ev.asOutputTextDelta().delta();
@@ -363,10 +326,6 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
                     break;
                 }
                 if (ev.isError() || ev.isFailed() || ev.isIncomplete()) {
-                    errored = true;
-                    if (TIMING.isLoggable(Level.FINE)) {
-                        TIMING.fine("round=" + round + " ended early: " + ev);
-                    }
                     break;
                 }
             }
@@ -384,20 +343,6 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
             toolCalls.add(new ChatToolCall(callId, name, args));
         }
 
-        if (fineTiming) {
-            long ms = (System.nanoTime() - roundStartNs) / 1_000_000L;
-            TIMING.fine(
-                    "round="
-                            + round
-                            + " complete in "
-                            + ms
-                            + "ms (toolCalls="
-                            + toolCalls.size()
-                            + ", contentChars="
-                            + textOut.length()
-                            + (errored ? ", errored" : "")
-                            + ")");
-        }
         return new RoundResult(textOut.toString(), toolCalls, responseId);
     }
 
@@ -527,27 +472,11 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
         ClientCacheKey key = ClientCacheKey.of(config);
         OpenAIClient cached = CLIENT_CACHE.get(key);
         if (cached != null) {
-            if (TIMING.isLoggable(Level.FINE)) {
-                TIMING.fine("OpenAIClient cache hit for endpoint=" + key.endpoint());
-            }
             return cached;
         }
-        long t0 = System.nanoTime();
         OpenAIClient built = buildClient(config);
         OpenAIClient prev = CLIENT_CACHE.putIfAbsent(key, built);
-        if (prev != null) {
-            return prev;
-        }
-        if (TIMING.isLoggable(Level.FINE)) {
-            long ms = (System.nanoTime() - t0) / 1_000_000L;
-            TIMING.fine(
-                    "OpenAIClient cache miss for endpoint="
-                            + key.endpoint()
-                            + " (built in "
-                            + ms
-                            + "ms; subsequent turns reuse this instance)");
-        }
-        return built;
+        return prev != null ? prev : built;
     }
 
     private static OpenAIClient buildClient(OpenAiClientConfig config) {
@@ -567,60 +496,7 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
                 .baseUrl(base)
                 .azureServiceVersion(AzureOpenAIServiceVersion.fromString("preview"))
                 .azureUrlPathMode(AzureUrlPathMode.UNIFIED);
-        config.httpProxy()
-                .ifPresent(
-                        addr -> {
-                            builder.proxy(new Proxy(Proxy.Type.HTTP, addr));
-                            applyTrustAllTls(builder);
-                        });
         return builder.build();
-    }
-
-    /**
-     * Accepts any server certificate so HTTPS through an intercepting HTTP proxy (e.g. Burp) works when
-     * the proxy presents a self-signed replacement cert. The {@link SSLContext} and derived
-     * {@link SSLSocketFactory} are built once per JVM and reused across all clients, so we do not pay
-     * {@code SSLContext.init} on every {@link #buildClient} call.
-     */
-    private static void applyTrustAllTls(OpenAIOkHttpClient.Builder builder) {
-        TrustAllTls tls = sharedTrustAllTls();
-        builder.sslSocketFactory(tls.socketFactory);
-        builder.trustManager(tls.trustManager);
-        builder.hostnameVerifier((hostname, session) -> true);
-    }
-
-    private static TrustAllTls sharedTrustAllTls() {
-        TrustAllTls local = SHARED_TRUST_ALL_TLS;
-        if (local != null) {
-            return local;
-        }
-        synchronized (OpenAiStreamingChatClient.class) {
-            if (SHARED_TRUST_ALL_TLS != null) {
-                return SHARED_TRUST_ALL_TLS;
-            }
-            try {
-                X509TrustManager tm =
-                        new X509TrustManager() {
-                            @Override
-                            public X509Certificate[] getAcceptedIssuers() {
-                                return new X509Certificate[0];
-                            }
-
-                            @Override
-                            public void checkClientTrusted(X509Certificate[] chain, String authType) {}
-
-                            @Override
-                            public void checkServerTrusted(X509Certificate[] chain, String authType) {}
-                        };
-                SSLContext ssl = SSLContext.getInstance("TLS");
-                ssl.init(null, new TrustManager[] {tm}, new SecureRandom());
-                SHARED_TRUST_ALL_TLS = new TrustAllTls(ssl.getSocketFactory(), tm);
-                return SHARED_TRUST_ALL_TLS;
-            } catch (GeneralSecurityException e) {
-                throw new IllegalStateException(
-                        "Could not relax TLS verification for HTTP proxy (self-signed MITM certs)", e);
-            }
-        }
     }
 
     private static String trimTrailingSlashes(String endpoint) {
@@ -661,26 +537,12 @@ public class OpenAiStreamingChatClient implements StreamingChatClient {
     private record RoundResult(String text, List<ChatToolCall> toolCalls, String responseId) {}
 
     /** Identity for {@link #CLIENT_CACHE}: anything that affects the underlying HTTP client. */
-    private record ClientCacheKey(String endpoint, String apiKey, String proxyHost, int proxyPort) {
+    private record ClientCacheKey(String endpoint, String apiKey) {
         static ClientCacheKey of(OpenAiClientConfig cfg) {
             String endpoint =
                     normalizeUnifiedAzureEndpoint(cfg.endpoint() != null ? cfg.endpoint() : "");
             String apiKey = cfg.apiKey() != null ? cfg.apiKey() : "";
-            Optional<InetSocketAddress> proxy = cfg.httpProxy();
-            String host = proxy.map(InetSocketAddress::getHostString).orElse("");
-            int port = proxy.map(InetSocketAddress::getPort).orElse(-1);
-            return new ClientCacheKey(endpoint, apiKey, host, port);
-        }
-    }
-
-    /** Lazily-built TLS artifacts for {@link #applyTrustAllTls}; immutable after construction. */
-    private static final class TrustAllTls {
-        final SSLSocketFactory socketFactory;
-        final X509TrustManager trustManager;
-
-        TrustAllTls(SSLSocketFactory socketFactory, X509TrustManager trustManager) {
-            this.socketFactory = socketFactory;
-            this.trustManager = trustManager;
+            return new ClientCacheKey(endpoint, apiKey);
         }
     }
 }

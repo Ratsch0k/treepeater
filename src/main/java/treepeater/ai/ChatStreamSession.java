@@ -17,10 +17,26 @@ public final class ChatStreamSession {
 
     private final Consumer<ChatStreamMessage> outbound;
     private final BlockingQueue<ChatStreamMessage> inbound = new LinkedBlockingQueue<>();
+    private final String conversationKey;
     private volatile boolean closed = false;
 
     public ChatStreamSession(Consumer<ChatStreamMessage> outbound) {
+        this(outbound, "");
+    }
+
+    /**
+     * @param conversationKey stable identifier shared by every {@link ChatStreamSession} of the same
+     *     UI conversation/tab, used by streaming clients as a routing hint for backend prompt-prefix
+     *     caches. Empty/blank disables the hint.
+     */
+    public ChatStreamSession(Consumer<ChatStreamMessage> outbound, String conversationKey) {
         this.outbound = outbound != null ? outbound : m -> {};
+        this.conversationKey = conversationKey != null ? conversationKey : "";
+    }
+
+    /** @see #ChatStreamSession(Consumer, String) */
+    public String conversationKey() {
+        return this.conversationKey;
     }
 
     /** Sends {@code m} to the UI. Safe to call from any thread; the consumer decides thread marshalling. */

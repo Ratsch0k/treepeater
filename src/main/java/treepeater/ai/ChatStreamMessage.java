@@ -2,13 +2,14 @@ package treepeater.ai;
 
 /**
  * Bidirectional stream item exchanged with a {@link StreamingChatClient} via a {@link ChatStreamSession}:
- * clients emit outbound variants ({@link AssistantDelta}, {@link ThinkingDelta}, {@link ToolApprovalRequest}) and may
- * wait for inbound
- * variants ({@link ToolApprovalResponse}) posted by the UI in reply.
+ * clients emit outbound variants ({@link AssistantDelta}, {@link ThinkingDelta}, {@link ToolCallStarted},
+ * {@link ToolApprovalRequest}) and may wait for inbound variants ({@link ToolApprovalResponse}) posted by
+ * the UI in reply.
  */
 public sealed interface ChatStreamMessage
         permits ChatStreamMessage.AssistantDelta,
                 ChatStreamMessage.ThinkingDelta,
+                ChatStreamMessage.ToolCallStarted,
                 ChatStreamMessage.ToolApprovalRequest,
                 ChatStreamMessage.ToolApprovalResponse {
 
@@ -23,6 +24,21 @@ public sealed interface ChatStreamMessage
     record ThinkingDelta(String text) implements ChatStreamMessage {
         public ThinkingDelta {
             text = text != null ? text : "";
+        }
+    }
+
+    /**
+     * Early signal that the assistant has begun assembling a tool call (the first chunk carrying the
+     * tool name has arrived). Emitted before arguments finish streaming so the UI can replace a generic
+     * "thinking" indicator with a concrete "calling tool: ..." cue while the round continues. The full
+     * {@link ToolApprovalRequest} (with arguments and human detail) is still emitted later, once the
+     * round ends and the executor begins; UIs should treat {@code ToolCallStarted} as informational
+     * progress only.
+     */
+    record ToolCallStarted(String toolCallId, String toolName) implements ChatStreamMessage {
+        public ToolCallStarted {
+            toolCallId = toolCallId != null ? toolCallId : "";
+            toolName = toolName != null ? toolName : "";
         }
     }
 

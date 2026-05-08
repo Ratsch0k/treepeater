@@ -17,7 +17,7 @@ import java.util.function.Consumer;
  * when the stream ends so trailing debounced flushes are not lost and the scheduler is released.
  */
 public final class CoalescingChatStreamOutbound implements Consumer<ChatStreamMessage> {
-    private static final int DEBOUNCE_MS = 25;
+    private static final int DEBOUNCE_MS = 10;
     private static final int MAX_BUFFER_CHARS = 2048;
 
     private final Consumer<ChatStreamMessage> delegate;

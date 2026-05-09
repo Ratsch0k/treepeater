@@ -209,6 +209,7 @@ class HttpTargetToolsTest {
         assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.GET_CURRENT_HTTP_TARGET));
         assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.READ_HTTP_MESSAGE));
         assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.SEARCH_HTTP_MESSAGE));
+        assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.BATCH_HTTP_TARGET_TOOLS));
     }
 
     @Test
@@ -276,7 +277,38 @@ class HttpTargetToolsTest {
 
     @Test
     void definitions_returnsAllBuiltInTools() {
-        assertEquals(9, HttpTargetTools.definitions().size());
+        assertEquals(10, HttpTargetTools.definitions().size());
+    }
+
+    @Test
+    void batch_http_target_tools_returnsOrderedResults() throws Exception {
+        HttpRequest request = req("GET", "https://example.com/path", "/path", List.of(), new byte[0]);
+        AgentToolContext ctx = singleEntryCtx(request, null);
+        String batch =
+                "{\"tools\":["
+                        + "{\"tool_name\":\"get_current_http_target\",\"arguments\":{}},"
+                        + "{\"tool_name\":\"read_http_message\",\"arguments\":{\"side\":\"request\",\"offset\":0,\"max_bytes\":64}}"
+                        + "]}";
+        JsonNode result =
+                parse(HttpTargetTools.execute(HttpTargetTools.BATCH_HTTP_TARGET_TOOLS, batch, ctx));
+        JsonNode results = result.get("results");
+        assertEquals(2, results.size());
+        assertEquals("get_current_http_target", results.get(0).get("tool_name").asText());
+        assertEquals("example.com", results.get(0).get("result").get("host").asText());
+        assertEquals("read_http_message", results.get(1).get("tool_name").asText());
+        assertTrue(results.get(1).get("result").has("total_bytes"));
+    }
+
+    @Test
+    void batch_http_target_tools_unknownInnerTool_surfacesInResult() throws Exception {
+        HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
+        AgentToolContext ctx = singleEntryCtx(request, null);
+        String batch =
+                "{\"tools\":[{\"tool_name\":\"not_a_real_tool\",\"arguments\":{}}]}";
+        JsonNode result =
+                parse(HttpTargetTools.execute(HttpTargetTools.BATCH_HTTP_TARGET_TOOLS, batch, ctx));
+        JsonNode row = result.get("results").get(0);
+        assertTrue(row.get("result").get("error").asText().contains("unknown tool"));
     }
 
     // ===== result cap =====

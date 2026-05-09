@@ -1,9 +1,11 @@
 package treepeater.ai;
 
 /**
- * Runs a tool by name with JSON arguments and returns a result string (typically JSON) for the model.
+ * Runs a tool and returns a result string (typically JSON) for the model. Implementations receive a
+ * {@link ChatToolInvokeContext} so nested tools can be executed with approval via {@link
+ * ChatToolInvokeContext#invokeChildWithApproval()}.
  */
 @FunctionalInterface
 public interface ChatToolExecutor {
-    String invoke(String toolName, String argumentsJson) throws Exception;
+    String invoke(ChatToolInvokeContext context) throws Exception;
 }

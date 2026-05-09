@@ -1059,7 +1059,9 @@ public final class AIAgentChatPanel extends JPanel {
             }
             removeAssistantWaitingIndicator(strip);
             flushMarkdownRender(strip);
-            if (strip.body == null) {
+            // Keep the strip when it only has streamed thinking (no AssistantDelta yet); otherwise the
+            // thinking block would vanish as soon as a tool runs with no intervening assistant text.
+            if (strip.body == null && strip.thinkingSection == null) {
                 removeAssistantStripRowFromTranscript(strip.root);
             }
             RoundedPanel toolCard =
@@ -1856,8 +1858,8 @@ public final class AIAgentChatPanel extends JPanel {
     }
 
     /**
-     * Drops a pending assistant row when a tool runs before any streamed text, so the tool card sits
-     * directly under the user message without an empty strip.
+     * Drops a pending assistant row when a tool runs before any streamed assistant text and there is no
+     * thinking block, so the tool card sits directly under the user message without an empty strip.
      */
     private void removeAssistantStripRowFromTranscript(JPanel root) {
         this.transcriptList.remove(this.transcriptBottomGlue);

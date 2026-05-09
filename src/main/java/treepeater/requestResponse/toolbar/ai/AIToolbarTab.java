@@ -102,7 +102,7 @@ public class AIToolbarTab implements AIChatHost {
             return ChatTooling.none();
         }
         AgentMode m = mode != null ? mode : AgentMode.ASK;
-        ChatToolExecutor exec = (name, argsJson) -> HttpTargetTools.execute(name, argsJson, this.agentBridge);
+        ChatToolExecutor exec = ctx -> HttpTargetTools.execute(ctx, this.agentBridge);
         return new ChatTooling(
                 HttpTargetTools.definitions(),
                 exec,

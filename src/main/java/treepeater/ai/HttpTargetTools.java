@@ -60,8 +60,9 @@ import burp.api.montoya.http.message.responses.HttpResponse;
 
 /**
  * Built-in tools: HTTP target summary, raw wire read ({@value #READ_HTTP_MESSAGE}), regex search
- * ({@value #SEARCH_HTTP_MESSAGE}), structured request edits ({@value #APPLY_HTTP_REQUEST_SEMANTIC_CHANGES}), other body
- * helpers, and send in Repeater.
+ * ({@value #SEARCH_HTTP_MESSAGE}), structured request edits ({@value #APPLY_HTTP_REQUEST_SEMANTIC_CHANGES}), tab listing
+ * ({@value #SEARCH_TABS}), ordered multi-step dispatch ({@value #BATCH_HTTP_TARGET_TOOLS}), other body helpers, and send in
+ * Repeater.
  */
 public final class HttpTargetTools {
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -102,6 +103,13 @@ public final class HttpTargetTools {
     public static final String APPLY_HTTP_REQUEST_SEMANTIC_CHANGES = "apply_http_request_semantic_changes";
 
     /**
+     * Runs multiple built-in HTTP/tab tools in order; each step uses normal approval rules. Arguments are {@code tools}:
+     * array of {@code {tool_name, arguments}} where {@code arguments} is a JSON object (omit or use {@code {}} for no
+     * parameters).
+     */
+    public static final String BATCH_HTTP_TARGET_TOOLS = "batch_http_target_tools";
+
+    /**
      * Transcript line for a tool: short {@code title} plus optional {@code detail} (what will change, key arguments).
      * {@code detail} is empty for read-only tools and for {@link #SET_HTTP_REQUEST_BODY} to avoid duplicating a large
      * body in the chat.
@@ -133,6 +141,8 @@ public final class HttpTargetTools {
 
     private static final int DEFAULT_TAB_PAGE_SIZE = 10;
     private static final int MAX_TAB_PAGE_SIZE = 50;
+
+    private static final int MAX_BATCH_HTTP_TARGET_TOOLS = 24;
 
     /** Max URL characters per row in {@link #SEARCH_TABS} results before truncation. */
     public static final int MAX_TAB_LIST_URL_CHARS = 512;
@@ -222,7 +232,21 @@ public final class HttpTargetTools {
                     + SEMANTIC_OPERATION_ITEM_SCHEMA
                     + "}},\"additionalProperties\":false}";
 
+    private static final String BATCH_HTTP_TARGET_TOOLS_SCHEMA =
+            "{\"type\":\"object\",\"required\":[\"tools\"],\"properties\":{\"tools\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":"
+                    + MAX_BATCH_HTTP_TARGET_TOOLS
+                    + ",\"items\":{\"type\":\"object\",\"required\":[\"tool_name\"],\"properties\":{\"tool_name\":{\"type\":\"string\",\"minLength\":1},\"arguments\":{\"type\":\"object\"}},\"additionalProperties\":false}}},\"additionalProperties\":false}";
+
     private HttpTargetTools() {}
+
+    /**
+     * Stable id for nested tool approval cards when a step runs inside {@link #BATCH_HTTP_TARGET_TOOLS}.
+     */
+    public static String syntheticBatchChildToolCallId(String parentToolCallId, int batchSlot) {
+        String base =
+                parentToolCallId != null && !parentToolCallId.isBlank() ? parentToolCallId.trim() : "tool";
+        return base + ":batch:" + batchSlot;
+    }
 
     public static List<ChatToolDefinition> definitions() {
         return List.of(
@@ -237,6 +261,15 @@ public final class HttpTargetTools {
                                 + "Returns request_node_id. offset default 0; page_size default "
                                 + DEFAULT_TAB_PAGE_SIZE + " max " + MAX_TAB_PAGE_SIZE + ".",
                         SEARCH_TABS_SCHEMA),
+                new ChatToolDefinition(
+                        BATCH_HTTP_TARGET_TOOLS,
+                        "Runs several built-in tools in fixed order in a single call; each tools[] entry is "
+                                + "tool_name plus an arguments object ({} if none); returns per-step results. "
+                                + "Strongly prefer this whenever your plan needs more than one tool on the same turn—"
+                                + "especially ordered flows such as changing the request, send_current_http_request, "
+                                + "then read_http_message with side \"response\". Steps run one after another; write/send "
+                                + "still need approval.",
+                        BATCH_HTTP_TARGET_TOOLS_SCHEMA),
                 new ChatToolDefinition(
                         READ_HTTP_MESSAGE,
                         "Raw wire slice for one history entry (status-line, headers, body). side required. "
@@ -285,7 +318,11 @@ public final class HttpTargetTools {
             return null;
         }
         return switch (toolName) {
-            case GET_CURRENT_HTTP_TARGET, READ_HTTP_MESSAGE, SEARCH_HTTP_MESSAGE, SEARCH_TABS -> ToolActionLevel.READ_ONLY;
+            case GET_CURRENT_HTTP_TARGET,
+                    READ_HTTP_MESSAGE,
+                    SEARCH_HTTP_MESSAGE,
+                    SEARCH_TABS,
+                    BATCH_HTTP_TARGET_TOOLS -> ToolActionLevel.READ_ONLY;
             case REPLACE_IN_HTTP_REQUEST_BODY,
                     PATCH_HTTP_REQUEST_BODY_LINES,
                     SET_HTTP_REQUEST_BODY,
@@ -324,9 +361,20 @@ public final class HttpTargetTools {
      * Dispatches built-in tools; resolves {@link AgentToolContext} per optional {@code request_node_id} on the bridge.
      */
     public static String execute(String toolName, String argumentsJson, RepeaterTabAgentBridge bridge) {
+        return execute(new ChatToolInvokeContext(toolName, argumentsJson, null), bridge);
+    }
+
+    /**
+     * Same as {@link #execute(String, String, RepeaterTabAgentBridge)} with nested-tool support for {@link
+     * #BATCH_HTTP_TARGET_TOOLS}.
+     */
+    public static String execute(ChatToolInvokeContext invokeCtx, RepeaterTabAgentBridge bridge) {
         if (bridge == null) {
             return errorJson("no bridge");
         }
+        String toolName = invokeCtx.toolName();
+        String argumentsJson = invokeCtx.argumentsJson();
+        NestedToolInvoker nested = invokeCtx.invokeChildWithApproval();
         JsonNode args;
         try {
             args = parseArgs(argumentsJson);
@@ -336,6 +384,13 @@ public final class HttpTargetTools {
         if (SEARCH_TABS.equals(toolName)) {
             try {
                 return capResult(searchTabs(bridge, args));
+            } catch (Exception e) {
+                return errorJson(e.getMessage() != null ? e.getMessage() : "tool error");
+            }
+        }
+        if (BATCH_HTTP_TARGET_TOOLS.equals(toolName)) {
+            try {
+                return capResult(batchHttpTargetTools(args, bridge, nested));
             } catch (Exception e) {
                 return errorJson(e.getMessage() != null ? e.getMessage() : "tool error");
             }
@@ -364,6 +419,76 @@ public final class HttpTargetTools {
         return capResult(result);
     }
 
+    private static String batchHttpTargetTools(JsonNode args, RepeaterTabAgentBridge bridge, NestedToolInvoker nested)
+            throws Exception {
+        JsonNode toolsNode = args.get("tools");
+        if (toolsNode == null || !toolsNode.isArray()) {
+            return errorJson("tools array required");
+        }
+        int n = toolsNode.size();
+        if (n == 0 || n > MAX_BATCH_HTTP_TARGET_TOOLS) {
+            return errorJson("tools must have 1.." + MAX_BATCH_HTTP_TARGET_TOOLS + " entries");
+        }
+        ArrayNode out = JSON.createArrayNode();
+        for (int i = 0; i < n; i++) {
+            JsonNode item = toolsNode.get(i);
+            ObjectNode row = JSON.createObjectNode();
+            row.put("index", i);
+            if (item == null || !item.isObject()) {
+                row.put("error", "step must be an object");
+                out.add(row);
+                continue;
+            }
+            JsonNode nameNode = argFirst(item, "tool_name", "toolName", "name");
+            String innerName =
+                    nameNode != null && nameNode.isTextual() ? nameNode.asText().trim() : "";
+            row.put("tool_name", innerName);
+            if (innerName.isEmpty()) {
+                row.put("error", "tool_name required");
+                out.add(row);
+                continue;
+            }
+            JsonNode argObj = argFirst(item, "arguments", "tool_arguments", "toolArguments");
+            if (argObj == null || argObj.isNull()) {
+                argObj = JSON.createObjectNode();
+            } else if (!argObj.isObject()) {
+                row.put("error", "arguments must be a JSON object");
+                out.add(row);
+                continue;
+            }
+            String innerArgs = JSON.writeValueAsString(argObj);
+            String innerResult;
+            try {
+                innerResult =
+                        nested != null
+                                ? nested.invoke(innerName, innerArgs)
+                                : execute(innerName, innerArgs, bridge);
+            } catch (Exception e) {
+                row.put("error", e.getMessage() != null ? e.getMessage() : "tool error");
+                out.add(row);
+                continue;
+            }
+            row.set("result", parseToolResultJson(innerResult));
+            out.add(row);
+        }
+        ObjectNode wrap = JSON.createObjectNode();
+        wrap.set("results", out);
+        return JSON.writeValueAsString(wrap);
+    }
+
+    private static JsonNode parseToolResultJson(String raw) {
+        if (raw == null) {
+            return JSON.nullNode();
+        }
+        try {
+            return JSON.readTree(raw);
+        } catch (Exception e) {
+            ObjectNode o = JSON.createObjectNode();
+            o.put("raw_text", raw);
+            return o;
+        }
+    }
+
     /**
      * Same as {@link #execute(String, String, RepeaterTabAgentBridge)} with a fixed context (tests; {@link #SEARCH_TABS} unsupported).
      */
@@ -375,7 +500,7 @@ public final class HttpTargetTools {
      * History index for tool transcript labels when the tool targets a specific tab via {@code request_node_id}.
      */
     public static int viewerHistoryIndexForToolCard(String toolName, String argumentsJson, RepeaterTabAgentBridge bridge) {
-        if (bridge == null || SEARCH_TABS.equals(toolName)) {
+        if (bridge == null || SEARCH_TABS.equals(toolName) || BATCH_HTTP_TARGET_TOOLS.equals(toolName)) {
             return Integer.MIN_VALUE;
         }
         try {
@@ -2174,6 +2299,12 @@ public final class HttpTargetTools {
                 String q = argTextAny(args, "query", "q", "search");
                 String det = q.isEmpty() ? "all tabs" : quotedSnippet(q, 80);
                 yield new HumanToolUsage("Search repeater tabs · offset " + off + ", page " + ps, det);
+            }
+            case BATCH_HTTP_TARGET_TOOLS -> {
+                JsonNode toolsNode = argFirst(args, "tools");
+                int steps =
+                        toolsNode != null && toolsNode.isArray() ? toolsNode.size() : 0;
+                yield new HumanToolUsage("Run batched tools · " + steps + " step(s)", "");
             }
             default -> new HumanToolUsage("Working…" + nodeSuf, "");
         };

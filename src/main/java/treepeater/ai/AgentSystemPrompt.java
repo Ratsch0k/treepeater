@@ -21,7 +21,8 @@ public final class AgentSystemPrompt {
                     + HttpTargetTools.BATCH_HTTP_TARGET_TOOLS
                     + " in one turn: mutate, send_current_http_request, read_http_message side response.\n"
                     + "Multiple Repeater tabs: search_tabs yields request_node_id; pass it on other HTTP tools or omit "
-                    + "for the UI-selected tab.\n"
+                    + "for the UI-selected tab. copy_treepeater_node duplicates a node by id when the user wants a copy "
+                    + "or when building multi-step flows from a baseline.\n"
                     + "apply_http_request_semantic_changes must include a non-empty operations array (see tool schema). "
                     + "Example: "
                     + HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES_EXAMPLE_ARGS + "\n"

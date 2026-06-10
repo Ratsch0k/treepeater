@@ -481,6 +481,11 @@ public class RequestResponsePanel extends JPanel {
         return this.requestEditor != null ? this.requestEditor.getRequest() : null;
     }
 
+    /** Live editor response (may differ from the node's stored response). */
+    public HttpResponse getLiveResponseFromEditor() {
+        return this.responseEditor != null ? this.responseEditor.getResponse() : null;
+    }
+
     /** Repeater tree node id for this tab (AI tools / labels). */
     public int getRequestNodeId() {
         return this.node.getId();

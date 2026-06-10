@@ -201,11 +201,45 @@ public class TreepeaterModel implements TreepeaterNodeListener {
     }
 
     /**
+     * Where to insert a copied sibling under the source node's parent.
+     */
+    public enum SiblingCopyPlacement {
+        /** Immediately after the source node (default). */
+        AFTER_SOURCE,
+        /** First child of the parent. */
+        PARENT_TOP,
+        /** Last child of the parent. */
+        PARENT_BOTTOM
+    }
+
+    /**
      * Inserts a new node immediately after {@code source} under the same parent, using the given
      * request/response (typically the editor snapshot). Returns the new node, or {@code null} if
      * {@code source} has no parent (e.g. implicit root).
      */
     public RequestTreeNode copyAsSiblingUnderSameParent(RequestTreeNode source, HttpRequest request, HttpResponse response) {
+        return copyAsSiblingUnderSameParent(source, request, response, null, SiblingCopyPlacement.AFTER_SOURCE);
+    }
+
+    /**
+     * Same as {@link #copyAsSiblingUnderSameParent(RequestTreeNode, HttpRequest, HttpResponse)} but uses
+     * {@code nameOrNull} when non-blank; otherwise appends {@code " (copy)"} to the source name.
+     */
+    public RequestTreeNode copyAsSiblingUnderSameParent(
+            RequestTreeNode source, HttpRequest request, HttpResponse response, String nameOrNull) {
+        return copyAsSiblingUnderSameParent(source, request, response, nameOrNull, SiblingCopyPlacement.AFTER_SOURCE);
+    }
+
+    /**
+     * Same as {@link #copyAsSiblingUnderSameParent(RequestTreeNode, HttpRequest, HttpResponse, String)} with
+     * control over sibling insertion position under the parent.
+     */
+    public RequestTreeNode copyAsSiblingUnderSameParent(
+            RequestTreeNode source,
+            HttpRequest request,
+            HttpResponse response,
+            String nameOrNull,
+            SiblingCopyPlacement placement) {
         TreeNode parentRaw = source.getParent();
         if (!(parentRaw instanceof TreepeaterNode parent)) {
             return null;
@@ -213,8 +247,13 @@ public class TreepeaterModel implements TreepeaterNodeListener {
 
         this.requestCount += 1;
 
-        String baseName = source.getName();
-        String copyName = baseName.endsWith(" (copy)") ? baseName : baseName + " (copy)";
+        String copyName;
+        if (nameOrNull != null && !nameOrNull.trim().isEmpty()) {
+            copyName = nameOrNull.trim();
+        } else {
+            String baseName = source.getName();
+            copyName = baseName.endsWith(" (copy)") ? baseName : baseName + " (copy)";
+        }
 
         RequestHistory history = new RequestHistory();
         history.addEntry(request.httpService().host(), request, response);
@@ -229,7 +268,14 @@ public class TreepeaterModel implements TreepeaterNodeListener {
                         history);
         copy.addListener(this);
 
-        int insertIndex = parent.getIndex(source) + 1;
+        SiblingCopyPlacement where =
+                placement != null ? placement : SiblingCopyPlacement.AFTER_SOURCE;
+        int insertIndex =
+                switch (where) {
+                    case AFTER_SOURCE -> parent.getIndex(source) + 1;
+                    case PARENT_TOP -> 0;
+                    case PARENT_BOTTOM -> parent.getChildCount();
+                };
         this.tree.insertNodeInto(copy, parent, insertIndex);
         Treepeater.saveState();
         return copy;

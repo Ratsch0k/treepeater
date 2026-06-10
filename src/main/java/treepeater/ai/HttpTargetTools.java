@@ -58,10 +58,12 @@ import burp.api.montoya.http.message.HttpHeader;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 
+import treepeater.TreepeaterModel.SiblingCopyPlacement;
+
 /**
  * Built-in tools: HTTP target summary, raw wire read ({@value #READ_HTTP_MESSAGE}), regex search
  * ({@value #SEARCH_HTTP_MESSAGE}), structured request edits ({@value #APPLY_HTTP_REQUEST_SEMANTIC_CHANGES}), tab listing
- * ({@value #SEARCH_TABS}), ordered multi-step dispatch ({@value #BATCH_HTTP_TARGET_TOOLS}), other body helpers, and send in
+ * ({@value #SEARCH_TABS}), duplicate tree nodes ({@value #COPY_TREEPEATER_NODE}), ordered multi-step dispatch ({@value #BATCH_HTTP_TARGET_TOOLS}), other body helpers, and send in
  * Repeater.
  */
 public final class HttpTargetTools {
@@ -94,6 +96,9 @@ public final class HttpTargetTools {
 
     /** Paginated list or search of open repeater tabs (live method/URL and title). */
     public static final String SEARCH_TABS = "search_tabs";
+
+    /** Duplicate a request tree node as a new sibling tab with a given name; returns the new request_node_id. */
+    public static final String COPY_TREEPEATER_NODE = "copy_treepeater_node";
 
     /**
      * Batch semantic mutations on the current request (headers, cookies, JSON Pointer, XPath, method, URL). Use
@@ -169,6 +174,15 @@ public final class HttpTargetTools {
                     + ",\"default\":"
                     + DEFAULT_TAB_PAGE_SIZE
                     + "},\"query\":{\"type\":\"string\",\"description\":\"Filter method/URL or title; CI\"}},\"additionalProperties\":false}";
+
+    private static final String COPY_TREEPEATER_NODE_SCHEMA =
+            "{\"type\":\"object\",\"properties\":{\"request_node_id\":{\"type\":\"integer\",\"minimum\":1,"
+                    + "\"description\":\"Request tree node id to copy (from search_tabs or a prior copy).\"},"
+                    + "\"name\":{\"type\":\"string\",\"description\":\"Name for the new node/tab.\"},"
+                    + "\"placement\":{\"type\":\"string\",\"enum\":[\"after\",\"top\",\"bottom\"],\"default\":\"after\","
+                    + "\"description\":\"Sibling position under the source parent: after=immediately after source, "
+                    + "top=first child, bottom=last child.\"}},"
+                    + "\"required\":[\"request_node_id\",\"name\"],\"additionalProperties\":false}";
 
     private static final int MAX_SUBSTRING_REPLACEMENTS = 100_000;
 
@@ -262,6 +276,13 @@ public final class HttpTargetTools {
                                 + DEFAULT_TAB_PAGE_SIZE + " max " + MAX_TAB_PAGE_SIZE + ".",
                         SEARCH_TABS_SCHEMA),
                 new ChatToolDefinition(
+                        COPY_TREEPEATER_NODE,
+                        "Duplicate a request tree node as a new sibling tab with the given name. Returns "
+                                + "request_node_id for the copy. Use when the user wants a copy, or in multi-step "
+                                + "processes to create separate steps from a baseline node. request_node_id is any "
+                                + "request node id (from search_tabs or a prior copy).",
+                        COPY_TREEPEATER_NODE_SCHEMA),
+                new ChatToolDefinition(
                         BATCH_HTTP_TARGET_TOOLS,
                         "Runs several built-in tools in fixed order in a single call; each tools[] entry is "
                                 + "tool_name plus an arguments object ({} if none); returns per-step results. "
@@ -326,7 +347,8 @@ public final class HttpTargetTools {
             case REPLACE_IN_HTTP_REQUEST_BODY,
                     PATCH_HTTP_REQUEST_BODY_LINES,
                     SET_HTTP_REQUEST_BODY,
-                    APPLY_HTTP_REQUEST_SEMANTIC_CHANGES -> ToolActionLevel.WRITE;
+                    APPLY_HTTP_REQUEST_SEMANTIC_CHANGES,
+                    COPY_TREEPEATER_NODE -> ToolActionLevel.WRITE;
             case SEND_CURRENT_HTTP_REQUEST -> ToolActionLevel.EXECUTE;
             default -> null;
         };
@@ -391,6 +413,13 @@ public final class HttpTargetTools {
         if (BATCH_HTTP_TARGET_TOOLS.equals(toolName)) {
             try {
                 return capResult(batchHttpTargetTools(args, bridge, nested));
+            } catch (Exception e) {
+                return errorJson(e.getMessage() != null ? e.getMessage() : "tool error");
+            }
+        }
+        if (COPY_TREEPEATER_NODE.equals(toolName)) {
+            try {
+                return capResult(copyTreepeaterNode(bridge, args));
             } catch (Exception e) {
                 return errorJson(e.getMessage() != null ? e.getMessage() : "tool error");
             }
@@ -500,7 +529,10 @@ public final class HttpTargetTools {
      * History index for tool transcript labels when the tool targets a specific tab via {@code request_node_id}.
      */
     public static int viewerHistoryIndexForToolCard(String toolName, String argumentsJson, RepeaterTabAgentBridge bridge) {
-        if (bridge == null || SEARCH_TABS.equals(toolName) || BATCH_HTTP_TARGET_TOOLS.equals(toolName)) {
+        if (bridge == null
+                || SEARCH_TABS.equals(toolName)
+                || BATCH_HTTP_TARGET_TOOLS.equals(toolName)
+                || COPY_TREEPEATER_NODE.equals(toolName)) {
             return Integer.MIN_VALUE;
         }
         try {
@@ -555,6 +587,43 @@ public final class HttpTargetTools {
             query = null;
         }
         return bridge.searchTabs(offset, pageSize, query);
+    }
+
+    private static String copyTreepeaterNode(RepeaterTabAgentBridge bridge, JsonNode args) {
+        OptionalInt sourceId = parseRequestNodeId(args);
+        if (sourceId.isEmpty()) {
+            return errorJson("request_node_id required");
+        }
+        String name = argTextAny(args, "name");
+        if (name.isEmpty()) {
+            return errorJson("name required");
+        }
+        SiblingCopyPlacement placement = parseCopySiblingPlacement(args);
+        if (placement == null) {
+            return errorJson("placement must be after, top, or bottom");
+        }
+        return bridge.copyTreepeaterNode(sourceId.getAsInt(), name, placement);
+    }
+
+    private static SiblingCopyPlacement parseCopySiblingPlacement(JsonNode args) {
+        String raw = argTextAny(args, "placement");
+        if (raw.isEmpty()) {
+            return SiblingCopyPlacement.AFTER_SOURCE;
+        }
+        return switch (raw.toLowerCase(Locale.ROOT)) {
+            case "after" -> SiblingCopyPlacement.AFTER_SOURCE;
+            case "top" -> SiblingCopyPlacement.PARENT_TOP;
+            case "bottom" -> SiblingCopyPlacement.PARENT_BOTTOM;
+            default -> null;
+        };
+    }
+
+    /** JSON body for {@link RepeaterTabAgentBridge#copyTreepeaterNode(int, String)}. */
+    public static String formatCopyTreepeaterNodeResponse(int requestNodeId, String name) {
+        ObjectNode root = JSON.createObjectNode();
+        root.put("request_node_id", requestNodeId);
+        root.put("name", name != null ? name : "");
+        return write(root);
     }
 
     /** JSON body for {@link RepeaterTabAgentBridge#searchTabs(int, int, String)}. */
@@ -2299,6 +2368,23 @@ public final class HttpTargetTools {
                 String q = argTextAny(args, "query", "q", "search");
                 String det = q.isEmpty() ? "all tabs" : quotedSnippet(q, 80);
                 yield new HumanToolUsage("Search repeater tabs · offset " + off + ", page " + ps, det);
+            }
+            case COPY_TREEPEATER_NODE -> {
+                JsonNode idN = argFirst(args, "request_node_id", "requestNodeId");
+                int srcId = idN != null && idN.isNumber() ? idN.intValue() : 0;
+                String newName = argTextAny(args, "name");
+                String placement = argTextAny(args, "placement");
+                StringBuilder det = new StringBuilder();
+                if (!newName.isEmpty()) {
+                    det.append(quotedSnippet(newName, 80));
+                }
+                if (!placement.isEmpty()) {
+                    if (!det.isEmpty()) {
+                        det.append(" · ");
+                    }
+                    det.append("placement ").append(placement);
+                }
+                yield new HumanToolUsage("Copy treepeater node · node id " + srcId, det.toString());
             }
             case BATCH_HTTP_TARGET_TOOLS -> {
                 JsonNode toolsNode = argFirst(args, "tools");

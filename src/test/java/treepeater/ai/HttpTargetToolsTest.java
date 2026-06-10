@@ -27,6 +27,8 @@ import burp.api.montoya.http.message.HttpHeader;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 
+import treepeater.TreepeaterModel.SiblingCopyPlacement;
+
 class HttpTargetToolsTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -218,6 +220,7 @@ class HttpTargetToolsTest {
         assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.PATCH_HTTP_REQUEST_BODY_LINES));
         assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.SET_HTTP_REQUEST_BODY));
         assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES));
+        assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.COPY_TREEPEATER_NODE));
     }
 
     @Test
@@ -277,7 +280,10 @@ class HttpTargetToolsTest {
 
     @Test
     void definitions_returnsAllBuiltInTools() {
-        assertEquals(10, HttpTargetTools.definitions().size());
+        assertEquals(11, HttpTargetTools.definitions().size());
+        assertTrue(
+                HttpTargetTools.definitions().stream()
+                        .anyMatch(d -> HttpTargetTools.COPY_TREEPEATER_NODE.equals(d.name())));
     }
 
     @Test
@@ -1405,6 +1411,157 @@ class HttpTargetToolsTest {
         assertTrue(r.get("has_more").asBoolean());
         assertEquals(1, r.get("next_offset").asInt());
         assertEquals(7, r.get("tabs").get(0).get("request_node_id").asInt());
+    }
+
+    @Test
+    void copy_treepeater_node_invokesBridge() throws Exception {
+        RepeaterTabAgentBridge bridge =
+                new RepeaterTabAgentBridge() {
+                    @Override
+                    public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
+                        return null;
+                    }
+
+                    @Override
+                    public String searchTabs(int offset, int pageSize, String queryOrNull) {
+                        return "{}";
+                    }
+
+                    @Override
+                    public String copyTreepeaterNode(
+                            int sourceRequestNodeId, String name, SiblingCopyPlacement placement) {
+                        assertEquals(5, sourceRequestNodeId);
+                        assertEquals("Variant A", name);
+                        assertEquals(SiblingCopyPlacement.AFTER_SOURCE, placement);
+                        return HttpTargetTools.formatCopyTreepeaterNodeResponse(42, name);
+                    }
+                };
+        JsonNode r =
+                parse(
+                        HttpTargetTools.execute(
+                                HttpTargetTools.COPY_TREEPEATER_NODE,
+                                "{\"request_node_id\":5,\"name\":\"Variant A\"}",
+                                bridge));
+        assertEquals(42, r.get("request_node_id").asInt());
+        assertEquals("Variant A", r.get("name").asText());
+    }
+
+    @Test
+    void copy_treepeater_node_requiresRequestNodeId() throws Exception {
+        RepeaterTabAgentBridge bridge =
+                new RepeaterTabAgentBridge() {
+                    @Override
+                    public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
+                        return null;
+                    }
+
+                    @Override
+                    public String searchTabs(int offset, int pageSize, String queryOrNull) {
+                        return "{}";
+                    }
+                };
+        JsonNode r =
+                parse(
+                        HttpTargetTools.execute(
+                                HttpTargetTools.COPY_TREEPEATER_NODE, "{\"name\":\"x\"}", bridge));
+        assertEquals("request_node_id required", r.get("error").asText());
+    }
+
+    @Test
+    void copy_treepeater_node_requiresName() throws Exception {
+        RepeaterTabAgentBridge bridge =
+                new RepeaterTabAgentBridge() {
+                    @Override
+                    public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
+                        return null;
+                    }
+
+                    @Override
+                    public String searchTabs(int offset, int pageSize, String queryOrNull) {
+                        return "{}";
+                    }
+                };
+        JsonNode r =
+                parse(
+                        HttpTargetTools.execute(
+                                HttpTargetTools.COPY_TREEPEATER_NODE, "{\"request_node_id\":5}", bridge));
+        assertEquals("name required", r.get("error").asText());
+    }
+
+    @Test
+    void copy_treepeater_node_blankNameRejected() throws Exception {
+        RepeaterTabAgentBridge bridge =
+                new RepeaterTabAgentBridge() {
+                    @Override
+                    public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
+                        return null;
+                    }
+
+                    @Override
+                    public String searchTabs(int offset, int pageSize, String queryOrNull) {
+                        return "{}";
+                    }
+                };
+        JsonNode r =
+                parse(
+                        HttpTargetTools.execute(
+                                HttpTargetTools.COPY_TREEPEATER_NODE,
+                                "{\"request_node_id\":5,\"name\":\"   \"}",
+                                bridge));
+        assertEquals("name required", r.get("error").asText());
+    }
+
+    @Test
+    void copy_treepeater_node_forwardsPlacement() throws Exception {
+        RepeaterTabAgentBridge bridge =
+                new RepeaterTabAgentBridge() {
+                    @Override
+                    public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
+                        return null;
+                    }
+
+                    @Override
+                    public String searchTabs(int offset, int pageSize, String queryOrNull) {
+                        return "{}";
+                    }
+
+                    @Override
+                    public String copyTreepeaterNode(
+                            int sourceRequestNodeId, String name, SiblingCopyPlacement placement) {
+                        assertEquals(SiblingCopyPlacement.PARENT_BOTTOM, placement);
+                        return HttpTargetTools.formatCopyTreepeaterNodeResponse(99, name);
+                    }
+                };
+        JsonNode r =
+                parse(
+                        HttpTargetTools.execute(
+                                HttpTargetTools.COPY_TREEPEATER_NODE,
+                                "{\"request_node_id\":5,\"name\":\"x\",\"placement\":\"bottom\"}",
+                                bridge));
+        assertEquals(99, r.get("request_node_id").asInt());
+    }
+
+    @Test
+    void copy_treepeater_node_rejectsInvalidPlacement() throws Exception {
+        RepeaterTabAgentBridge bridge =
+                new RepeaterTabAgentBridge() {
+                    @Override
+                    public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
+                        return null;
+                    }
+
+                    @Override
+                    public String searchTabs(int offset, int pageSize, String queryOrNull) {
+                        return "{}";
+                    }
+                };
+        JsonNode r =
+                parse(
+                        HttpTargetTools.execute(
+                                HttpTargetTools.COPY_TREEPEATER_NODE,
+                                "{\"request_node_id\":5,\"name\":\"x\",\"placement\":\"middle\"}",
+                                bridge));
+        assertEquals("placement must be after, top, or bottom", r.get("error").asText());
     }
 
     @Test

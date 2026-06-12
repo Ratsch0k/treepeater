@@ -95,6 +95,7 @@ import com.formdev.flatlaf.FlatClientProperties;
 import burp.api.montoya.http.message.requests.HttpRequest;
 
 import treepeater.Treepeater;
+import treepeater.Utilities;
 import treepeater.ai.AgentChatSession;
 import treepeater.ai.AgentMode;
 import treepeater.ai.AgentSystemPrompt;
@@ -2062,8 +2063,8 @@ public final class AIAgentChatPanel extends JPanel {
                             HttpTargetTools.tryPreviewRequestMutation(
                                     req.toolName(), req.argumentsJson(), beforeR);
                     if (afterR != null) {
-                        String wBefore = HttpTargetTools.requestWireTextForDiff(beforeR);
-                        String wAfter = HttpTargetTools.requestWireTextForDiff(afterR);
+                        String wBefore = Utilities.decodeWireBytesToDisplayString(beforeR.toByteArray());
+                        String wAfter = Utilities.decodeWireBytesToDisplayString(afterR.toByteArray());
                         List<LineDiffer.UnifiedLineRow> unified = LineDiffer.unifiedLineDiffData(wBefore, wAfter);
                         if (unified == null) {
                             LineDiffer.LineDiffData data = LineDiffer.lineDiffData(wBefore, wAfter);

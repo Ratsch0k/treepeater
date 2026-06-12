@@ -16,9 +16,11 @@ import javax.swing.UIManager;
 import treepeater.ai.RepeaterTabAgentBridge;
 import treepeater.Treepeater;
 import treepeater.TreepeaterModel;
+import treepeater.Utilities;
 import treepeater.icons.DoubleArrowLeftIcon;
 import treepeater.requestResponse.RequestResponsePanelUi;
 import treepeater.requestResponse.toolbar.ai.AIToolbarTab;
+import treepeater.requestResponse.toolbar.diff.CompareToolbarTab;
 
 /**
  * Narrow vertical strip of actions to the right of the request/response editors.
@@ -27,6 +29,7 @@ public class RequestResponseToolbar extends JPanel {
     private final InfoToolbarTab infoToolbarTab;
     private final NotesToolbarTab notesToolbarTab;
     private final AIToolbarTab magicToolbarTab;
+    private final CompareToolbarTab compareToolbarTab;
 
     private final JButton expandButton;
 
@@ -41,13 +44,14 @@ public class RequestResponseToolbar extends JPanel {
         super(new BorderLayout());
         setBorder(
                 BorderFactory.createCompoundBorder(
-                        BorderFactory.createMatteBorder(0, 1, 0, 0, RequestResponsePanelUi.uiBorderColor()),
+                        BorderFactory.createMatteBorder(0, 1, 0, 0, Utilities.uiBorderColor()),
                         BorderFactory.createEmptyBorder(8, 6, 8, 6)));
 
 
         this.infoToolbarTab = new InfoToolbarTab();
         this.notesToolbarTab = new NotesToolbarTab(model);
         this.magicToolbarTab = new AIToolbarTab(model, agentBridge);
+        this.compareToolbarTab = new CompareToolbarTab(model);
 
         this.toolbarCardLayout = new CardLayout();
         this.toolbarPanel = new JPanel(this.toolbarCardLayout);
@@ -55,6 +59,7 @@ public class RequestResponseToolbar extends JPanel {
         this.toolbarPanel.add(this.infoToolbarTab.getContent(), "info");
         this.toolbarPanel.add(this.notesToolbarTab.getContent(), "notes");
         this.toolbarPanel.add(this.magicToolbarTab.getContent(), "magic");
+        this.toolbarPanel.add(this.compareToolbarTab.getContent(), "compare");
 
         this.infoToolbarTab.getButton().addActionListener(e -> {
             if (!this.toolbarOpen) {
@@ -76,6 +81,14 @@ public class RequestResponseToolbar extends JPanel {
             } else {
                 this.toolbarCardLayout.show(this.toolbarPanel, "magic");
             }
+        });
+        this.compareToolbarTab.getButton().addActionListener(e -> {
+            if (!this.toolbarOpen) {
+                openToolbarToCard("compare");
+            } else {
+                this.toolbarCardLayout.show(this.toolbarPanel, "compare");
+            }
+            this.compareToolbarTab.refreshNodeList();
         });
 
         this.expandButton = new JButton(new DoubleArrowLeftIcon().withSize(24, 24).withColor(UIManager.getColor("Label.foreground")));
@@ -103,6 +116,8 @@ public class RequestResponseToolbar extends JPanel {
         column.add(this.notesToolbarTab.getButton());
         column.add(Box.createVerticalStrut(6));
         column.add(this.magicToolbarTab.getButton());
+        column.add(Box.createVerticalStrut(6));
+        column.add(this.compareToolbarTab.getButton());
         add(column, BorderLayout.NORTH);
 
         if (Treepeater.api != null) {
@@ -182,6 +197,14 @@ public class RequestResponseToolbar extends JPanel {
         return this.magicToolbarTab.getButton();
     }
 
+    public CompareToolbarTab getCompareToolbarTab() {
+        return this.compareToolbarTab;
+    }
+
+    public JButton getCompareButton() {
+        return this.compareToolbarTab.getButton();
+    }
+
     public void applyLocalTheme() {
         if (this.infoToolbarTab != null) {
             this.infoToolbarTab.applyLocalTheme();
@@ -191,6 +214,9 @@ public class RequestResponseToolbar extends JPanel {
         }
         if (this.magicToolbarTab != null) {
             this.magicToolbarTab.applyLocalTheme();
+        }
+        if (this.compareToolbarTab != null) {
+            this.compareToolbarTab.applyLocalTheme();
         }
         if (this.expandButton != null) {
             this.expandButton.setIcon(new DoubleArrowLeftIcon().withSize(24, 24).withColor(UIManager.getColor("Label.foreground")));
@@ -211,7 +237,7 @@ public class RequestResponseToolbar extends JPanel {
         super.updateUI();
         setBorder(
                 BorderFactory.createCompoundBorder(
-                        BorderFactory.createMatteBorder(0, 1, 0, 0, RequestResponsePanelUi.uiBorderColor()),
+                        BorderFactory.createMatteBorder(0, 1, 0, 0, Utilities.uiBorderColor()),
                         BorderFactory.createEmptyBorder(8, 6, 8, 6)));
         applyLocalTheme();
         if (this.infoToolbarTab != null) {

@@ -137,6 +137,7 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         }
         this.tree.getTreeModel().removeNodeFromParent(node);
         Treepeater.saveState();
+        notifyTreeChanged();
     }
 
     private static void collectSubtreeNodes(TreepeaterNode n, List<TreepeaterNode> out) {
@@ -173,11 +174,17 @@ public class TreepeaterModel implements TreepeaterNodeListener {
 
         this.tree.insertRootNode(node);
         Treepeater.saveState();
+        notifyTreeChanged();
     }
 
     public void insertNodeInto(TreepeaterNode child, TreepeaterNode parent, int index) {
+        if (child != null) {
+            child.addListener(this);
+            listenToAllNodes(child);
+        }
         this.tree.insertNodeInto(child, parent, index);
         Treepeater.saveState();
+        notifyTreeChanged();
     }
 
     public FolderTreeNode createFolder(TreepeaterNode parent) {
@@ -251,6 +258,10 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         this.listeners.remove(l);
     }
 
+    private void notifyTreeChanged() {
+        this.listeners.forEach(TreepeaterModelListener::onTreeChanged);
+    }
+
     @Override
     public void onSelect(TreepeaterNode node) {
         if (node instanceof RequestTreeNode requestNode) {
@@ -260,6 +271,7 @@ public class TreepeaterModel implements TreepeaterNodeListener {
 
     @Override
     public void onNameChange(String newName) {
+        notifyTreeChanged();
     }
 
     public RequestTreeNode getActiveNode() {
@@ -282,6 +294,31 @@ public class TreepeaterModel implements TreepeaterNodeListener {
             return null;
         }
         return findRequestNodeInTreeById(r, id);
+    }
+
+    /** In-tree node for {@code id}, or {@code fallback} when the tab list holds a detached node. */
+    public RequestTreeNode resolveRequestNode(int id, RequestTreeNode fallback) {
+        RequestTreeNode found = findRequestNodeInTreeById(id);
+        return found != null ? found : fallback;
+    }
+
+    /** All request leaf nodes in the tree, in depth-first order. */
+    public List<RequestTreeNode> allRequestNodesInTree() {
+        List<RequestTreeNode> out = new ArrayList<>();
+        Object root = this.tree.getTreeModel().getRoot();
+        if (root instanceof TreepeaterNode r) {
+            collectRequestNodesInTree(r, out);
+        }
+        return out;
+    }
+
+    private static void collectRequestNodesInTree(TreepeaterNode node, List<RequestTreeNode> out) {
+        if (node instanceof RequestTreeNode rn) {
+            out.add(rn);
+        }
+        for (int i = 0; i < node.getChildCount(); i++) {
+            collectRequestNodesInTree((TreepeaterNode) node.getChildAt(i), out);
+        }
     }
 
     private static RequestTreeNode findRequestNodeInTreeById(TreepeaterNode node, int id) {

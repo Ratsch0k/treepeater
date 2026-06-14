@@ -29,6 +29,7 @@ import treepeater.TreepeaterModel;
 import treepeater.TreepeaterModelListener;
 import treepeater.Utilities;
 import treepeater.components.FilterableListComboBox;
+import treepeater.diff.DiffChangeSummary;
 import treepeater.diff.SideBySideDiffPane;
 import treepeater.diff.WordDiffer;
 import treepeater.icons.CompareIcon;
@@ -51,6 +52,8 @@ public class CompareToolbarTab {
     private final FilterableListComboBox<HistoryEntry> historyBCombo;
     private final SideBySideDiffPane requestDiffPane;
     private final SideBySideDiffPane responseDiffPane;
+    private final DiffChangeSummary requestChangeSummary;
+    private final DiffChangeSummary responseChangeSummary;
     private final JSplitPane requestResponseSplit;
     private final JButton layoutToggleButton;
     private final ActionListener nodeAListener;
@@ -71,9 +74,11 @@ public class CompareToolbarTab {
         this.requestDiffPane = new SideBySideDiffPane("Node A", "Node B");
         this.responseDiffPane = new SideBySideDiffPane("Node A", "Node B");
 
-        JPanel requestSection = createDiffPanel("Request", this.requestDiffPane);
-        JPanel responseSection = createDiffPanel("Response", this.responseDiffPane);
-        this.requestResponseSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, requestSection, responseSection);
+        DiffSection requestSection = createDiffSection("Request", this.requestDiffPane);
+        DiffSection responseSection = createDiffSection("Response", this.responseDiffPane);
+        this.requestChangeSummary = requestSection.summary;
+        this.responseChangeSummary = responseSection.summary;
+        this.requestResponseSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, requestSection.panel, responseSection.panel);
         this.requestResponseSplit.setResizeWeight(0.5);
         this.requestResponseSplit.setDividerLocation(0.5);
         this.requestResponseSplit.setBorder(BorderFactory.createEmptyBorder());
@@ -158,6 +163,8 @@ public class CompareToolbarTab {
         RequestResponsePanelUi.restyleFlatToolbarButton(this.layoutToggleButton);
         this.requestDiffPane.refreshTheme();
         this.responseDiffPane.refreshTheme();
+        this.requestChangeSummary.refreshTheme();
+        this.responseChangeSummary.refreshTheme();
         refreshDiffs();
     }
 
@@ -388,22 +395,31 @@ public class CompareToolbarTab {
         return bar;
     }
 
-    private static JPanel createDiffPanel(String title, SideBySideDiffPane pane) {
+    private record DiffSection(JPanel panel, DiffChangeSummary summary) {}
+
+    private static DiffSection createDiffSection(String title, SideBySideDiffPane pane) {
         JPanel section = new JPanel(new BorderLayout(0, 2));
         section.setOpaque(false);
         section.setBorder(BorderFactory.createEmptyBorder(2, 0, 2, 2));
 
+        DiffChangeSummary summary = new DiffChangeSummary();
+
+        JPanel header = new JPanel(new BorderLayout());
+        header.setOpaque(false);
+
         JLabel heading = new JLabel(title);
         heading.setFont(heading.getFont().deriveFont(Font.BOLD, heading.getFont().getSize2D() + 3f));
         heading.setBorder(BorderFactory.createEmptyBorder(0, 8, 2, 8));
-        section.add(heading, BorderLayout.NORTH);
+        header.add(heading, BorderLayout.WEST);
+        header.add(summary, BorderLayout.EAST);
+        section.add(header, BorderLayout.NORTH);
 
         JPanel contentPanel = new JPanel(new BorderLayout());
         contentPanel.setBorder(BorderFactory.createEmptyBorder(0, 4, 4, 4));
         contentPanel.add(pane, BorderLayout.CENTER);
         section.add(contentPanel, BorderLayout.CENTER);
 
-        return section;
+        return new DiffSection(section, summary);
     }
 
     private void toggleLayout() {
@@ -426,6 +442,8 @@ public class CompareToolbarTab {
         if (a == null || b == null) {
             this.requestDiffPane.setDiff(null);
             this.responseDiffPane.setDiff(null);
+            this.requestChangeSummary.clear();
+            this.responseChangeSummary.clear();
             return;
         }
 
@@ -434,6 +452,8 @@ public class CompareToolbarTab {
         if (nodeA == null || nodeB == null) {
             this.requestDiffPane.setDiff(null);
             this.responseDiffPane.setDiff(null);
+            this.requestChangeSummary.clear();
+            this.responseChangeSummary.clear();
             return;
         }
 
@@ -442,6 +462,8 @@ public class CompareToolbarTab {
         if (histA == null || histB == null) {
             this.requestDiffPane.setDiff(null);
             this.responseDiffPane.setDiff(null);
+            this.requestChangeSummary.clear();
+            this.responseChangeSummary.clear();
             return;
         }
 
@@ -455,8 +477,12 @@ public class CompareToolbarTab {
         String resTextA = Utilities.decodeWireBytesToDisplayString(resA.toByteArray());
         String resTextB = Utilities.decodeWireBytesToDisplayString(resB.toByteArray());
 
-        this.requestDiffPane.setDiff(WordDiffer.diff(reqTextA, reqTextB));
-        this.responseDiffPane.setDiff(WordDiffer.diff(resTextA, resTextB));
+        WordDiffer.SideBySideDiff requestDiff = WordDiffer.diff(reqTextA, reqTextB);
+        WordDiffer.SideBySideDiff responseDiff = WordDiffer.diff(resTextA, resTextB);
+        this.requestDiffPane.setDiff(requestDiff);
+        this.responseDiffPane.setDiff(responseDiff);
+        this.requestChangeSummary.setCounts(requestDiff.removedChars(), requestDiff.addedChars());
+        this.responseChangeSummary.setCounts(responseDiff.removedChars(), responseDiff.addedChars());
     }
 
     private HttpRequest resolveRequest(RequestTreeNode node, Optional<Integer> historyIndex) {

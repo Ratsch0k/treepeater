@@ -7,7 +7,6 @@ import java.util.regex.Pattern;
 
 import com.github.difflib.DiffUtils;
 import com.github.difflib.patch.AbstractDelta;
-import com.github.difflib.patch.DeltaType;
 import com.github.difflib.patch.Patch;
 
 /**
@@ -20,7 +19,7 @@ public final class WordDiffer {
 
     private WordDiffer() {}
 
-    public record SideBySideDiff(String leftHtml, String rightHtml) {}
+    public record SideBySideDiff(String leftHtml, String rightHtml, int removedChars, int addedChars) {}
 
     public static SideBySideDiff diff(String left, String right) {
         String a = normalizeNewlines(left != null ? left : "");
@@ -32,6 +31,8 @@ public final class WordDiffer {
 
         StringBuilder leftHtml = new StringBuilder();
         StringBuilder rightHtml = new StringBuilder();
+        int removedChars = 0;
+        int addedChars = 0;
         leftHtml.append("<html><body><pre style=\"").append(DiffTheme.preWrapperStyle()).append("\">");
         rightHtml.append("<html><body><pre style=\"").append(DiffTheme.preWrapperStyle()).append("\">");
 
@@ -42,18 +43,30 @@ public final class WordDiffer {
                     appendSpan(leftHtml, text, DiffTheme.normalSpanStyle());
                     appendSpan(rightHtml, text, DiffTheme.normalSpanStyle());
                 }
-                case DELETE -> appendSpan(leftHtml, joinTokens(delta.getSource().getLines()), DiffTheme.removedSpanStyle());
-                case INSERT -> appendSpan(rightHtml, joinTokens(delta.getTarget().getLines()), DiffTheme.addedSpanStyle());
+                case DELETE -> {
+                    String text = joinTokens(delta.getSource().getLines());
+                    removedChars += text.length();
+                    appendSpan(leftHtml, text, DiffTheme.removedSpanStyle());
+                }
+                case INSERT -> {
+                    String text = joinTokens(delta.getTarget().getLines());
+                    addedChars += text.length();
+                    appendSpan(rightHtml, text, DiffTheme.addedSpanStyle());
+                }
                 case CHANGE -> {
-                    appendSpan(leftHtml, joinTokens(delta.getSource().getLines()), DiffTheme.removedSpanStyle());
-                    appendSpan(rightHtml, joinTokens(delta.getTarget().getLines()), DiffTheme.addedSpanStyle());
+                    String leftText = joinTokens(delta.getSource().getLines());
+                    String rightText = joinTokens(delta.getTarget().getLines());
+                    removedChars += leftText.length();
+                    addedChars += rightText.length();
+                    appendSpan(leftHtml, leftText, DiffTheme.removedSpanStyle());
+                    appendSpan(rightHtml, rightText, DiffTheme.addedSpanStyle());
                 }
             }
         }
 
         leftHtml.append("</pre></body></html>");
         rightHtml.append("</pre></body></html>");
-        return new SideBySideDiff(leftHtml.toString(), rightHtml.toString());
+        return new SideBySideDiff(leftHtml.toString(), rightHtml.toString(), removedChars, addedChars);
     }
 
     private static void appendSpan(StringBuilder html, String text, String style) {

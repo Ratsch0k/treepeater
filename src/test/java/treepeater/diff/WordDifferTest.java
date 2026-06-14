@@ -14,6 +14,15 @@ class WordDifferTest {
         assertFalse(d.rightHtml().contains(DiffTheme.addedSpanStyle()));
         assertTrue(d.leftHtml().contains("GET"));
         assertTrue(d.rightHtml().contains("GET"));
+        assertTrue(d.removedChars() == 0);
+        assertTrue(d.addedChars() == 0);
+    }
+
+    @Test
+    void wordSubstitutionCountsChangedCharacters() {
+        WordDiffer.SideBySideDiff d = WordDiffer.diff("hello world", "hello earth");
+        assertTrue(d.removedChars() >= 5);
+        assertTrue(d.addedChars() >= 5);
     }
 
     @Test

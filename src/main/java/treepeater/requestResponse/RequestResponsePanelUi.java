@@ -14,6 +14,7 @@ import javax.swing.UIManager;
 import javax.swing.border.Border;
 
 import treepeater.Treepeater;
+import treepeater.Utilities;
 import treepeater.components.CustomButton;
 import treepeater.components.SplitButtonPanel;
 
@@ -52,43 +53,18 @@ public final class RequestResponsePanelUi {
         button.setOpaque(true);
         button.setBorderPainted(false);
         button.setRolloverEnabled(true);
-        Color bg =
-                UIManager.getColor("Panel.background") != null ? UIManager.getColor("Panel.background") :
-                UIManager.getColor("control");
-        if (bg != null) {
-            button.setBackground(bg);
-        }
+        button.setBackground(Utilities.flatPanelBackground());
     }
 
-    public static Color uiBorderColor() {
-        Color c =
-                UIManager.getColor("Separator.foreground") != null ? UIManager.getColor("Separator.foreground") :
-                UIManager.getColor("Component.borderColor") != null ? UIManager.getColor("Component.borderColor") :
-                UIManager.getColor("controlShadow");
-        if (c != null) {
-            return c;
-        }
-        return new Color(0, 0, 0, 80);
-    }
 
-    public static Color uiHoverColor() {
-        Color c =
-                UIManager.getColor("Button.hoverBackground") != null ? UIManager.getColor("Button.hoverBackground") :
-                UIManager.getColor("Button.highlight") != null ? UIManager.getColor("Button.highlight") :
-                UIManager.getColor("Table.selectionBackground");
-        if (c != null) {
-            return new Color(c.getRed(), c.getGreen(), c.getBlue(), 70);
-        }
-        return new Color(0, 0, 0, 18);
-    }
 
     public static void installHoverBackground(JButton button) {
         button.getModel().addChangeListener(e -> applyFlatButtonHoverVisual(button));
     }
 
     public static void applyFlatButtonHoverVisual(JButton button) {
-        Color normalBg = flatPanelBackground();
-        Color hoverBg = uiHoverColor();
+        Color normalBg = Utilities.flatPanelBackground();
+        Color hoverBg = Utilities.uiHoverColor();
         Color next;
         if (!button.isEnabled()) {
             next = normalBg;
@@ -103,15 +79,6 @@ public final class RequestResponsePanelUi {
         if (parent != null) {
             parent.repaint();
         }
-    }
-
-    static Color flatPanelBackground() {
-        Color bg = UIManager.getColor("Panel.background");
-        if (bg != null) {
-            return bg;
-        }
-        Color c = UIManager.getColor("control");
-        return c != null ? c : Color.LIGHT_GRAY;
     }
 
     public static void restyleFlatToolbarButton(JButton button) {
@@ -155,7 +122,7 @@ public final class RequestResponsePanelUi {
             Treepeater.api.userInterface().applyThemeToComponent(topBarWrapper);
         }
         if (topBarWrapper != null) {
-            topBarWrapper.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, uiBorderColor()));
+            topBarWrapper.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Utilities.uiBorderColor()));
         }
         if (sendButton != null) {
             Color bg = UIManager.getColor("Button.primary.background");

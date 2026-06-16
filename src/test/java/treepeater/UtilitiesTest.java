@@ -1,4 +1,4 @@
-package treepeater.ai;
+package treepeater;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test;
 import treepeater.tree.FolderTreeNode;
 import treepeater.tree.RequestTreeNode;
 
-class AgentTabMentionTest {
+class UtilitiesTest {
 
     @Test
     void slashPath_skipsSyntheticRoot_andOrdersRootToLeaf() {
@@ -16,7 +16,7 @@ class AgentTabMentionTest {
         RequestTreeNode b = new RequestTreeNode(2, "Request", null, null);
         root.add(a);
         a.add(b);
-        assertEquals("Folder/Request", AgentTabMention.slashPathForNode(b));
+        assertEquals("Folder/Request", Utilities.slashPathForNode(b));
     }
 
     @Test
@@ -24,7 +24,7 @@ class AgentTabMentionTest {
         RequestTreeNode root = new RequestTreeNode(0, "Treepeater", null, null);
         RequestTreeNode leaf = new RequestTreeNode(5, "Only", null, null);
         root.add(leaf);
-        assertEquals("Only", AgentTabMention.slashPathForNode(leaf));
+        assertEquals("Only", Utilities.slashPathForNode(leaf));
     }
 
     @Test
@@ -34,6 +34,6 @@ class AgentTabMentionTest {
         RequestTreeNode req = new RequestTreeNode(2, "GET /api", null, null);
         root.add(folder);
         folder.add(req);
-        assertEquals("MyFolder/GET /api", AgentTabMention.slashPathForNode(req));
+        assertEquals("MyFolder/GET /api", Utilities.slashPathForNode(req));
     }
 }

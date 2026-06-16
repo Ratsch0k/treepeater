@@ -27,7 +27,8 @@ class ParallelToolExecutionTest {
         AtomicInteger maxInFlight = new AtomicInteger();
 
         ChatToolExecutor exec =
-                (name, argsJson) -> {
+                ctx -> {
+                    String argsJson = ctx.argumentsJson();
                     int now = inFlight.incrementAndGet();
                     maxInFlight.updateAndGet(m -> Math.max(m, now));
                     allStarted.countDown();
@@ -71,7 +72,9 @@ class ParallelToolExecutionTest {
         AtomicReference<String> activeCall = new AtomicReference<>();
 
         ChatToolExecutor exec =
-                (name, argsJson) -> {
+                ctx -> {
+                    String name = ctx.toolName();
+                    String argsJson = ctx.argumentsJson();
                     synchronized (invocationOrder) {
                         if (activeCall.get() != null) {
                             throw new AssertionError("parallel execution occurred despite approval flag");

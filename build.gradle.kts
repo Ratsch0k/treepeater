@@ -17,6 +17,7 @@ dependencies {
     implementation("org.commonmark:commonmark-ext-gfm-tables:0.28.0")
     implementation("org.commonmark:commonmark-ext-gfm-strikethrough:0.28.0")
     implementation("org.commonmark:commonmark-ext-task-list-items:0.28.0")
+    implementation("io.github.java-diff-utils:java-diff-utils:4.15")
 
     testImplementation("net.portswigger.burp.extensions:montoya-api:2026.2")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")

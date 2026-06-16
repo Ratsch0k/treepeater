@@ -22,6 +22,7 @@ import javax.swing.event.ChangeListener;
 
 import treepeater.Treepeater;
 import treepeater.TreepeaterModel;
+import treepeater.Utilities;
 import treepeater.ai.AgentChatSession;
 import treepeater.ai.AgentChatWorkspace;
 import treepeater.ai.AgentMode;
@@ -102,7 +103,7 @@ public class AIToolbarTab implements AIChatHost {
             return ChatTooling.none();
         }
         AgentMode m = mode != null ? mode : AgentMode.ASK;
-        ChatToolExecutor exec = (name, argsJson) -> HttpTargetTools.execute(name, argsJson, this.agentBridge);
+        ChatToolExecutor exec = ctx -> HttpTargetTools.execute(ctx, this.agentBridge);
         return new ChatTooling(
                 HttpTargetTools.definitions(),
                 exec,
@@ -130,11 +131,8 @@ public class AIToolbarTab implements AIChatHost {
         }
         List<AgentTabMention> out = new ArrayList<>(tabs.size());
         for (RequestTreeNode n : tabs) {
-            RequestTreeNode forPath = this.model.findRequestNodeInTreeById(n.getId());
-            if (forPath == null) {
-                forPath = n;
-            }
-            out.add(new AgentTabMention(n.getId(), AgentTabMention.slashPathForNode(forPath)));
+            RequestTreeNode forPath = this.model.resolveRequestNode(n.getId(), n);
+            out.add(new AgentTabMention(n.getId(), Utilities.slashPathForNode(forPath)));
         }
         return out;
     }

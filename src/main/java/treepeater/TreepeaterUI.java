@@ -24,10 +24,12 @@ import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
 import javax.swing.event.TreeModelEvent;
 import javax.swing.event.TreeModelListener;
+import javax.swing.tree.TreePath;
 import javax.swing.plaf.basic.BasicSplitPaneDivider;
 import javax.swing.plaf.basic.BasicSplitPaneUI;
 
 import burp.api.montoya.http.message.requests.HttpRequest;
+import burp.api.montoya.http.message.responses.HttpResponse;
 
 import treepeater.ai.AgentToolContext;
 import treepeater.ai.HttpTargetTools;
@@ -38,6 +40,7 @@ import treepeater.icons.CreateNewFolderIcon;
 import treepeater.icons.DoubleArrowLeftIcon;
 import treepeater.icons.DoubleArrowRightIcon;
 import treepeater.icons.FileExportIcon;
+import treepeater.TreepeaterModel.SiblingCopyPlacement;
 import treepeater.tree.CustomTreeCellEditor.ProgrammaticEdit;
 import treepeater.tree.FolderTreeNode;
 import treepeater.tree.RequestTreeNode;
@@ -261,6 +264,72 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
             return "{\"error\":\"search_tabs failed\"}";
         }
         return holder[0] != null ? holder[0] : "{}";
+    }
+
+    @Override
+    public String copyTreepeaterNode(int sourceRequestNodeId, String name, SiblingCopyPlacement placement) {
+        final String[] holder = new String[1];
+        Runnable r = () -> holder[0] = this.copyTreepeaterNodeOnEdt(sourceRequestNodeId, name, placement);
+        try {
+            if (SwingUtilities.isEventDispatchThread()) {
+                r.run();
+            } else {
+                SwingUtilities.invokeAndWait(r);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "{\"error\":\"copy_treepeater_node failed\"}";
+        } catch (InvocationTargetException e) {
+            return "{\"error\":\"copy_treepeater_node failed\"}";
+        }
+        return holder[0] != null ? holder[0] : "{\"error\":\"copy_treepeater_node failed\"}";
+    }
+
+    private String copyTreepeaterNodeOnEdt(int sourceRequestNodeId, String name, SiblingCopyPlacement placement) {
+        if (name == null || name.trim().isEmpty()) {
+            return "{\"error\":\"name required\"}";
+        }
+        String trimmedName = name.trim();
+        RequestTreeNode source = this.model.findRequestNodeInTreeById(sourceRequestNodeId);
+        if (source == null) {
+            return "{\"error\":\"request node not found\"}";
+        }
+        RequestResponsePanel panel = this.findPanelForNode(source);
+        HttpRequest request;
+        HttpResponse response;
+        if (panel != null) {
+            request = panel.getLiveRequestFromEditor();
+            response = panel.getLiveResponseFromEditor();
+        } else {
+            request = source.getRequest();
+            response = source.getResponse();
+        }
+        if (request == null) {
+            return "{\"error\":\"source has no request\"}";
+        }
+        RequestTreeNode copy =
+                this.model.copyAsSiblingUnderSameParent(source, request, response, trimmedName, placement);
+        if (copy == null) {
+            return "{\"error\":\"cannot copy node without parent\"}";
+        }
+        TreePath path = new TreePath(copy.getPath());
+        this.model.getTree().setSelectionPath(path);
+        this.model.getTree().scrollPathToVisible(path);
+        copy.select();
+        return HttpTargetTools.formatCopyTreepeaterNodeResponse(copy.getId(), trimmedName);
+    }
+
+    private RequestResponsePanel findPanelForNode(RequestTreeNode node) {
+        RequestResponsePanel p = this.tabMap.get(node);
+        if (p != null) {
+            return p;
+        }
+        for (RequestResponsePanel cand : this.tabMap.values()) {
+            if (cand != null && cand.getRequestNodeId() == node.getId()) {
+                return cand;
+            }
+        }
+        return null;
     }
 
     private String searchTabsOnEdt(int offset, int pageSize, String queryOrNull) {

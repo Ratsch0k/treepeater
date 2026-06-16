@@ -33,14 +33,16 @@ import treepeater.diff.DiffChangeSummary;
 import treepeater.diff.SideBySideDiffPane;
 import treepeater.diff.WordDiffer;
 import treepeater.icons.CompareIcon;
+import treepeater.icons.RotationIcon;
 import treepeater.requestResponse.HistoryEntry;
 import treepeater.requestResponse.RequestHistory;
-import treepeater.requestResponse.RequestResponsePanelUi;
 import treepeater.requestResponse.toolbar.ToolbarIconButton;
 import treepeater.requestResponse.toolbar.ToolbarTabTitle;
 import treepeater.tree.RequestTreeNode;
 
 public class CompareToolbarTab {
+
+    private static final int LAYOUT_TOGGLE_ICON_SIZE = 20;
 
     private final ToolbarIconButton button;
     private final JPanel content;
@@ -55,7 +57,7 @@ public class CompareToolbarTab {
     private final DiffChangeSummary requestChangeSummary;
     private final DiffChangeSummary responseChangeSummary;
     private final JSplitPane requestResponseSplit;
-    private final JButton layoutToggleButton;
+    private final ToolbarIconButton layoutToggleButton;
     private final ActionListener nodeAListener;
     private final ActionListener nodeBListener;
     private final ActionListener historyAListener;
@@ -83,9 +85,9 @@ public class CompareToolbarTab {
         this.requestResponseSplit.setDividerLocation(0.5);
         this.requestResponseSplit.setBorder(BorderFactory.createEmptyBorder());
 
-        this.layoutToggleButton = new JButton("Horizontal");
-        RequestResponsePanelUi.styleAsFlatButton(this.layoutToggleButton);
-        RequestResponsePanelUi.installHoverBackground(this.layoutToggleButton);
+        this.layoutToggleButton = new ToolbarIconButton(new RotationIcon());
+        this.layoutToggleButton.applyLocalTheme(LAYOUT_TOGGLE_ICON_SIZE);
+        this.layoutToggleButton.setToolTipText("Switch between horizontal and vertical layout");
         this.layoutToggleButton.addActionListener(e -> toggleLayout());
 
         this.content.add(buildContent(), BorderLayout.CENTER);
@@ -160,7 +162,7 @@ public class CompareToolbarTab {
 
     public void applyLocalTheme() {
         this.button.applyLocalTheme();
-        RequestResponsePanelUi.restyleFlatToolbarButton(this.layoutToggleButton);
+        this.layoutToggleButton.applyLocalTheme(LAYOUT_TOGGLE_ICON_SIZE);
         this.requestDiffPane.refreshTheme();
         this.responseDiffPane.refreshTheme();
         this.requestChangeSummary.refreshTheme();
@@ -426,10 +428,8 @@ public class CompareToolbarTab {
         this.horizontalLayout = !this.horizontalLayout;
         if (this.horizontalLayout) {
             this.requestResponseSplit.setOrientation(JSplitPane.HORIZONTAL_SPLIT);
-            this.layoutToggleButton.setText("Vertical");
         } else {
             this.requestResponseSplit.setOrientation(JSplitPane.VERTICAL_SPLIT);
-            this.layoutToggleButton.setText("Horizontal");
         }
         this.requestResponseSplit.setDividerLocation(0.5);
         this.requestResponseSplit.revalidate();

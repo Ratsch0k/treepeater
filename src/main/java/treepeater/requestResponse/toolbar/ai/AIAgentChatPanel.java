@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -324,6 +325,13 @@ public final class AIAgentChatPanel extends JPanel {
     private final AtomicReference<AssistantStrip> transcriptActiveAssistantStrip = new AtomicReference<>();
 
     private final AtomicReference<ChatStreamSession> activeSession = new AtomicReference<>();
+
+    /**
+     * Stable per-panel id passed to {@link ChatStreamSession} so streaming clients can use it as a
+     * backend prompt-prefix cache routing hint that is consistent across user turns of the same
+     * conversation. Lifecycle is the panel itself; a new panel (e.g. after restart) gets a new id.
+     */
+    private final String conversationKey = UUID.randomUUID().toString();
 
     /** Coalesces repeated scroll-to-bottom requests to a single {@link SwingUtilities#invokeLater}. */
     private boolean transcriptScrollCoalescePending;
@@ -770,7 +778,7 @@ public final class AIAgentChatPanel extends JPanel {
         final CoalescingChatStreamOutbound streamCoalescer =
                 new CoalescingChatStreamOutbound(
                         m -> SwingUtilities.invokeLater(() -> handleStreamMessageOnEdt(m, sessionRef.get())));
-        ChatStreamSession session = new ChatStreamSession(streamCoalescer);
+        ChatStreamSession session = new ChatStreamSession(streamCoalescer, this.conversationKey);
         sessionRef.set(session);
         this.activeSession.set(session);
 
@@ -1030,6 +1038,14 @@ public final class AIAgentChatPanel extends JPanel {
             appendAssistantReplyDelta(strip, ad.text());
             return;
         }
+        if (m instanceof ChatStreamMessage.ToolCallStarted ts) {
+            AssistantStrip strip = this.transcriptActiveAssistantStrip.get();
+            if (strip == null) {
+                return;
+            }
+            updateWaitingIndicatorForToolCall(strip, ts.toolCallId(), ts.toolName());
+            return;
+        }
         if (m instanceof ChatStreamMessage.ToolApprovalRequest req) {
             if (session == null) {
                 return;
@@ -1043,7 +1059,9 @@ public final class AIAgentChatPanel extends JPanel {
             }
             removeAssistantWaitingIndicator(strip);
             flushMarkdownRender(strip);
-            if (strip.body == null) {
+            // Keep the strip when it only has streamed thinking (no AssistantDelta yet); otherwise the
+            // thinking block would vanish as soon as a tool runs with no intervening assistant text.
+            if (strip.body == null && strip.thinkingSection == null) {
                 removeAssistantStripRowFromTranscript(strip.root);
             }
             RoundedPanel toolCard =
@@ -1840,8 +1858,8 @@ public final class AIAgentChatPanel extends JPanel {
     }
 
     /**
-     * Drops a pending assistant row when a tool runs before any streamed text, so the tool card sits
-     * directly under the user message without an empty strip.
+     * Drops a pending assistant row when a tool runs before any streamed assistant text and there is no
+     * thinking block, so the tool card sits directly under the user message without an empty strip.
      */
     private void removeAssistantStripRowFromTranscript(JPanel root) {
         this.transcriptList.remove(this.transcriptBottomGlue);
@@ -1951,6 +1969,40 @@ public final class AIAgentChatPanel extends JPanel {
         parent.remove(w);
         parent.revalidate();
         parent.repaint();
+    }
+
+    /**
+     * Replaces the generic "..." waiting indicator with a concrete "calling tool: name" cue when the
+     * model has begun streaming a tool call but the round has not yet finished. Multiple tool calls
+     * in the same round are joined with commas in announcement order. No-op once the indicator is
+     * gone (i.e. real content or the actual tool card has already been rendered).
+     */
+    private void updateWaitingIndicatorForToolCall(AssistantStrip strip, String toolCallId, String toolName) {
+        JLabel w = strip.waitingIndicator;
+        if (w == null || w.getParent() == null) {
+            return;
+        }
+        String key = toolCallId != null && !toolCallId.isBlank() ? toolCallId : toolName;
+        if (key == null || key.isBlank()) {
+            return;
+        }
+        String displayName = toolName != null && !toolName.isBlank() ? toolName : "tool";
+        String prev = strip.announcedToolCalls.put(key, displayName);
+        if (displayName.equals(prev)) {
+            return;
+        }
+        StringBuilder names = new StringBuilder();
+        for (String n : strip.announcedToolCalls.values()) {
+            if (names.length() > 0) {
+                names.append(", ");
+            }
+            names.append(n);
+        }
+        String label =
+                strip.announcedToolCalls.size() == 1
+                        ? "Calling tool: " + names + "..."
+                        : "Calling tools: " + names + "...";
+        w.setText(label);
     }
 
     /**
@@ -2571,6 +2623,8 @@ public final class AIAgentChatPanel extends JPanel {
         final JLabel waitingIndicator;
         final StringBuilder textAccumulator = new StringBuilder();
         final StringBuilder thinkingAccumulator = new StringBuilder();
+        /** Tool-call ids that have already updated the waiting indicator (avoid duplicates). */
+        final java.util.LinkedHashMap<String, String> announcedToolCalls = new java.util.LinkedHashMap<>();
         JEditorPane body;
         Timer renderTimer;
         JPanel thinkingSection;

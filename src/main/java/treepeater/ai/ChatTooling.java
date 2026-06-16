@@ -2,6 +2,7 @@ package treepeater.ai;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntSupplier;
 
 /**
@@ -76,11 +77,20 @@ public record ChatTooling(
         HttpTargetTools.HumanToolUsage label =
                 HttpTargetTools.humanToolUsage(name, argsJson, histForCard, uiNodeForCard);
         ToolRunPolicy policy = this.toolRunPolicy;
+        AtomicInteger batchChildSlot = new AtomicInteger(0);
+        NestedToolInvoker childInvoker =
+                (childName, childArgs) -> {
+                    String childId =
+                            HttpTargetTools.syntheticBatchChildToolCallId(tc.id(), batchChildSlot.getAndIncrement());
+                    return executeWithApproval(new ChatToolCall(childId, childName, childArgs), session);
+                };
+        ChatToolInvokeContext invokeCtx =
+                new ChatToolInvokeContext(name, argsJson, childInvoker);
         if (!policy.requiresApproval(name)) {
             session.emit(
                     new ChatStreamMessage.ToolApprovalRequest(
                             tc.id(), name, argsJson, label.title(), label.detail(), false));
-            return this.executor.invoke(name, argsJson);
+            return this.executor.invoke(invokeCtx);
         }
         session.emit(
                 new ChatStreamMessage.ToolApprovalRequest(
@@ -92,7 +102,9 @@ public record ChatTooling(
                     return HttpTargetTools.permissionDeniedResult();
                 }
                 if (reply instanceof ChatStreamMessage.ToolApprovalResponse r && matchesId(tc.id(), r.toolCallId())) {
-                    return r.approved() ? this.executor.invoke(name, argsJson) : HttpTargetTools.permissionDeniedResult();
+                    return r.approved()
+                            ? this.executor.invoke(invokeCtx)
+                            : HttpTargetTools.permissionDeniedResult();
                 }
             }
         } catch (InterruptedException e) {

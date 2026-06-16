@@ -3,8 +3,25 @@ package treepeater;
 import java.awt.Color;
 import java.awt.Point;
 import java.awt.Rectangle;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
+import javax.swing.BorderFactory;
+import javax.swing.JPanel;
+import javax.swing.JTextField;
 import javax.swing.JTree;
+import javax.swing.UIManager;
+import javax.swing.border.Border;
+
+import burp.api.montoya.core.ByteArray;
+import treepeater.tree.RequestTreeNode;
+import treepeater.tree.TreepeaterNode;
 
 public class Utilities {
     public static Color adjustBrightness(Color color, float factor) {
@@ -101,4 +118,101 @@ public class Utilities {
         throw new IllegalArgumentException("Invalid hex color string: " + hex);
     }
 
+    public static Color uiBorderColor() {
+        return UIManager.getColor("Separator.foreground");
+    }
+
+    /**
+     * Styles a custom combo shell (panel + text field + arrow button). The panel carries {@code ComboBox.border}
+     * and background; the field stays non-opaque so it does not paint over the border.
+     */
+    public static void applyComboBoxShellStyle(JPanel panel, JTextField field, boolean enabled) {
+        Border border = UIManager.getBorder("ComboBox.border");
+        if (border == null) {
+            border =
+                    BorderFactory.createCompoundBorder(
+                            BorderFactory.createLineBorder(uiBorderColor()),
+                            BorderFactory.createEmptyBorder(2, 4, 2, 2));
+        }
+        panel.setBorder(border);
+        panel.setOpaque(true);
+        Color bg =
+                enabled
+                        ? UIManager.getColor("ComboBox.background")
+                        : UIManager.getColor("ComboBox.disabledBackground");
+        if (bg == null) {
+            bg = flatPanelBackground();
+        }
+        panel.setBackground(bg);
+        if (field != null) {
+            field.setOpaque(false);
+            field.setBackground(bg);
+        }
+    }
+
+    public static Color flatPanelBackground() {
+        return UIManager.getColor("Panel.background");
+    }
+
+    public static Color uiHoverColor() {
+        return UIManager.getColor("Button.hoverBackground");
+    }
+
+    /**
+     * Returns the slash path for a given node.
+     * <p>
+     * The slash path is a string that represents the path to the node from the root.
+     * @param node the node to get the slash path for
+     * @return the slash path for the node
+     */
+    public static String slashPathForNode(RequestTreeNode node) {
+        // ID of the root which is not a real request tab
+        final int SYNTHETIC_ROOT_ID = 0;
+
+        List<String> parts = new ArrayList<>();
+        for (TreepeaterNode cur = node; cur != null; ) {
+            if (cur.getId() == SYNTHETIC_ROOT_ID) {
+                break;
+            }
+            String name = cur.getName();
+            parts.add(name != null ? name : "#" + cur.getId());
+            TreepeaterNode p = cur.getParent() instanceof TreepeaterNode tn ? tn : null;
+            if (p == null) {
+                break;
+            }
+            cur = p;
+        }
+        Collections.reverse(parts);
+        return String.join("/", parts);
+    }
+
+    public static String decodeUtf8Strict(byte[] chunk) {
+        if (chunk.length == 0) {
+            return "";
+        }
+        CharsetDecoder dec =
+                StandardCharsets.UTF_8.newDecoder()
+                        .onMalformedInput(CodingErrorAction.REPORT)
+                        .onUnmappableCharacter(CodingErrorAction.REPORT);
+        try {
+            return dec.decode(ByteBuffer.wrap(chunk)).toString();
+        } catch (CharacterCodingException e) {
+            return null;
+        }
+    }
+
+    /**
+     * UTF-8 text of full wire bytes (request or response). Non-UTF-8 sequences yield a one-line placeholder.
+     */
+    public static String decodeWireBytesToDisplayString(ByteArray r) {
+        byte[] raw = r.getBytes();
+        if (raw.length == 0) {
+            return "";
+        }
+        String t = decodeUtf8Strict(raw);
+        if (t == null) {
+            return "\u00abnon-UTF-8 wire, " + raw.length + " byte(s)\u00bb";
+        }
+        return t;
+    }
 }

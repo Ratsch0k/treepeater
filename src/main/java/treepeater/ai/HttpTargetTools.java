@@ -3,10 +3,6 @@ package treepeater.ai;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CharsetDecoder;
-import java.nio.charset.CodingErrorAction;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
@@ -57,6 +53,7 @@ import burp.api.montoya.http.HttpService;
 import burp.api.montoya.http.message.HttpHeader;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
+import treepeater.Utilities;
 
 import treepeater.TreepeaterModel.SiblingCopyPlacement;
 
@@ -739,7 +736,7 @@ public final class HttpTargetTools {
         out.put("returned_bytes", chunk.length);
         out.put("has_more", offset + chunk.length < total);
         out.put("next_offset", offset + chunk.length);
-        String utf8 = decodeUtf8Strict(chunk);
+        String utf8 = Utilities.decodeUtf8Strict(chunk);
         if (utf8 != null) {
             out.put("encoding", "utf-8");
             out.put("text", utf8);
@@ -821,7 +818,7 @@ public final class HttpTargetTools {
                         int gStart = rStart + m.start(g);
                         int gEnd = rStart + m.end(g);
                         byte[] gSlice = java.util.Arrays.copyOfRange(full, gStart, gEnd);
-                        String gUtf = decodeUtf8Strict(gSlice);
+                        String gUtf = Utilities.decodeUtf8Strict(gSlice);
                         if (gUtf != null) {
                             groups.add(gUtf);
                         } else {
@@ -877,7 +874,7 @@ public final class HttpTargetTools {
             return;
         }
         byte[] slice = java.util.Arrays.copyOfRange(data, start, end);
-        String utf8 = decodeUtf8Strict(slice);
+        String utf8 = Utilities.decodeUtf8Strict(slice);
         if (utf8 != null) {
             n.put(utf8Key, utf8);
         } else {
@@ -1066,7 +1063,7 @@ public final class HttpTargetTools {
 
         byte[] rawBytes = bytesFromByteArray(() -> req.body());
         int before = rawBytes.length;
-        String text = decodeUtf8Strict(rawBytes);
+        String text = Utilities.decodeUtf8Strict(rawBytes);
         if (text == null) {
             throw new IllegalArgumentException(
                     "request body is not valid UTF-8; use set_http_request_body with body_base64");
@@ -1164,7 +1161,7 @@ public final class HttpTargetTools {
 
         byte[] rawBytes = bytesFromByteArray(() -> req.body());
         int before = rawBytes.length;
-        String text = decodeUtf8Strict(rawBytes);
+        String text = Utilities.decodeUtf8Strict(rawBytes);
         if (text == null) {
             throw new IllegalArgumentException(
                     "request body is not valid UTF-8; use set_http_request_body with body_base64");
@@ -1639,7 +1636,7 @@ public final class HttpTargetTools {
                     opIndex, "json", "value is required for action set (use value: null for JSON null in the body)", "include a value field, even if null", "");
         }
         byte[] raw = bytesFromByteArray(() -> current[0].body());
-        String utf8 = decodeUtf8Strict(raw);
+        String utf8 = Utilities.decodeUtf8Strict(raw);
         if (utf8 == null) {
             return semanticMutationError(
                     opIndex,
@@ -1772,7 +1769,7 @@ public final class HttpTargetTools {
                     opIndex, "xml", "value for type xml on set must be a string in v1", "only text content of matched elements is updated", "");
         }
         byte[] raw = bytesFromByteArray(() -> current[0].body());
-        String utf8 = decodeUtf8Strict(raw);
+        String utf8 = Utilities.decodeUtf8Strict(raw);
         if (utf8 == null) {
             return semanticMutationError(
                     opIndex, "xml", "request body is not valid UTF-8 for xml mutation", "use set_http_request_body with body_base64 first", "read the body with read_http_message if needed");
@@ -1910,21 +1907,6 @@ public final class HttpTargetTools {
             return raw != null ? raw : new byte[0];
         } catch (Exception e) {
             return new byte[0];
-        }
-    }
-
-    private static String decodeUtf8Strict(byte[] chunk) {
-        if (chunk.length == 0) {
-            return "";
-        }
-        CharsetDecoder dec =
-                StandardCharsets.UTF_8.newDecoder()
-                        .onMalformedInput(CodingErrorAction.REPORT)
-                        .onUnmappableCharacter(CodingErrorAction.REPORT);
-        try {
-            return dec.decode(ByteBuffer.wrap(chunk)).toString();
-        } catch (CharacterCodingException e) {
-            return null;
         }
     }
 
@@ -2189,25 +2171,6 @@ public final class HttpTargetTools {
         } catch (JsonProcessingException e) {
             return singleLinePreview(val.toString(), 160);
         }
-    }
-
-    /**
-     * UTF-8 text of the full wire request (same address space as read/search) for line-based diffing in the tool
-     * card. Non-UTF-8 byte sequences yield a one-line placeholder.
-     */
-    public static String requestWireTextForDiff(HttpRequest r) {
-        if (r == null) {
-            return "";
-        }
-        byte[] raw = bytesFromByteArray(() -> r.toByteArray());
-        if (raw.length == 0) {
-            return "";
-        }
-        String t = decodeUtf8Strict(raw);
-        if (t == null) {
-            return "\u00abnon-UTF-8 wire, " + raw.length + " byte(s)\u00bb";
-        }
-        return t;
     }
 
     /**

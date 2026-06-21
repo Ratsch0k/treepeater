@@ -4,16 +4,17 @@ import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import javax.swing.JPanel;
 import javax.swing.JSplitPane;
-import javax.swing.SwingUtilities;
 
 import treepeater.Treepeater;
 import treepeater.TreepeaterModel;
@@ -25,6 +26,12 @@ public class EditorWorkspacePanel extends JPanel implements EditorWorkspaceInter
     private final Map<String, TabGroupPanel> groupPanels = new HashMap<>();
     private final Map<RequestTreeNode, RequestResponsePanel> tabMap = new HashMap<>();
 
+    /** Guards model updates while programmatically restoring divider proportions after a rebuild. */
+    private boolean applyingDividerLocation;
+
+    /** Non-null when rebuild ran before this panel had a size; applied on first resize. */
+    private List<SplitBinding> pendingSplitProportions;
+
     private TabGroupPanel focusedGroup;
     private Runnable onSelectionChanged;
     private Runnable onWorkspaceLayoutChanged;
@@ -32,6 +39,13 @@ public class EditorWorkspacePanel extends JPanel implements EditorWorkspaceInter
     public EditorWorkspacePanel(TreepeaterModel model) {
         super(new BorderLayout());
         this.model = model;
+        this.addComponentListener(
+                new ComponentAdapter() {
+                    @Override
+                    public void componentResized(ComponentEvent e) {
+                        EditorWorkspacePanel.this.applyPendingSplitProportions();
+                    }
+                });
         this.rebuildStructure();
     }
 
@@ -203,10 +217,17 @@ public class EditorWorkspacePanel extends JPanel implements EditorWorkspaceInter
             this.groupPanels.computeIfAbsent(id, gid -> new TabGroupPanel(gid, this.model, this));
         }
 
-        Component built = buildComponent(workspace.root());
+        List<SplitBinding> splits = new ArrayList<>();
+        Component built = buildComponent(workspace.root(), splits);
         this.removeAll();
         this.add(built, BorderLayout.CENTER);
         this.revalidate();
+        this.validate();
+        if (!applySplitProportions(splits)) {
+            this.pendingSplitProportions = splits;
+        } else {
+            this.pendingSplitProportions = null;
+        }
         this.repaint();
 
         TabGroupPanel focused = this.groupPanels.get(workspace.focusedTabGroupId());
@@ -234,22 +255,21 @@ public class EditorWorkspacePanel extends JPanel implements EditorWorkspaceInter
                 });
     }
 
-    private Component buildComponent(WorkspaceNode node) {
+    private Component buildComponent(WorkspaceNode node, List<SplitBinding> splits) {
         if (node instanceof TabGroupNode g) {
             return this.groupPanels.get(g.id());
         }
         if (node instanceof SplitNode s) {
             JSplitPane split = new JSplitPane(s.orientation().swingOrientation());
-            split.setResizeWeight(s.dividerProportion());
             split.setContinuousLayout(true);
             if (Treepeater.api != null) {
                 Treepeater.api.userInterface().applyThemeToComponent(split);
             }
-            split.setLeftComponent(wrapForSplit(buildComponent(s.first())));
-            split.setRightComponent(wrapForSplit(buildComponent(s.second())));
-
+            split.setLeftComponent(wrapForSplit(buildComponent(s.first(), splits)));
+            split.setRightComponent(wrapForSplit(buildComponent(s.second(), splits)));
+            split.setResizeWeight(s.dividerProportion());
             attachDividerListener(split, s);
-            SwingUtilities.invokeLater(() -> applyDividerLocation(split, s.dividerProportion()));
+            splits.add(new SplitBinding(split, s));
             return split;
         }
         TabGroupPanel fallback = this.groupPanels.values().iterator().next();
@@ -266,39 +286,70 @@ public class EditorWorkspacePanel extends JPanel implements EditorWorkspaceInter
     }
 
     private void attachDividerListener(JSplitPane split, SplitNode splitNode) {
-        split.addComponentListener(
-                new ComponentAdapter() {
-                    @Override
-                    public void componentMoved(ComponentEvent e) {
-                        persistDivider(split, splitNode);
+        split.addPropertyChangeListener(
+                JSplitPane.DIVIDER_LOCATION_PROPERTY,
+                evt -> {
+                    if (this.applyingDividerLocation) {
+                        return;
                     }
-
-                    @Override
-                    public void componentResized(ComponentEvent e) {
-                        persistDivider(split, splitNode);
-                    }
+                    persistDivider(split, splitNode);
                 });
     }
 
     private void persistDivider(JSplitPane split, SplitNode splitNode) {
-        int size = split.getOrientation() == JSplitPane.HORIZONTAL_SPLIT ? split.getWidth() : split.getHeight();
-        if (size <= 0) {
+        double proportion = readDividerProportion(split);
+        if (Double.isNaN(proportion)) {
             return;
         }
-        double proportion = split.getDividerLocation() / (double) size;
         if (Math.abs(splitNode.dividerProportion() - proportion) > 0.01) {
             splitNode.setDividerProportion(proportion);
             Treepeater.saveState();
         }
     }
 
-    private static void applyDividerLocation(JSplitPane split, double proportion) {
+    private static double readDividerProportion(JSplitPane split) {
         int size = split.getOrientation() == JSplitPane.HORIZONTAL_SPLIT ? split.getWidth() : split.getHeight();
         if (size <= 0) {
+            return Double.NaN;
+        }
+        return split.getDividerLocation() / (double) size;
+    }
+
+    private void applyPendingSplitProportions() {
+        List<SplitBinding> pending = this.pendingSplitProportions;
+        if (pending == null || pending.isEmpty()) {
             return;
         }
-        split.setDividerLocation((int) (proportion * size));
+        if (applySplitProportions(pending)) {
+            this.pendingSplitProportions = null;
+        }
     }
+
+    /** @return {@code true} when every split in {@code splits} had a non-zero size and was positioned */
+    private boolean applySplitProportions(List<SplitBinding> splits) {
+        if (splits.isEmpty()) {
+            return true;
+        }
+        boolean allApplied = true;
+        this.applyingDividerLocation = true;
+        try {
+            for (SplitBinding binding : splits) {
+                JSplitPane split = binding.split();
+                int size =
+                        split.getOrientation() == JSplitPane.HORIZONTAL_SPLIT ? split.getWidth() : split.getHeight();
+                if (size <= 0) {
+                    allApplied = false;
+                    continue;
+                }
+                split.setDividerLocation(binding.model().dividerProportion());
+            }
+        } finally {
+            this.applyingDividerLocation = false;
+        }
+        return allApplied;
+    }
+
+    private record SplitBinding(JSplitPane split, SplitNode model) {}
 
     @Override
     public RequestResponsePanel getOrCreatePanel(RequestTreeNode node) {

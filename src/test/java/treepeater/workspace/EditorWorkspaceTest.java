@@ -155,4 +155,74 @@ class EditorWorkspaceTest {
         assertNotNull(ws.findGroupById(root.id()));
         assertNull(ws.findGroupContaining(only));
     }
+
+    @Test
+    void removeTab_nestedHorizontalCollapse_reportsLayoutChange() {
+        EditorWorkspace ws = new EditorWorkspace();
+        TabGroupNode root = (TabGroupNode) ws.root();
+        RequestTreeNode n1 = node(1);
+        RequestTreeNode n2 = node(2);
+        RequestTreeNode n3 = node(3);
+        RequestTreeNode n4 = node(4);
+        root.addTab(n1);
+        root.addTab(n2);
+        root.setSelectedIndex(1);
+        ws.splitGroup(root.id(), SplitOrientation.HORIZONTAL);
+
+        TabGroupNode middle = ws.findGroupContaining(n2);
+        assertNotNull(middle);
+        middle.addTab(n3);
+        middle.setSelectedIndex(middle.indexOf(n3));
+        ws.splitGroup(middle.id(), SplitOrientation.HORIZONTAL);
+
+        TabGroupNode rightInner = ws.focusedGroup();
+        rightInner.addTab(n4);
+        rightInner.setSelectedIndex(rightInner.indexOf(n4));
+        ws.splitGroup(rightInner.id(), SplitOrientation.HORIZONTAL);
+
+        middle = ws.findGroupContaining(n2);
+        assertNotNull(middle);
+        String middleGroupId = middle.id();
+
+        assertTrue(ws.removeTab(n2));
+        assertNull(ws.findGroupById(middleGroupId));
+        assertEquals(3, ws.allTabGroups().size());
+    }
+
+    @Test
+    void removeTab_gridBottomLeftCollapse_reportsLayoutChange() {
+        EditorWorkspace ws = new EditorWorkspace();
+        TabGroupNode root = (TabGroupNode) ws.root();
+        RequestTreeNode n1 = node(1);
+        RequestTreeNode n2 = node(2);
+        RequestTreeNode n3 = node(3);
+        RequestTreeNode n4 = node(4);
+        root.addTab(n1);
+        root.addTab(n2);
+        root.setSelectedIndex(1);
+        ws.splitGroup(root.id(), SplitOrientation.VERTICAL);
+
+        TabGroupNode bottom = ws.focusedGroup();
+        bottom.addTab(n3);
+        bottom.setSelectedIndex(bottom.indexOf(n3));
+        ws.splitGroup(bottom.id(), SplitOrientation.HORIZONTAL);
+
+        TabGroupNode top = ws.findGroupContaining(n1);
+        assertNotNull(top);
+        top.addTab(n4);
+        top.setSelectedIndex(top.indexOf(n4));
+        ws.splitGroup(top.id(), SplitOrientation.VERTICAL);
+
+        TabGroupNode bottomLeft = ws.findGroupContaining(n2);
+        assertNotNull(bottomLeft);
+        String bottomLeftGroupId = bottomLeft.id();
+
+        assertTrue(ws.removeTab(n2));
+        assertNull(ws.findGroupById(bottomLeftGroupId));
+
+        SplitNode rootSplit = (SplitNode) ws.root();
+        assertEquals(SplitOrientation.VERTICAL, rootSplit.orientation());
+        assertTrue(rootSplit.second() instanceof TabGroupNode);
+        assertEquals(n3, ((TabGroupNode) rootSplit.second()).selectedTab());
+    }
 }

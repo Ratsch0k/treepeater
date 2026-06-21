@@ -256,9 +256,9 @@ public final class EditorWorkspace {
 
     /** Collapses empty groups and ensures a focused group still exists. Returns whether the tree shape changed. */
     public boolean collapseEmpty() {
-        WorkspaceNode rootBefore = this.root;
         String focusedBefore = this.focusedTabGroupId;
-        this.root = collapseNode(this.root);
+        CollapseResult result = collapseNode(this.root);
+        this.root = result.node();
         ensureAtLeastOneGroup();
         if (findGroupById(this.focusedTabGroupId) == null) {
             TabGroupNode first = firstTabGroup(this.root);
@@ -266,33 +266,44 @@ public final class EditorWorkspace {
                 this.focusedTabGroupId = first.id();
             }
         }
-        return this.root != rootBefore || !Objects.equals(this.focusedTabGroupId, focusedBefore);
+        return result.changed() || !Objects.equals(this.focusedTabGroupId, focusedBefore);
     }
 
-    private static WorkspaceNode collapseNode(WorkspaceNode node) {
+    private static CollapseResult collapseNode(WorkspaceNode node) {
         if (node instanceof TabGroupNode g) {
-            return g;
+            return new CollapseResult(g, false);
         }
         if (node instanceof SplitNode s) {
-            WorkspaceNode first = collapseNode(s.first());
-            WorkspaceNode second = collapseNode(s.second());
+            CollapseResult firstResult = collapseNode(s.first());
+            CollapseResult secondResult = collapseNode(s.second());
+            WorkspaceNode first = firstResult.node();
+            WorkspaceNode second = secondResult.node();
 
             if (first instanceof TabGroupNode fg && fg.isEmpty() && !(second instanceof TabGroupNode sg && sg.isEmpty())) {
-                return second;
+                return new CollapseResult(second, true);
             }
             if (second instanceof TabGroupNode sg && sg.isEmpty() && !(first instanceof TabGroupNode fg && fg.isEmpty())) {
-                return first;
+                return new CollapseResult(first, true);
             }
             if (first instanceof TabGroupNode fg && fg.isEmpty() && second instanceof TabGroupNode sg && sg.isEmpty()) {
-                return fg;
+                return new CollapseResult(fg, true);
             }
 
-            s.setFirst(first);
-            s.setSecond(second);
-            return s;
+            boolean changed =
+                    firstResult.changed()
+                            || secondResult.changed()
+                            || first != s.first()
+                            || second != s.second();
+            if (changed) {
+                s.setFirst(first);
+                s.setSecond(second);
+            }
+            return new CollapseResult(s, changed);
         }
-        return node;
+        return new CollapseResult(node, false);
     }
+
+    private record CollapseResult(WorkspaceNode node, boolean changed) {}
 
     private void ensureAtLeastOneGroup() {
         if (firstTabGroup(this.root) == null) {

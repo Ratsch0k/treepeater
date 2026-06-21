@@ -3,6 +3,7 @@ package treepeater.requestResponse;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Font;
+import java.awt.Insets;
 import java.util.Objects;
 
 import javax.swing.BorderFactory;
@@ -10,8 +11,11 @@ import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JTabbedPane;
 import javax.swing.UIManager;
 import javax.swing.border.Border;
+
+import com.formdev.flatlaf.FlatClientProperties;
 
 import treepeater.Treepeater;
 import treepeater.Utilities;
@@ -84,6 +88,11 @@ public final class RequestResponsePanelUi {
     public static void restyleFlatToolbarButton(JButton button) {
         styleAsFlatButton(button);
         applyFlatButtonHoverVisual(button);
+    }
+
+    /** Slightly tighter tab strip padding than FlatLaf defaults ({@code 4,12,4,12}). */
+    public static void applyCompactTabPane(JTabbedPane tabbedPane) {
+        tabbedPane.putClientProperty(FlatClientProperties.TABBED_PANE_TAB_INSETS, new Insets(3, 10, 3, 10));
     }
 
     static JPanel makeHeaderPanel(String header, Component component) {

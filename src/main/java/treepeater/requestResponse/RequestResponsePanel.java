@@ -4,6 +4,10 @@ import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Font;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -644,5 +648,38 @@ public class RequestResponsePanel extends JPanel {
         }
         this.refreshTargetLabel();
         this.notifyRequestChanged();
+    }
+
+    /**
+     * Notifies the workspace when the user interacts with this panel's editors or controls so split
+     * tab groups can track focus even when the tab strip itself is not clicked.
+     */
+    public void installWorkspaceFocusTracking(Runnable onFocused) {
+        FocusAdapter focusAdapter =
+                new FocusAdapter() {
+                    @Override
+                    public void focusGained(FocusEvent e) {
+                        onFocused.run();
+                    }
+                };
+        MouseAdapter mouseAdapter =
+                new MouseAdapter() {
+                    @Override
+                    public void mousePressed(MouseEvent e) {
+                        onFocused.run();
+                    }
+                };
+        RequestResponsePanel.installInteractionTracking(this, focusAdapter, mouseAdapter);
+    }
+
+    private static void installInteractionTracking(
+            Component root, FocusAdapter focusAdapter, MouseAdapter mouseAdapter) {
+        root.addFocusListener(focusAdapter);
+        root.addMouseListener(mouseAdapter);
+        if (root instanceof Container container) {
+            for (Component child : container.getComponents()) {
+                RequestResponsePanel.installInteractionTracking(child, focusAdapter, mouseAdapter);
+            }
+        }
     }
 }

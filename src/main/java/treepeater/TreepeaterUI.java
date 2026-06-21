@@ -1,13 +1,11 @@
 package treepeater;
 import java.awt.BorderLayout;
-import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.OptionalInt;
 
@@ -17,11 +15,8 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
-import javax.swing.JTabbedPane;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
-import javax.swing.event.ChangeEvent;
-import javax.swing.event.ChangeListener;
 import javax.swing.event.TreeModelEvent;
 import javax.swing.event.TreeModelListener;
 import javax.swing.tree.TreePath;
@@ -47,10 +42,10 @@ import treepeater.tree.RequestTreeNode;
 import treepeater.tree.TreepeaterNode;
 import treepeater.draggable.RequestTreeNodeSimple;
 import treepeater.requestResponse.RequestResponsePanel;
-import treepeater.requestResponse.RequestResponseTab;
 import treepeater.requestResponse.toolbar.RequestResponseToolbar;
 import treepeater.requestResponse.toolbar.RequestResponseToolbarListener;
 import treepeater.requestResponse.toolbar.ToolbarIconButton;
+import treepeater.workspace.EditorWorkspacePanel;
 
 public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarListener, RepeaterTabAgentBridge {
     private static final Dimension MIN_LEFT_PANEL_SIZE = new Dimension(240, 0);
@@ -64,9 +59,8 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         return s > 0 ? s : 8;
     }
 
-    JTabbedPane requestResponseTabbedPane;
+    EditorWorkspacePanel editorWorkspacePanel;
     TreepeaterModel model;
-    HashMap<RequestTreeNode, RequestResponsePanel> tabMap;
     private boolean treePanelActive;
 
     private final RequestResponseToolbar sideToolbar;
@@ -85,15 +79,14 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         super(JSplitPane.HORIZONTAL_SPLIT);
 
         this.model = model;
-        this.requestResponseTabbedPane = new JTabbedPane();
-        this.requestResponseTabbedPane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
-        this.tabMap = new HashMap<>();
+        this.editorWorkspacePanel = new EditorWorkspacePanel(model);
+        this.editorWorkspacePanel.setOnSelectionChanged(this::onRequestResponseTabSelectionChanged);
 
         this.sideToolbar = new RequestResponseToolbar(this.model, this);
         this.sideToolbar.addToolbarListener(this);
         this.expandPanel = this.sideToolbar.getToolbarPanel();
 
-        this.expandSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, this.requestResponseTabbedPane, this.expandPanel);
+        this.expandSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, this.editorWorkspacePanel, this.expandPanel);
         this.expandSplitPane.setResizeWeight(1.0);
         this.expandSplitPane.setOneTouchExpandable(false);
         this.expandSplitPane.setContinuousLayout(true);
@@ -123,21 +116,16 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
             this.setLeftComponent(this.buildDefaultLeftPanel());
         }
 
-        for (RequestTreeNode node : model.getTabs()) {
-            this.addTab(node);
-        }
+        this.editorWorkspacePanel.restoreInitialTabs();
 
         if (model.getActiveNode() != null) {
-            this.openTab(model.getActiveNode());
+            this.editorWorkspacePanel.handleOpenTab(
+                    model.getActiveNode(),
+                    model.getWorkspace().findGroupContaining(model.getActiveNode()) != null
+                            ? model.getWorkspace().findGroupContaining(model.getActiveNode()).id()
+                            : model.getWorkspace().focusedTabGroupId());
         }
 
-        this.requestResponseTabbedPane.addChangeListener(
-                new ChangeListener() {
-                    @Override
-                    public void stateChanged(ChangeEvent e) {
-                        TreepeaterUI.this.onRequestResponseTabSelectionChanged();
-                    }
-                });
         this.onRequestResponseTabSelectionChanged();
 
         model.getTree().getTreeModel().addTreeModelListener(new TreeModelListener() {
@@ -175,18 +163,38 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         model.addListener(new TreepeaterModelListener() {
 
             @Override
-            public void onOpenTab(RequestTreeNode node) {
-                TreepeaterUI.this.openTab(node);
+            public void onOpenTab(RequestTreeNode node, String tabGroupId) {
+                TreepeaterUI.this.editorWorkspacePanel.handleOpenTab(node, tabGroupId);
             }
 
             @Override
             public void onCloseTab(RequestTreeNode node) {
-                TreepeaterUI.this.removeTab(node);
+                TreepeaterUI.this.editorWorkspacePanel.handleCloseTab(node);
             }
 
             @Override
-            public void onNewTab(RequestTreeNode node) {
-                TreepeaterUI.this.addTab(node);
+            public void onNewTab(RequestTreeNode node, String tabGroupId) {
+                TreepeaterUI.this.editorWorkspacePanel.handleNewTab(node, tabGroupId);
+            }
+
+            @Override
+            public void onTabMoved(RequestTreeNode node, String fromGroupId, String toGroupId, int dropIndex) {
+                TreepeaterUI.this.editorWorkspacePanel.handleTabMoved(node, fromGroupId, toGroupId, dropIndex);
+            }
+
+            @Override
+            public void onWorkspaceLayoutChanged() {
+                TreepeaterUI.this.editorWorkspacePanel.handleWorkspaceLayoutChanged();
+            }
+
+            @Override
+            public void onFocusedGroupChanged(String tabGroupId) {
+                TreepeaterUI.this.editorWorkspacePanel.handleFocusedGroupChanged(tabGroupId);
+            }
+
+            @Override
+            public void onTreeChanged() {
+                TreepeaterUI.this.editorWorkspacePanel.refreshTabTitles();
             }
         });
 
@@ -231,15 +239,15 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
             return p != null ? p.buildAgentToolContextForAi() : null;
         }
         int id = requestNodeId.getAsInt();
-        for (RequestTreeNode n : this.model.getTabs()) {
+        for (RequestTreeNode n : this.model.getAllOpenTabs()) {
             if (n.getId() == id) {
-                RequestResponsePanel p = this.tabMap.get(n);
+                RequestResponsePanel p = this.editorWorkspacePanel.findPanelForNode(n);
                 if (p != null) {
                     return p.buildAgentToolContextForAi();
                 }
             }
         }
-        for (RequestResponsePanel p : this.tabMap.values()) {
+        for (RequestResponsePanel p : this.editorWorkspacePanel.tabMap().values()) {
             if (p != null && p.getRequestNodeId() == id) {
                 return p.buildAgentToolContextForAi();
             }
@@ -320,35 +328,18 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
     }
 
     private RequestResponsePanel findPanelForNode(RequestTreeNode node) {
-        RequestResponsePanel p = this.tabMap.get(node);
-        if (p != null) {
-            return p;
-        }
-        for (RequestResponsePanel cand : this.tabMap.values()) {
-            if (cand != null && cand.getRequestNodeId() == node.getId()) {
-                return cand;
-            }
-        }
-        return null;
+        return this.editorWorkspacePanel.findPanelForNode(node);
     }
 
     private String searchTabsOnEdt(int offset, int pageSize, String queryOrNull) {
         String qRaw = queryOrNull != null ? queryOrNull.trim() : "";
         boolean filter = !qRaw.isEmpty();
-        List<RequestTreeNode> tabs = this.model.getTabs();
+        List<RequestTreeNode> tabs = this.model.getAllOpenTabs();
         List<SearchTabRow> matched = new ArrayList<>();
-        Component selected = this.requestResponseTabbedPane.getSelectedComponent();
+        RequestResponsePanel selected = this.getSelectedRequestResponsePanel();
 
         for (RequestTreeNode node : tabs) {
-            RequestResponsePanel p = this.tabMap.get(node);
-            if (p == null) {
-                for (RequestResponsePanel cand : this.tabMap.values()) {
-                    if (cand != null && cand.getRequestNodeId() == node.getId()) {
-                        p = cand;
-                        break;
-                    }
-                }
-            }
+            RequestResponsePanel p = this.editorWorkspacePanel.findPanelForNode(node);
             String method = "";
             String url = "";
             if (p != null) {
@@ -395,8 +386,7 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
     }
 
     private RequestResponsePanel getSelectedRequestResponsePanel() {
-        Component c = this.requestResponseTabbedPane.getSelectedComponent();
-        return c instanceof RequestResponsePanel p ? p : null;
+        return this.editorWorkspacePanel.getSelectedPanel();
     }
 
     private void onRequestResponseTabSelectionChanged() {
@@ -505,80 +495,6 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         SwingUtilities.invokeLater(this::applyExpandDividerInteractionState);
     }
 
-    private void openTab(RequestTreeNode node) {
-        RequestResponsePanel panel = this.tabMap.get(node);
-        if (panel == null) {
-            Treepeater.api.logging().logToError("No tab found for node " + node.getId());
-            return;
-        }
-
-        this.requestResponseTabbedPane.setSelectedComponent(panel);
-    }
-
-    private void addTab(RequestTreeNode node) {
-        RequestResponsePanel panel = new RequestResponsePanel(
-                this.model,
-                node,
-                this::selectPreviousRequestResponseTab,
-                this::selectNextRequestResponseTab);
-        int index = this.requestResponseTabbedPane.getTabCount();
-        this.requestResponseTabbedPane.add(node.getName(), panel);
-
-        RequestResponseTab tab = new RequestResponseTab(node);
-        tab.addActionListener(e -> {
-            int i = this.requestResponseTabbedPane.indexOfComponent(panel);
-            if (i >= 0) {
-                this.model.removeTab(i);
-            }
-        });
-        this.requestResponseTabbedPane.setTabComponentAt(index, tab);
-        this.requestResponseTabbedPane.setSelectedIndex(index);
-        tabMap.put(node, panel);
-    }
-
-    private void removeTab(RequestTreeNode node) {
-        RequestResponsePanel requestResponsePanel = this.tabMap.get(node);
-        if (requestResponsePanel == null) {
-            Treepeater.api.logging().logToError("No tab found for node " + node.getId());
-            return;
-        }
-        this.requestResponseTabbedPane.remove(requestResponsePanel);
-        this.tabMap.remove(node);
-    }
-
-    /**
-     * Activates the previous tab in {@link #requestResponseTabbedPane} (wraps). Uses
-     * {@link RequestTreeNode#select()} so the model active node and tree stay in sync.
-     */
-    private void selectPreviousRequestResponseTab() {
-        int n = this.requestResponseTabbedPane.getTabCount();
-        if (n <= 1) {
-            return;
-        }
-        int i = this.requestResponseTabbedPane.getSelectedIndex();
-        if (i < 0) {
-            i = 0;
-        }
-        int prev = (i - 1 + n) % n;
-        this.model.getTabs().get(prev).select();
-    }
-
-    /**
-     * Activates the next tab in {@link #requestResponseTabbedPane} (wraps).
-     */
-    private void selectNextRequestResponseTab() {
-        int n = this.requestResponseTabbedPane.getTabCount();
-        if (n <= 1) {
-            return;
-        }
-        int i = this.requestResponseTabbedPane.getSelectedIndex();
-        if (i < 0) {
-            i = 0;
-        }
-        int next = (i + 1) % n;
-        this.model.getTabs().get(next).select();
-    }
-
     private JComponent buildDefaultLeftPanel() {
         JPanel leftPanel = new JPanel();
         leftPanel.add(new JLabel("Send a request to Treepeater"));
@@ -593,7 +509,7 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         JScrollPane scrollPane = new JScrollPane(this.model.getTree());
         this.model.getTree().setViewportContext(scrollPane.getViewport());
         this.model.getTree().setActivateRequestFromKeyboardFollowUp(node -> {
-            RequestResponsePanel panel = this.tabMap.get(node);
+            RequestResponsePanel panel = TreepeaterUI.this.editorWorkspacePanel.findPanelForNode(node);
             if (panel != null) {
                 panel.focusRequestEditor();
             }

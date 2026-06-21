@@ -55,6 +55,23 @@ class EditorWorkspaceTest {
     }
 
     @Test
+    void removeTab_doesNotChangeRootWhenGroupStillHasTabs() {
+        EditorWorkspace ws = new EditorWorkspace();
+        TabGroupNode root = (TabGroupNode) ws.root();
+        RequestTreeNode a = node(1);
+        RequestTreeNode b = node(2);
+        root.addTab(a);
+        root.addTab(b);
+        WorkspaceNode rootBefore = ws.root();
+
+        assertFalse(ws.removeTab(a));
+        assertTrue(ws.root() instanceof TabGroupNode);
+        assertEquals(rootBefore, ws.root());
+        assertFalse(root.contains(a));
+        assertTrue(root.contains(b));
+    }
+
+    @Test
     void removeTab_collapsesEmptyGroup() {
         EditorWorkspace ws = new EditorWorkspace();
         TabGroupNode root = (TabGroupNode) ws.root();
@@ -65,9 +82,7 @@ class EditorWorkspaceTest {
         root.setSelectedIndex(1);
         ws.splitGroup(root.id(), SplitOrientation.HORIZONTAL);
 
-        ws.removeTab(b);
-        ws.collapseEmpty();
-
+        assertTrue(ws.removeTab(b));
         assertTrue(ws.root() instanceof TabGroupNode);
         TabGroupNode group = (TabGroupNode) ws.root();
         assertEquals(1, group.tabs().size());

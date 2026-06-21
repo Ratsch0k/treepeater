@@ -168,32 +168,20 @@ public class Utilities {
      * @return the slash path for the node
      */
     public static String slashPathForNode(RequestTreeNode node) {
-        // ID of the root which is not a real request tab
-        final int SYNTHETIC_ROOT_ID = 0;
-
-        List<String> parts = new ArrayList<>();
-        for (TreepeaterNode cur = node; cur != null; ) {
-            if (cur.getId() == SYNTHETIC_ROOT_ID) {
-                break;
-            }
-            String name = cur.getName();
-            parts.add(name != null ? name : "#" + cur.getId());
-            TreepeaterNode p = cur.getParent() instanceof TreepeaterNode tn ? tn : null;
-            if (p == null) {
-                break;
-            }
-            cur = p;
-        }
-        Collections.reverse(parts);
-        return String.join("/", parts);
+        return String.join("/", collectSlashPathParts(node, true));
     }
 
     /** Slash path of parent folders only (excludes the node's own name / tab title). */
     public static String parentSlashPathForNode(RequestTreeNode node) {
-        final int SYNTHETIC_ROOT_ID = 0;
+        return String.join("/", collectSlashPathParts(node, false));
+    }
 
+    private static final int SYNTHETIC_ROOT_ID = 0;
+
+    private static List<String> collectSlashPathParts(TreepeaterNode start, boolean includeStart) {
         List<String> parts = new ArrayList<>();
-        TreepeaterNode cur = node.getParent() instanceof TreepeaterNode tn ? tn : null;
+        TreepeaterNode cur =
+                includeStart ? start : start.getParent() instanceof TreepeaterNode tn ? tn : null;
         while (cur != null) {
             if (cur.getId() == SYNTHETIC_ROOT_ID) {
                 break;
@@ -203,7 +191,7 @@ public class Utilities {
             cur = cur.getParent() instanceof TreepeaterNode p ? p : null;
         }
         Collections.reverse(parts);
-        return String.join("/", parts);
+        return parts;
     }
 
     /**

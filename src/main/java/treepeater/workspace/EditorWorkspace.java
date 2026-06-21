@@ -72,17 +72,23 @@ public final class EditorWorkspace {
     }
 
     private static TabGroupNode findGroupById(WorkspaceNode node, String id) {
-        if (node instanceof TabGroupNode g) {
-            return g.id().equals(id) ? g : null;
-        }
-        if (node instanceof SplitNode s) {
-            TabGroupNode found = findGroupById(s.first(), id);
-            if (found != null) {
-                return found;
-            }
-            return findGroupById(s.second(), id);
-        }
-        return null;
+        return WorkspaceWalk.walk(
+                node,
+                new WorkspaceVisitor<>() {
+                    @Override
+                    public TabGroupNode visitGroup(TabGroupNode g) {
+                        return g.id().equals(id) ? g : null;
+                    }
+
+                    @Override
+                    public TabGroupNode visitSplit(SplitNode s) {
+                        TabGroupNode found = findGroupById(s.first(), id);
+                        if (found != null) {
+                            return found;
+                        }
+                        return findGroupById(s.second(), id);
+                    }
+                });
     }
 
     public TabGroupNode findGroupContaining(RequestTreeNode node) {
@@ -93,17 +99,23 @@ public final class EditorWorkspace {
     }
 
     private static TabGroupNode findGroupContaining(WorkspaceNode workspaceNode, RequestTreeNode node) {
-        if (workspaceNode instanceof TabGroupNode g) {
-            return g.contains(node) ? g : null;
-        }
-        if (workspaceNode instanceof SplitNode s) {
-            TabGroupNode found = findGroupContaining(s.first(), node);
-            if (found != null) {
-                return found;
-            }
-            return findGroupContaining(s.second(), node);
-        }
-        return null;
+        return WorkspaceWalk.walk(
+                workspaceNode,
+                new WorkspaceVisitor<>() {
+                    @Override
+                    public TabGroupNode visitGroup(TabGroupNode g) {
+                        return g.contains(node) ? g : null;
+                    }
+
+                    @Override
+                    public TabGroupNode visitSplit(SplitNode s) {
+                        TabGroupNode found = findGroupContaining(s.first(), node);
+                        if (found != null) {
+                            return found;
+                        }
+                        return findGroupContaining(s.second(), node);
+                    }
+                });
     }
 
     public boolean isOpen(RequestTreeNode node) {
@@ -118,18 +130,26 @@ public final class EditorWorkspace {
     }
 
     private static void collectTabs(WorkspaceNode node, List<RequestTreeNode> out, Set<RequestTreeNode> seen) {
-        if (node instanceof TabGroupNode g) {
-            for (RequestTreeNode tab : g.tabs()) {
-                if (seen.add(tab)) {
-                    out.add(tab);
-                }
-            }
-            return;
-        }
-        if (node instanceof SplitNode s) {
-            collectTabs(s.first(), out, seen);
-            collectTabs(s.second(), out, seen);
-        }
+        WorkspaceWalk.walk(
+                node,
+                new WorkspaceVisitor<Void>() {
+                    @Override
+                    public Void visitGroup(TabGroupNode g) {
+                        for (RequestTreeNode tab : g.tabs()) {
+                            if (seen.add(tab)) {
+                                out.add(tab);
+                            }
+                        }
+                        return null;
+                    }
+
+                    @Override
+                    public Void visitSplit(SplitNode s) {
+                        collectTabs(s.first(), out, seen);
+                        collectTabs(s.second(), out, seen);
+                        return null;
+                    }
+                });
     }
 
     public List<TabGroupNode> allTabGroups() {
@@ -139,14 +159,22 @@ public final class EditorWorkspace {
     }
 
     private static void collectGroups(WorkspaceNode node, List<TabGroupNode> out) {
-        if (node instanceof TabGroupNode g) {
-            out.add(g);
-            return;
-        }
-        if (node instanceof SplitNode s) {
-            collectGroups(s.first(), out);
-            collectGroups(s.second(), out);
-        }
+        WorkspaceWalk.walk(
+                node,
+                new WorkspaceVisitor<Void>() {
+                    @Override
+                    public Void visitGroup(TabGroupNode g) {
+                        out.add(g);
+                        return null;
+                    }
+
+                    @Override
+                    public Void visitSplit(SplitNode s) {
+                        collectGroups(s.first(), out);
+                        collectGroups(s.second(), out);
+                        return null;
+                    }
+                });
     }
 
     public void addTabToFocused(RequestTreeNode node) {
@@ -162,27 +190,25 @@ public final class EditorWorkspace {
         this.focusedTabGroupId = focused.id();
     }
 
+    /**
+     * Removes {@code node} from the workspace. Returns {@code true} when the workspace tree shape
+     * changed (for example an empty split group was collapsed), {@code false} when the tab was not
+     * open or only tab membership changed within an unchanged layout.
+     */
     public boolean removeTab(RequestTreeNode node) {
         TabGroupNode group = findGroupContaining(node);
         if (group == null) {
             return false;
         }
         group.removeTab(node);
-        collapseEmpty();
-        return true;
+        return collapseEmpty();
     }
 
     public void moveTab(RequestTreeNode node, String fromGroupId, String toGroupId, int dropIndex) {
         if (node == null || Objects.equals(fromGroupId, toGroupId)) {
             TabGroupNode group = findGroupContaining(node);
             if (group != null && group.id().equals(toGroupId)) {
-                int current = group.indexOf(node);
-                if (current >= 0 && current != dropIndex) {
-                    group.tabs().remove(current);
-                    int idx = Math.max(0, Math.min(dropIndex, group.tabs().size()));
-                    group.tabs().add(idx, node);
-                    group.setSelectedIndex(idx);
-                }
+                group.reorderTab(node, dropIndex);
             }
             return;
         }
@@ -228,7 +254,10 @@ public final class EditorWorkspace {
         return new SplitResult(split, target.id(), newGroup.id());
     }
 
-    public void collapseEmpty() {
+    /** Collapses empty groups and ensures a focused group still exists. Returns whether the tree shape changed. */
+    public boolean collapseEmpty() {
+        WorkspaceNode rootBefore = this.root;
+        String focusedBefore = this.focusedTabGroupId;
         this.root = collapseNode(this.root);
         ensureAtLeastOneGroup();
         if (findGroupById(this.focusedTabGroupId) == null) {
@@ -237,6 +266,7 @@ public final class EditorWorkspace {
                 this.focusedTabGroupId = first.id();
             }
         }
+        return this.root != rootBefore || !Objects.equals(this.focusedTabGroupId, focusedBefore);
     }
 
     private static WorkspaceNode collapseNode(WorkspaceNode node) {
@@ -273,17 +303,23 @@ public final class EditorWorkspace {
     }
 
     private static TabGroupNode firstTabGroup(WorkspaceNode node) {
-        if (node instanceof TabGroupNode g) {
-            return g;
-        }
-        if (node instanceof SplitNode s) {
-            TabGroupNode found = firstTabGroup(s.first());
-            if (found != null) {
-                return found;
-            }
-            return firstTabGroup(s.second());
-        }
-        return null;
+        return WorkspaceWalk.walk(
+                node,
+                new WorkspaceVisitor<>() {
+                    @Override
+                    public TabGroupNode visitGroup(TabGroupNode g) {
+                        return g;
+                    }
+
+                    @Override
+                    public TabGroupNode visitSplit(SplitNode s) {
+                        TabGroupNode found = firstTabGroup(s.first());
+                        if (found != null) {
+                            return found;
+                        }
+                        return firstTabGroup(s.second());
+                    }
+                });
     }
 
     private static ParentRef findParent(WorkspaceNode node, String groupId) {

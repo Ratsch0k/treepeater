@@ -91,6 +91,18 @@ public final class TabGroupNode implements WorkspaceNode {
         return removed;
     }
 
+    public boolean reorderTab(RequestTreeNode node, int newIndex) {
+        int current = this.tabs.indexOf(node);
+        if (current < 0 || current == newIndex) {
+            return false;
+        }
+        this.tabs.remove(current);
+        int idx = Math.max(0, Math.min(newIndex, this.tabs.size()));
+        this.tabs.add(idx, node);
+        this.selectedIndex = idx;
+        return true;
+    }
+
     public RequestTreeNode removeTabAt(int index) {
         if (index < 0 || index >= this.tabs.size()) {
             return null;

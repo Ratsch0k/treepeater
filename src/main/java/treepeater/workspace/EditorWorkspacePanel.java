@@ -4,6 +4,8 @@ import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -41,8 +43,8 @@ public class EditorWorkspacePanel extends JPanel implements EditorWorkspaceInter
         this.onWorkspaceLayoutChanged = onWorkspaceLayoutChanged;
     }
 
-    public Map<RequestTreeNode, RequestResponsePanel> tabMap() {
-        return this.tabMap;
+    public Collection<RequestResponsePanel> allPanels() {
+        return Collections.unmodifiableCollection(this.tabMap.values());
     }
 
     public RequestResponsePanel getSelectedPanel() {
@@ -174,7 +176,22 @@ public class EditorWorkspacePanel extends JPanel implements EditorWorkspaceInter
     public void rebuildStructure() {
         EditorWorkspace workspace = this.model.getWorkspace();
         Set<String> neededIds = new HashSet<>();
-        collectGroupIds(workspace.root(), neededIds);
+        WorkspaceWalk.walk(
+                workspace.root(),
+                new WorkspaceVisitor<Void>() {
+                    @Override
+                    public Void visitGroup(TabGroupNode g) {
+                        neededIds.add(g.id());
+                        return null;
+                    }
+
+                    @Override
+                    public Void visitSplit(SplitNode s) {
+                        collectGroupIds(s.first(), neededIds);
+                        collectGroupIds(s.second(), neededIds);
+                        return null;
+                    }
+                });
 
         for (String id : new HashSet<>(this.groupPanels.keySet())) {
             if (!neededIds.contains(id)) {
@@ -199,14 +216,22 @@ public class EditorWorkspacePanel extends JPanel implements EditorWorkspaceInter
     }
 
     private static void collectGroupIds(WorkspaceNode node, Set<String> ids) {
-        if (node instanceof TabGroupNode g) {
-            ids.add(g.id());
-            return;
-        }
-        if (node instanceof SplitNode s) {
-            collectGroupIds(s.first(), ids);
-            collectGroupIds(s.second(), ids);
-        }
+        WorkspaceWalk.walk(
+                node,
+                new WorkspaceVisitor<Void>() {
+                    @Override
+                    public Void visitGroup(TabGroupNode g) {
+                        ids.add(g.id());
+                        return null;
+                    }
+
+                    @Override
+                    public Void visitSplit(SplitNode s) {
+                        collectGroupIds(s.first(), ids);
+                        collectGroupIds(s.second(), ids);
+                        return null;
+                    }
+                });
     }
 
     private Component buildComponent(WorkspaceNode node) {
@@ -286,7 +311,7 @@ public class EditorWorkspacePanel extends JPanel implements EditorWorkspaceInter
                                     n,
                                     () -> this.selectPreviousInGroup(n),
                                     () -> this.selectNextInGroup(n));
-                    panel.installWorkspaceFocusTracking(() -> this.onPanelFocused(panel));
+                    WorkspaceFocus.install(panel, () -> this.onPanelFocused(panel));
                     return panel;
                 });
     }

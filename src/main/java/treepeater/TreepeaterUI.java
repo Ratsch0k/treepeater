@@ -46,6 +46,7 @@ import treepeater.requestResponse.toolbar.RequestResponseToolbar;
 import treepeater.requestResponse.toolbar.RequestResponseToolbarListener;
 import treepeater.requestResponse.toolbar.ToolbarIconButton;
 import treepeater.workspace.EditorWorkspacePanel;
+import treepeater.workspace.TabGroupNode;
 
 public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarListener, RepeaterTabAgentBridge {
     private static final Dimension MIN_LEFT_PANEL_SIZE = new Dimension(240, 0);
@@ -119,11 +120,10 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         this.editorWorkspacePanel.restoreInitialTabs();
 
         if (model.getActiveNode() != null) {
+            TabGroupNode activeGroup = model.getWorkspace().findGroupContaining(model.getActiveNode());
             this.editorWorkspacePanel.handleOpenTab(
                     model.getActiveNode(),
-                    model.getWorkspace().findGroupContaining(model.getActiveNode()) != null
-                            ? model.getWorkspace().findGroupContaining(model.getActiveNode()).id()
-                            : model.getWorkspace().focusedTabGroupId());
+                    activeGroup != null ? activeGroup.id() : model.getWorkspace().focusedTabGroupId());
         }
 
         this.onRequestResponseTabSelectionChanged();
@@ -247,7 +247,7 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
                 }
             }
         }
-        for (RequestResponsePanel p : this.editorWorkspacePanel.tabMap().values()) {
+        for (RequestResponsePanel p : this.editorWorkspacePanel.allPanels()) {
             if (p != null && p.getRequestNodeId() == id) {
                 return p.buildAgentToolContextForAi();
             }

@@ -160,9 +160,11 @@ public class TreepeaterModel implements TreepeaterNodeListener {
             }
         }
 
-        this.workspace.removeTab(node);
+        boolean layoutChanged = this.workspace.removeTab(node);
         this.listeners.forEach(l -> l.onCloseTab(node));
-        this.listeners.forEach(TreepeaterModelListener::onWorkspaceLayoutChanged);
+        if (layoutChanged) {
+            this.listeners.forEach(TreepeaterModelListener::onWorkspaceLayoutChanged);
+        }
         Treepeater.saveState();
     }
 
@@ -186,9 +188,6 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         EditorWorkspace.SplitResult result = this.workspace.splitGroup(groupId, orientation);
         if (result == null) {
             return;
-        }
-        if (this.workspace.findGroupContaining(this.activeNode) != null) {
-            // activeNode already moved with split
         }
         this.listeners.forEach(TreepeaterModelListener::onWorkspaceLayoutChanged);
         this.listeners.forEach(l -> l.onFocusedGroupChanged(this.workspace.focusedTabGroupId()));

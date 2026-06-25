@@ -110,8 +110,7 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         model.getTree().setCreateFolderHandler(model::createFolder);
 
         if (model.getRequestCount() > 0) {
-            this.treePanelActive = true;
-            this.setLeftComponent(this.buildTreePanel());
+            this.activateTreePanel();
         } else {
             this.treePanelActive = false;
             this.setLeftComponent(this.buildDefaultLeftPanel());
@@ -137,8 +136,7 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
             @Override
             public void treeNodesInserted(TreeModelEvent e) {
                 if (!treePanelActive && model.getRequestCount() > 0) {
-                    treePanelActive = true;
-                    TreepeaterUI.this.setLeftComponent(TreepeaterUI.this.buildTreePanel());
+                    SwingUtilities.invokeLater(TreepeaterUI.this::activateTreePanel);
                 }
             }
 
@@ -499,6 +497,19 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         JPanel leftPanel = new JPanel();
         leftPanel.add(new JLabel("Send a request to Treepeater"));
         return leftPanel;
+    }
+
+    private void activateTreePanel() {
+        if (this.treePanelActive) {
+            return;
+        }
+        this.treePanelActive = true;
+        JComponent treePanel = this.buildTreePanel();
+        this.setLeftComponent(treePanel);
+        this.model.getTree().syncUiAfterBulkLoad();
+        this.model.getTree().invalidateLayoutCache();
+        treePanel.revalidate();
+        treePanel.repaint();
     }
 
     private JComponent buildTreePanel() {

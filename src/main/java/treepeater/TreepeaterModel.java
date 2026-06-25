@@ -13,6 +13,9 @@ import burp.api.montoya.http.message.responses.HttpResponse;
 import treepeater.ai.AgentChatWorkspace;
 import treepeater.requestResponse.RequestHistory;
 import treepeater.settings.StatusRegistry;
+import treepeater.workspace.EditorWorkspace;
+import treepeater.workspace.SplitOrientation;
+import treepeater.workspace.TabGroupNode;
 
 import treepeater.tree.FolderTreeNode;
 import treepeater.tree.RequestTree;
@@ -22,7 +25,7 @@ import treepeater.tree.TreepeaterNodeListener;
 
 public class TreepeaterModel implements TreepeaterNodeListener {
     private RequestTree tree;
-    private LinkedList<RequestTreeNode> tabs;
+    private EditorWorkspace workspace;
     private RequestTreeNode activeNode;
     private int requestCount;
 
@@ -42,8 +45,24 @@ public class TreepeaterModel implements TreepeaterNodeListener {
             int requestCount,
             String globalNotes,
             AgentChatWorkspace globalAgentChatWorkspace) {
+        this(
+                tree,
+                EditorWorkspace.fromLegacyTabs(tabs, activeNode),
+                activeNode,
+                requestCount,
+                globalNotes,
+                globalAgentChatWorkspace);
+    }
+
+    public TreepeaterModel(
+            RequestTree tree,
+            EditorWorkspace workspace,
+            RequestTreeNode activeNode,
+            int requestCount,
+            String globalNotes,
+            AgentChatWorkspace globalAgentChatWorkspace) {
         this.tree = tree;
-        this.tabs = tabs;
+        this.workspace = workspace != null ? workspace : new EditorWorkspace();
         this.activeNode = activeNode;
         this.requestCount = requestCount;
         this.globalNotes = globalNotes != null ? globalNotes : "";
@@ -56,7 +75,7 @@ public class TreepeaterModel implements TreepeaterNodeListener {
 
     public TreepeaterModel() {
         this.tree = new RequestTree();
-        this.tabs = new LinkedList<>();
+        this.workspace = new EditorWorkspace();
         this.requestCount = 0;
         this.activeNode = null;
         this.globalNotes = "";
@@ -103,14 +122,99 @@ public class TreepeaterModel implements TreepeaterNodeListener {
     public void addTab(RequestTreeNode node) {
         this.activeNode = node;
 
-        if (this.tabs.contains(node)) {
-            this.listeners.forEach(l -> l.onOpenTab(node));
+        if (this.workspace.isOpen(node)) {
+            TabGroupNode group = this.workspace.findGroupContaining(node);
+            String groupId = group != null ? group.id() : this.workspace.focusedTabGroupId();
+            this.workspace.setFocusedTabGroupId(groupId);
+            if (group != null) {
+                group.setSelectedIndex(group.indexOf(node));
+            }
+            this.listeners.forEach(l -> l.onOpenTab(node, groupId));
         } else {
-            this.tabs.add(node);
-            this.listeners.forEach(l -> l.onNewTab(node));
+            this.workspace.addTabToFocused(node);
+            String groupId = this.workspace.focusedTabGroupId();
+            this.listeners.forEach(l -> l.onNewTab(node, groupId));
         }
 
         Treepeater.saveState();
+    }
+
+    public void removeTab(RequestTreeNode node) {
+        if (node == null) {
+            return;
+        }
+
+        if (node.equals(this.activeNode)) {
+            TabGroupNode group = this.workspace.findGroupContaining(node);
+            if (group != null) {
+                int idx = group.indexOf(node);
+                if (idx >= 0 && idx < group.tabs().size() - 1) {
+                    this.activeNode = group.tabs().get(idx + 1);
+                } else if (idx > 0) {
+                    this.activeNode = group.tabs().get(idx - 1);
+                } else {
+                    this.activeNode = pickFallbackActiveNode(node);
+                }
+            } else {
+                this.activeNode = pickFallbackActiveNode(node);
+            }
+        }
+
+        boolean layoutChanged = this.workspace.removeTab(node);
+        this.listeners.forEach(l -> l.onCloseTab(node));
+        if (layoutChanged) {
+            this.listeners.forEach(TreepeaterModelListener::onWorkspaceLayoutChanged);
+        }
+        Treepeater.saveState();
+    }
+
+    private RequestTreeNode pickFallbackActiveNode(RequestTreeNode excluding) {
+        for (RequestTreeNode tab : this.workspace.allOpenTabs()) {
+            if (!tab.equals(excluding)) {
+                return tab;
+            }
+        }
+        return null;
+    }
+
+    public void moveTab(RequestTreeNode node, String fromGroupId, String toGroupId, int dropIndex) {
+        this.workspace.moveTab(node, fromGroupId, toGroupId, dropIndex);
+        this.activeNode = node;
+        this.listeners.forEach(l -> l.onTabMoved(node, fromGroupId, toGroupId, dropIndex));
+        Treepeater.saveState();
+    }
+
+    public void splitTabGroup(String groupId, SplitOrientation orientation) {
+        EditorWorkspace.SplitResult result = this.workspace.splitGroup(groupId, orientation);
+        if (result == null) {
+            return;
+        }
+        this.listeners.forEach(TreepeaterModelListener::onWorkspaceLayoutChanged);
+        this.listeners.forEach(l -> l.onFocusedGroupChanged(this.workspace.focusedTabGroupId()));
+        Treepeater.saveState();
+    }
+
+    public void setActiveNode(RequestTreeNode node) {
+        if (node == null) {
+            this.activeNode = null;
+            return;
+        }
+        this.activeNode = node;
+        TabGroupNode group = this.workspace.findGroupContaining(node);
+        if (group != null) {
+            group.setSelectedIndex(group.indexOf(node));
+            this.workspace.setFocusedTabGroupId(group.id());
+        }
+        Treepeater.saveState();
+    }
+
+    public void setFocusedTabGroupId(String tabGroupId) {
+        this.workspace.setFocusedTabGroupId(tabGroupId);
+        this.listeners.forEach(l -> l.onFocusedGroupChanged(tabGroupId));
+    }
+
+    public EditorWorkspace getWorkspace() {
+        return this.workspace;
     }
 
     public void removeNodeFromTree(TreepeaterNode node) {
@@ -127,9 +231,9 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         List<TreepeaterNode> subtree = new ArrayList<>();
         collectSubtreeNodes(node, subtree);
         Set<TreepeaterNode> removed = new HashSet<>(subtree);
-        for (int i = this.tabs.size() - 1; i >= 0; i--) {
-            if (removed.contains(this.tabs.get(i))) {
-                this.removeTab(i);
+        for (RequestTreeNode tab : new ArrayList<>(this.workspace.allOpenTabs())) {
+            if (removed.contains(tab)) {
+                this.removeTab(tab);
             }
         }
         for (TreepeaterNode n : subtree) {
@@ -145,24 +249,6 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         for (int i = 0; i < n.getChildCount(); i++) {
             collectSubtreeNodes((TreepeaterNode) n.getChildAt(i), out);
         }
-    }
-
-    public void removeTab(int idx) {
-        RequestTreeNode node = this.tabs.get(idx);
-
-        if (idx == this.tabs.indexOf(this.activeNode)) {
-            if (idx < this.tabs.size() - 1) {
-                this.activeNode = this.tabs.get(idx + 1);
-            } else if (idx > 0) {
-                this.activeNode = this.tabs.get(idx - 1);
-            } else {
-                this.activeNode = null;
-            }
-        }
-
-        this.tabs.remove(idx);
-        this.listeners.forEach(l -> l.onCloseTab(node));
-        Treepeater.saveState();
     }
 
     public void insertNode(HttpRequestResponse requestResponse) {
@@ -325,7 +411,11 @@ public class TreepeaterModel implements TreepeaterNodeListener {
     }
 
     public List<RequestTreeNode> getTabs() {
-        return this.tabs;
+        return this.workspace.allOpenTabs();
+    }
+
+    public List<RequestTreeNode> getAllOpenTabs() {
+        return this.workspace.allOpenTabs();
     }
 
     /**

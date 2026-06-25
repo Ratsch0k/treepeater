@@ -18,6 +18,11 @@ import burp.api.montoya.persistence.Persistence;
 import treepeater.Treepeater;
 import treepeater.TreepeaterModel;
 import treepeater.Utilities;
+import treepeater.workspace.EditorWorkspace;
+import treepeater.workspace.SplitNode;
+import treepeater.workspace.SplitOrientation;
+import treepeater.workspace.TabGroupNode;
+import treepeater.workspace.WorkspaceNode;
 import treepeater.ai.AgentChatSession;
 import treepeater.ai.AgentChatWorkspace;
 import treepeater.ai.AgentMode;
@@ -47,6 +52,18 @@ public class TreepeaterPersistence {
     private static final String PERSISTENCE_GLOBAL_UI = "globalUi";
     private static final String PERSISTENCE_TREE = "tree";
     private static final String PERSISTENCE_TABS = "tabs";
+    private static final String PERSISTENCE_WORKSPACE_LAYOUT = "workspaceLayout";
+    private static final String PERSISTENCE_WORKSPACE_FOCUSED_GROUP = "focusedTabGroupId";
+    private static final String PERSISTENCE_WORKSPACE_ROOT = "root";
+    private static final String PERSISTENCE_WORKSPACE_TYPE = "type";
+    private static final String PERSISTENCE_WORKSPACE_GROUP_ID = "groupId";
+    private static final String PERSISTENCE_WORKSPACE_SELECTED_INDEX = "selectedIndex";
+    private static final String PERSISTENCE_WORKSPACE_ORIENTATION = "orientation";
+    private static final String PERSISTENCE_WORKSPACE_DIVIDER = "dividerProportion";
+    private static final String PERSISTENCE_WORKSPACE_FIRST = "first";
+    private static final String PERSISTENCE_WORKSPACE_SECOND = "second";
+    private static final String WORKSPACE_TYPE_TAB_GROUP = "tabGroup";
+    private static final String WORKSPACE_TYPE_SPLIT = "split";
     private static final String PERSISTENCE_CHILDREN = "children";
     private static final String PERSISTENCE_ACTIVE_NODE = "activeNode";
     private static final String PERSISTENCE_REQUEST_COUNT = "requestCount";
@@ -142,6 +159,7 @@ public class TreepeaterPersistence {
             root.setInteger(PERSISTENCE_ACTIVE_NODE, -1);
         }
         root.setChildObject(PERSISTENCE_TABS, saveTabs(model.getTabs()));
+        root.setChildObject(PERSISTENCE_WORKSPACE_LAYOUT, saveWorkspaceLayout(model.getWorkspace()));
 
         PersistedObject globalUi = PersistedObject.persistedObject();
         globalUi.setString(PERSISTENCE_NOTES, model.getGlobalNotes());
@@ -296,6 +314,14 @@ public class TreepeaterPersistence {
             activeNode = nodeMap.get(activeNodeId);
         }
 
+        EditorWorkspace workspace;
+        PersistedObject workspaceLayout = root.getChildObject(PERSISTENCE_WORKSPACE_LAYOUT);
+        if (workspaceLayout != null) {
+            workspace = this.loadWorkspaceLayout(workspaceLayout, nodeMap);
+        } else {
+            workspace = EditorWorkspace.fromLegacyTabs(tabs, activeNode);
+        }
+
         String globalNotes = "";
         AgentChatWorkspace globalWs = AgentChatWorkspace.EMPTY;
         PersistedObject globalUi = root.getChildObject(PERSISTENCE_GLOBAL_UI);
@@ -313,7 +339,94 @@ public class TreepeaterPersistence {
             }
         }
 
-        return new TreepeaterModel(tree, tabs, activeNode, requestCount.intValue(), globalNotes, globalWs);
+        return new TreepeaterModel(tree, workspace, activeNode, requestCount.intValue(), globalNotes, globalWs);
+    }
+
+    private PersistedObject saveWorkspaceLayout(EditorWorkspace workspace) {
+        PersistedObject layout = PersistedObject.persistedObject();
+        layout.setString(PERSISTENCE_WORKSPACE_FOCUSED_GROUP, workspace.focusedTabGroupId());
+        layout.setChildObject(PERSISTENCE_WORKSPACE_ROOT, saveWorkspaceNode(workspace.root()));
+        return layout;
+    }
+
+    private PersistedObject saveWorkspaceNode(WorkspaceNode node) {
+        PersistedObject o = PersistedObject.persistedObject();
+        if (node instanceof TabGroupNode g) {
+            o.setString(PERSISTENCE_WORKSPACE_TYPE, WORKSPACE_TYPE_TAB_GROUP);
+            o.setString(PERSISTENCE_WORKSPACE_GROUP_ID, g.id());
+            o.setInteger(PERSISTENCE_WORKSPACE_SELECTED_INDEX, g.selectedIndex());
+            o.setInteger(PERSISTENCE_SIZE, g.tabs().size());
+            for (int i = 0; i < g.tabs().size(); i++) {
+                o.setInteger(PERSISTENCE_TABS + "_" + i, g.tabs().get(i).getId());
+            }
+            return o;
+        }
+        if (node instanceof SplitNode s) {
+            o.setString(PERSISTENCE_WORKSPACE_TYPE, WORKSPACE_TYPE_SPLIT);
+            o.setString(PERSISTENCE_WORKSPACE_ORIENTATION, s.orientation().name());
+            o.setString(PERSISTENCE_WORKSPACE_DIVIDER, Double.toString(s.dividerProportion()));
+            o.setChildObject(PERSISTENCE_WORKSPACE_FIRST, saveWorkspaceNode(s.first()));
+            o.setChildObject(PERSISTENCE_WORKSPACE_SECOND, saveWorkspaceNode(s.second()));
+            return o;
+        }
+        throw new IllegalStateException("Unknown workspace node type");
+    }
+
+    private EditorWorkspace loadWorkspaceLayout(PersistedObject layout, HashMap<Integer, RequestTreeNode> nodeMap) {
+        String focused = layout.getString(PERSISTENCE_WORKSPACE_FOCUSED_GROUP);
+        PersistedObject rootObj = layout.getChildObject(PERSISTENCE_WORKSPACE_ROOT);
+        WorkspaceNode root = rootObj != null ? loadWorkspaceNode(rootObj, nodeMap) : new TabGroupNode(TabGroupNode.newGroupId());
+        return new EditorWorkspace(root, focused);
+    }
+
+    private WorkspaceNode loadWorkspaceNode(PersistedObject o, HashMap<Integer, RequestTreeNode> nodeMap) {
+        String type = o.getString(PERSISTENCE_WORKSPACE_TYPE);
+        if (WORKSPACE_TYPE_TAB_GROUP.equals(type)) {
+            String groupId = o.getString(PERSISTENCE_WORKSPACE_GROUP_ID);
+            int selected = o.getInteger(PERSISTENCE_WORKSPACE_SELECTED_INDEX) != null
+                    ? o.getInteger(PERSISTENCE_WORKSPACE_SELECTED_INDEX).intValue()
+                    : -1;
+            int count = o.getInteger(PERSISTENCE_SIZE) != null ? o.getInteger(PERSISTENCE_SIZE).intValue() : 0;
+            LinkedList<RequestTreeNode> tabs = new LinkedList<>();
+            for (int i = 0; i < count; i++) {
+                Integer nodeId = o.getInteger(PERSISTENCE_TABS + "_" + i);
+                if (nodeId != null) {
+                    RequestTreeNode node = nodeMap.get(nodeId.intValue());
+                    if (node != null) {
+                        tabs.add(node);
+                    }
+                }
+            }
+            return new TabGroupNode(groupId, tabs, selected);
+        }
+        if (WORKSPACE_TYPE_SPLIT.equals(type)) {
+            SplitOrientation orientation = SplitOrientation.HORIZONTAL;
+            String orientationRaw = o.getString(PERSISTENCE_WORKSPACE_ORIENTATION);
+            if (orientationRaw != null) {
+                try {
+                    orientation = SplitOrientation.valueOf(orientationRaw);
+                } catch (IllegalArgumentException ignored) {
+                }
+            }
+            double divider = 0.5;
+            String dividerRaw = o.getString(PERSISTENCE_WORKSPACE_DIVIDER);
+            if (dividerRaw != null) {
+                try {
+                    divider = Double.parseDouble(dividerRaw);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+            WorkspaceNode first = loadWorkspaceNode(o.getChildObject(PERSISTENCE_WORKSPACE_FIRST), nodeMap);
+            WorkspaceNode second = loadWorkspaceNode(o.getChildObject(PERSISTENCE_WORKSPACE_SECOND), nodeMap);
+            if (first == null) {
+                first = new TabGroupNode(TabGroupNode.newGroupId());
+            }
+            if (second == null) {
+                second = new TabGroupNode(TabGroupNode.newGroupId());
+            }
+            return new SplitNode(orientation, divider, first, second);
+        }
+        return new TabGroupNode(TabGroupNode.newGroupId());
     }
 
     public boolean hasStatusRegistry() {

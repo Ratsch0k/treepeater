@@ -4,9 +4,12 @@ import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.util.HashMap;
 import java.util.Optional;
+import java.awt.Component;
 import java.awt.KeyEventDispatcher;
+import java.awt.KeyboardFocusManager;
 
 import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
 
 /**
  * Configurable shortcuts for {@link RequestResponsePanel}. Maps {@code actionId} to the
@@ -15,6 +18,11 @@ import javax.swing.KeyStroke;
  * former static default list.
  */
 public class HotkeyHandler implements KeyEventDispatcher {
+    /**
+     * Store a reference to the the component for which these hotkeys should be active.
+     * This will be used whenever a key is pressed to check if the component is actually in focus.
+     */
+    private final Component linkedComponent;
 
     public record Hotkey(KeyStroke keyStroke, Runnable action) {
         
@@ -25,7 +33,8 @@ public class HotkeyHandler implements KeyEventDispatcher {
 
     private final HashMap<String, Hotkey> bindings = new HashMap<>();
 
-    public HotkeyHandler() {
+    public HotkeyHandler(Component linkedComponent) {
+        this.linkedComponent = linkedComponent;
     }
 
     /**
@@ -106,6 +115,11 @@ public class HotkeyHandler implements KeyEventDispatcher {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
+        Component focusOwner = KeyboardFocusManager.getCurrentKeyboardFocusManager().getPermanentFocusOwner();
+        if (focusOwner == null || !SwingUtilities.isDescendingFrom(focusOwner, linkedComponent)) {
+            return false;
+        }
+
         Optional<Binding> matched = findFirstMatching(e);
         if (matched.isEmpty()) {
             return false;

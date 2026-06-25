@@ -15,7 +15,6 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
-import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -52,7 +51,7 @@ public class RequestResponsePanel extends JPanel {
     private HttpResponseEditor responseEditor;
 
     private CustomButton sendButton;
-    private JCheckBox updateContentLengthCheckBox;
+    private JButton optionsButton;
     private JButton cancelButton;
     private JPanel topBar;
     private JPanel topBarWrapper;
@@ -72,6 +71,8 @@ public class RequestResponsePanel extends JPanel {
     private JButton editTargetButton;
 
     private final RequestPanelHttpTarget httpTarget = new RequestPanelHttpTarget();
+
+    private RequestResponseOptions requestOptions = RequestResponseOptions.DEFAULT;
 
     private RequestHistoryNavigator historyNavigator;
 
@@ -116,10 +117,10 @@ public class RequestResponsePanel extends JPanel {
         this.sendButton = new CustomButton("Send");
         this.sendButton.setBorder(BorderFactory.createEmptyBorder(3, 0, 3, 0));
 
-        this.updateContentLengthCheckBox = new JCheckBox("Update Content-Length");
-        this.updateContentLengthCheckBox.setSelected(true);
-        this.updateContentLengthCheckBox.setToolTipText(
-                "When enabled, Content-Length is set from the request body before sending (omitted for chunked encoding).");
+        this.optionsButton = new JButton();
+        this.optionsButton.setToolTipText("Request options");
+        RequestResponsePanelUi.styleOptionsButton(this.optionsButton);
+        this.optionsButton.addActionListener(e -> openRequestOptionsDialog());
 
         this.cancelButton = new JButton();
 
@@ -138,7 +139,7 @@ public class RequestResponsePanel extends JPanel {
         this.topBar.add(this.historyForwardSplitButton);
 
         this.topBar.add(Box.createHorizontalStrut(6));
-        this.topBar.add(this.updateContentLengthCheckBox);
+        this.topBar.add(this.optionsButton);
 
         this.topBar.add(Box.createHorizontalGlue());
         this.topBar.add(this.targetValueLabel);
@@ -207,7 +208,7 @@ public class RequestResponsePanel extends JPanel {
 
         this.add(this.splitPane, BorderLayout.CENTER);
 
-        this.hotkeyHandler = new HotkeyHandler();
+        this.hotkeyHandler = new HotkeyHandler(this);
         this.populateHotkeyActions();
         RequestResponseHotkeyInstaller.install(this, this.hotkeyHandler, this.hotkeyActions, this.hotkeyHandlerRegistered);
     }
@@ -266,6 +267,7 @@ public class RequestResponsePanel extends JPanel {
         RequestResponsePanelUi.applyTopBarTheme(
                 this.topBarWrapper,
                 this.sendButton,
+                this.optionsButton,
                 this.historyBackSplitButton,
                 this.historyForwardSplitButton,
                 this.historyBackButton,
@@ -274,9 +276,6 @@ public class RequestResponsePanel extends JPanel {
                 this.historyForwardDropButton);
         if (this.splitPane != null && Treepeater.api != null) {
             Treepeater.api.userInterface().applyThemeToComponent(this.splitPane);
-        }
-        if (this.updateContentLengthCheckBox != null && Treepeater.api != null) {
-            Treepeater.api.userInterface().applyThemeToComponent(this.updateContentLengthCheckBox);
         }
     }
 
@@ -420,9 +419,9 @@ public class RequestResponsePanel extends JPanel {
     private void refreshTargetLabel() {
         String label = this.httpTarget.statusLineLabel();
         if (label.isEmpty()) {
-            label = "Target: (not set)";
+            label = "Target not set";
         } else {
-            label = "Target: " + label;
+            label = "" + label;
         }
         this.targetValueLabel.setText(label);
     }
@@ -523,7 +522,7 @@ public class RequestResponsePanel extends JPanel {
     private HttpRequest prepareAndCommitRequestForSend() {
         HttpRequest r = this.requestEditor.getRequest();
         r = this.httpTarget.applyToRequest(r);
-        if (this.updateContentLengthCheckBox.isSelected()) {
+        if (this.requestOptions.updateContentLength()) {
             r = RequestContentLength.syncContentLengthToBody(r);
         }
         this.node.setRequest(r);
@@ -612,6 +611,19 @@ public class RequestResponsePanel extends JPanel {
         } catch (Exception ignored) {
             return onFailure;
         }
+    }
+
+    private void openRequestOptionsDialog() {
+        RequestResponseOptionsDialogContent content = new RequestResponseOptionsDialogContent(this.requestOptions);
+
+        int result = RequestResponsePanelUi.showConfirmDialogBelowButton(
+                this, this.optionsButton, content, "Request options");
+
+        if (result != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        this.requestOptions = content.getOptions();
     }
 
     private void openEditTargetDialog() {

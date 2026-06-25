@@ -274,6 +274,11 @@ public class RequestTree extends JTree {
         this.model.nodeStructureChanged(this.root);
     }
 
+    /** Clears cached row sizes so layout is recomputed for the current viewport width. */
+    public void invalidateLayoutCache() {
+        this.ui.invalidateNodeLayoutCache();
+    }
+
     public List<RequestTreeNodeSimple> toSimpleRepeaterList() {
         ArrayList<RequestTreeNodeSimple> children = new ArrayList<>();
 

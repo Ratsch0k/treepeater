@@ -1,6 +1,7 @@
 package treepeater;
 
 import java.awt.Color;
+import java.awt.FontMetrics;
 import java.awt.Point;
 import java.awt.Rectangle;
 import java.nio.ByteBuffer;
@@ -166,24 +167,83 @@ public class Utilities {
      * @return the slash path for the node
      */
     public static String slashPathForNode(RequestTreeNode node) {
-        // ID of the root which is not a real request tab
-        final int SYNTHETIC_ROOT_ID = 0;
+        return String.join("/", collectSlashPathParts(node, true));
+    }
 
+    /** Slash path of parent folders only (excludes the node's own name / tab title). */
+    public static String parentSlashPathForNode(RequestTreeNode node) {
+        return String.join("/", collectSlashPathParts(node, false));
+    }
+
+    private static final int SYNTHETIC_ROOT_ID = 0;
+
+    private static List<String> collectSlashPathParts(TreepeaterNode start, boolean includeStart) {
         List<String> parts = new ArrayList<>();
-        for (TreepeaterNode cur = node; cur != null; ) {
+        TreepeaterNode cur =
+                includeStart ? start : start.getParent() instanceof TreepeaterNode tn ? tn : null;
+        while (cur != null) {
             if (cur.getId() == SYNTHETIC_ROOT_ID) {
                 break;
             }
             String name = cur.getName();
             parts.add(name != null ? name : "#" + cur.getId());
-            TreepeaterNode p = cur.getParent() instanceof TreepeaterNode tn ? tn : null;
-            if (p == null) {
-                break;
-            }
-            cur = p;
+            cur = cur.getParent() instanceof TreepeaterNode p ? p : null;
         }
         Collections.reverse(parts);
-        return String.join("/", parts);
+        return parts;
+    }
+
+    /**
+     * Truncates {@code path} to fit {@code maxWidthPx}, keeping the first and last segment when possible.
+     */
+    public static String truncatePathMiddle(String path, int maxWidthPx, FontMetrics fm) {
+        if (path == null || path.isEmpty() || maxWidthPx <= 0 || fm == null) {
+            return path != null ? path : "";
+        }
+        if (fm.stringWidth(path) <= maxWidthPx) {
+            return path;
+        }
+        String[] parts = path.split("/", -1);
+        if (parts.length <= 1) {
+            return truncateEnd(path, maxWidthPx, fm);
+        }
+
+        String ellipsis = "/.../";
+        String first = parts[0];
+        String last = parts[parts.length - 1];
+        while (true) {
+            String candidate = first + ellipsis + last;
+            if (fm.stringWidth(candidate) <= maxWidthPx) {
+                return candidate;
+            }
+            if (first.length() > 1 && first.length() >= last.length()) {
+                first = first.substring(0, first.length() - 1);
+            } else if (last.length() > 1) {
+                last = last.substring(0, last.length() - 1);
+            } else if (first.length() > 1) {
+                first = first.substring(0, first.length() - 1);
+            } else {
+                return truncateEnd(candidate, maxWidthPx, fm);
+            }
+        }
+    }
+
+    private static String truncateEnd(String text, int maxWidthPx, FontMetrics fm) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        String ell = "...";
+        int ellW = fm.stringWidth(ell);
+        if (ellW >= maxWidthPx) {
+            return "";
+        }
+        for (int len = text.length(); len > 0; len--) {
+            String candidate = text.substring(0, len) + ell;
+            if (fm.stringWidth(candidate) <= maxWidthPx) {
+                return candidate;
+            }
+        }
+        return "";
     }
 
     public static String decodeUtf8Strict(byte[] chunk) {

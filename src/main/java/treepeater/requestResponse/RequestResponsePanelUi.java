@@ -3,26 +3,38 @@ package treepeater.requestResponse;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Font;
+import java.awt.Insets;
+import java.awt.Point;
 import java.util.Objects;
 
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JComponent;
+import javax.swing.JDialog;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JTabbedPane;
+import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import javax.swing.border.Border;
+
+import com.formdev.flatlaf.FlatClientProperties;
 
 import treepeater.Treepeater;
 import treepeater.Utilities;
 import treepeater.components.CustomButton;
 import treepeater.components.SplitButtonPanel;
+import treepeater.icons.GearIcon;
 
 /**
  * Static Swing helpers for {@link RequestResponsePanel}: themed top bar, flat toolbar buttons,
  * and labeled editor columns.
  */
 public final class RequestResponsePanelUi {
+
+    private static final int OPTIONS_BUTTON_ICON_SIZE = 22;
 
     private RequestResponsePanelUi() {
     }
@@ -86,6 +98,51 @@ public final class RequestResponsePanelUi {
         applyFlatButtonHoverVisual(button);
     }
 
+    public static void styleOptionsButton(JButton button) {
+        styleAsFlatButton(button);
+        installHoverBackground(button);
+        button.setMargin(new Insets(4,4,4,4));
+        applyOptionsButtonIcon(button);
+    }
+
+    static void applyOptionsButtonIcon(JButton button) {
+        if (button == null) {
+            return;
+        }
+        button.setIcon(
+                new GearIcon()
+                        .withSize(OPTIONS_BUTTON_ICON_SIZE, OPTIONS_BUTTON_ICON_SIZE)
+                        .withColor(UIManager.getColor("Label.foreground")));
+    }
+
+    /**
+     * Modal OK/Cancel dialog positioned with its top-left just below {@code anchor}'s bottom-left.
+     *
+     * @return {@link JOptionPane#OK_OPTION}, {@link JOptionPane#CANCEL_OPTION}, or {@link JOptionPane#CLOSED_OPTION}
+     */
+    static int showConfirmDialogBelowButton(Component parent, JButton anchor, JComponent content, String title) {
+        JOptionPane optionPane = new JOptionPane(content, JOptionPane.PLAIN_MESSAGE, JOptionPane.OK_CANCEL_OPTION);
+        JDialog dialog = optionPane.createDialog(parent, title);
+        if (Treepeater.api != null) {
+            Treepeater.api.userInterface().applyThemeToComponent(dialog);
+        }
+        dialog.pack();
+        Point location = new Point(0, anchor.getHeight() + 2);
+        SwingUtilities.convertPointToScreen(location, anchor);
+        dialog.setLocation(location);
+        dialog.setVisible(true);
+        Object value = optionPane.getValue();
+        if (value instanceof Integer selected) {
+            return selected;
+        }
+        return JOptionPane.CLOSED_OPTION;
+    }
+
+    /** Slightly tighter tab strip padding than FlatLaf defaults ({@code 4,12,4,12}). */
+    public static void applyCompactTabPane(JTabbedPane tabbedPane) {
+        tabbedPane.putClientProperty(FlatClientProperties.TABBED_PANE_TAB_INSETS, new Insets(3, 10, 3, 10));
+    }
+
     static JPanel makeHeaderPanel(String header, Component component) {
         JPanel panel = new JPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
@@ -112,6 +169,7 @@ public final class RequestResponsePanelUi {
     static void applyTopBarTheme(
             JPanel topBarWrapper,
             CustomButton sendButton,
+            JButton optionsButton,
             JPanel historyBackSplitButton,
             JPanel historyForwardSplitButton,
             JButton historyBackButton,
@@ -134,6 +192,13 @@ public final class RequestResponsePanelUi {
             sendButton.setHoverBackground(hov);
             sendButton.setBorder(BorderFactory.createEmptyBorder(3, 0, 3, 0));
             sendButton.repaint();
+        }
+        if (optionsButton != null) {
+            restyleFlatToolbarButton(optionsButton);
+            applyOptionsButtonIcon(optionsButton);
+            if (Treepeater.api != null) {
+                Treepeater.api.userInterface().applyThemeToComponent(optionsButton);
+            }
         }
         if (historyBackButton != null) {
             restyleFlatToolbarButton(historyBackButton);

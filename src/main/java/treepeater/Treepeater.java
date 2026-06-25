@@ -148,11 +148,13 @@ public class Treepeater implements BurpExtension {
             TreepeaterModel model,
             Optional<MessageEditorHttpRequestResponse> messageEditorRequestResponse,
             List<HttpRequestResponse> selectedRequestResponses) {
-        api.logging().logToOutput("Sent to Treepeater");
-        messageEditorRequestResponse.ifPresent(e -> model.insertNode(e.requestResponse()));
-        for (HttpRequestResponse r : selectedRequestResponses) {
-            model.insertNode(r);
-        }
+        SwingUtilities.invokeLater(() -> {
+            api.logging().logToOutput("Sent to Treepeater");
+            messageEditorRequestResponse.ifPresent(e -> model.insertNode(e.requestResponse()));
+            for (HttpRequestResponse r : selectedRequestResponses) {
+                model.insertNode(r);
+            }
+        });
     }
 
     class CustomTreeModelListener implements TreeModelListener {

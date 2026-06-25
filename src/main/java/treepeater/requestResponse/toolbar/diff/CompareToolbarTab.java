@@ -95,10 +95,10 @@ public class CompareToolbarTab {
         model.addListener(
                 new TreepeaterModelListener() {
                     @Override
-                    public void onOpenTab(RequestTreeNode node) {}
+                    public void onOpenTab(RequestTreeNode node, String tabGroupId) {}
 
                     @Override
-                    public void onNewTab(RequestTreeNode node) {}
+                    public void onNewTab(RequestTreeNode node, String tabGroupId) {}
 
                     @Override
                     public void onCloseTab(RequestTreeNode node) {}

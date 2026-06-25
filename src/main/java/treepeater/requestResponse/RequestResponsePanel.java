@@ -208,7 +208,7 @@ public class RequestResponsePanel extends JPanel {
 
         this.add(this.splitPane, BorderLayout.CENTER);
 
-        this.hotkeyHandler = new HotkeyHandler();
+        this.hotkeyHandler = new HotkeyHandler(this);
         this.populateHotkeyActions();
         RequestResponseHotkeyInstaller.install(this, this.hotkeyHandler, this.hotkeyActions, this.hotkeyHandlerRegistered);
     }

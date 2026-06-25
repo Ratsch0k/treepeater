@@ -117,8 +117,10 @@ public class RequestResponseTab extends JPanel {
 
         String parentPath = Utilities.parentSlashPathForNode(this.node);
         if (parentPath.isEmpty()) {
-            this.pathLabel.setText("");
-            this.pathLabel.setVisible(false);
+            // If the node is on the root level the path label should still be shown to make
+            // the tab location consistent.
+            this.pathLabel.setText(" ");
+            this.pathLabel.setVisible(true);
         } else {
             // Calculate if the path label should be truncated
             // Calculation is based on the width of the name label and the width of the path label

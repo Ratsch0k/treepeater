@@ -16,35 +16,45 @@ If you are already familiar with Repeater, you should be productive in Treepeate
 Almost every action has a configurable keyboard shortcut — sending requests, navigating history, switching tabs, renaming nodes, changing statuses, and more.
 Treepeater aims to eventually support a fully keyboard-driven workflow, though there is still work to do in that area.
 
-Several more features are planned, including an agent-based tester, an encoder/decoder, search-and-replace, diff view, split views, and a payload snippet library.
+## Features
 
-## Contents
-* [Before you start](#before-you-start)
-* [Writing your extension](#writing-your-extension)
-* [Building your extension](#building-your-extension)
-* [Loading the JAR file into Burp](#loading-the-jar-file-into-burp)
-* [Sharing your extension](#sharing-your-extension)
+Treepeater offers a vast set of features for efficient manual testing and clear organization on top of a familiar Repeater-style workflow. The primary reason I initially started developing Treepeater was the vertical, tree-based organization of requests and responses. Since then I've added further enhancements to aid in manual or automatic testing.
+
+### Tree organization
+
+Group requests in a nested tree that mirrors your target's structure. Drag nodes to reorder them, open several requests as tabs, and use color-coded statuses to track progress. Create your status with custom colors to adapt Treepeater to your own workflow.
+
+![Overview of Treepeater](./images/overview.png)
+
+### AI-assisted testing
+
+Let agents accelerate your testing without losing control over what happened. Use the model of your choice, even via Azure, and select from different agent modes. At full throttle, agents can interpret, modify, and send requests to provide you with full support during your assessments. Everything the agent does is shown in the chat, modifications are shown in diffs, sent requests create new history entries, and with stricter agent mode it even has to ask before changing or sending anything.
+
+![Starting an AI investigation](./images/agentic-testing-start.png)
+
+When a finding is confirmed, it can summarize the result in a structured report.
+
+![AI testing result](./images/agentic-testing-result.png)
+
+### Split workspace
+
+Split the workspace into multiple panes so you can work on several requests side by side. Split multiple times vertically or horizontally for complex requests flows, where you need to send, compare, and copy between requests without switching tabs.
+
+![Split workspace](./images/split-view.png)
+
+### Compare
+
+Pick any two tree nodes and diff their requests and responses side by side. Changes are highlighted with character counts, making it easy to spot subtle differences between payloads or server behavior.
+
+![Compare view](./images/diff-view.png)
 
 
-## Before you start
+## How To Install
 
-Before you begin development, make sure that your project's JDK is set to version "21".
+Install Treepeater either using the already built JAR from the releases or build the JAR yourself following chapter [How To Build](#how-to-build).
+Either way, you'll have a JAR file that you want to load into Burp.
 
-## Building your extension
-
-When you're ready to test and use your extension, follow these steps to build a JAR file and load it into Burp.
-
-### Building the JAR file
-
-To build the JAR file, run the following command in the root directory of this project:
-
-* For UNIX-based systems: `./gradlew jar`
-* For Windows systems: `gradlew jar`
-
-If successful, the JAR file is saved to `<project_root_directory>/build/libs/<project_name>.jar`. If the build fails, errors are shown in the console. By default, the project name is `extension-template-project`. You can change this in the [settings.gradle.kts](./settings.gradle.kts) file.
-
-
-## Loading the JAR file into Burp
+### Loading the JAR file into Burp
 
 To load the JAR file into Burp:
 
@@ -52,20 +62,30 @@ To load the JAR file into Burp:
 2. Click **Add**.
 3. Under **Extension details**, click **Select file**.
 4. Select the JAR file you just built, then click **Open**.
-5. [Optional] Under **Standard output** and **Standard error**, choose where to save output and error messages.
-6. Click **Next**. The extension is loaded into Burp.
-7. Review any messages displayed in the **Output** and **Errors** tabs.
-8. Click **Close**.
+5. Click **Next**. The extension is loaded into Burp.
+6. Click **Close**.
 
 Your extension is loaded and listed in the **Burp extensions** table. You can test its behavior and make changes to the code as necessary.
 
-### Reloading the JAR file in Burp
 
-If you make changes to the code, you must rebuild the JAR file and reload your extension in Burp for the changes to take effect.
+## How To Build
+* [Before you start](#before-you-start)
+* [Writing your extension](#writing-your-extension)
+* [Building your extension](#building-your-extension)
+* [Loading the JAR file into Burp](#loading-the-jar-file-into-burp)
+* [Sharing your extension](#sharing-your-extension)
 
-To rebuild the JAR file, follow the steps for [building the JAR file](#building-the-jar-file).
+### Requirements
 
-To quickly reload your extension in Burp:
+To build the JAR yourself, you need to have Java JDK 21 installed and it must be available on the path.
 
-1. In Burp, go to **Extensions > Installed**.
-2. Hold `Ctrl` or `⌘`, and select the **Loaded** checkbox next to your extension.
+### Building the Extension
+
+Build the extension by executing the following command
+```
+./gradlew jar
+```
+
+This command will install all the necessary libraries and build one JAR that can then simply be installed to Burp.
+If successful, the JAR file is saved to `./build/libs/Treepeater.jar`.
+

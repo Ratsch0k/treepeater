@@ -89,13 +89,19 @@ public class Treepeater implements BurpExtension {
         montoyaApi.userInterface().registerContextMenuItemsProvider(new ContextMenuItemsProvider() {
             @Override
             public List<Component> provideMenuItems(ContextMenuEvent event) {
-                JMenuItem item = new JMenuItem("Send to Treepeater");
+                JMenuItem item = new JMenuItem("Send to Treepeater (direct)");
 
                 item.addActionListener(l -> sendSelectionToTreepeater(montoyaApi, model,
                         event.messageEditorRequestResponse(),
                         event.selectedRequestResponses()));
 
-                return List.of(item);
+                JMenuItem sortedItem = new JMenuItem("Send to Treepeater (path-aware)");
+
+                sortedItem.addActionListener(l -> sendSelectionToTreepeaterSorted(montoyaApi, model,
+                        event.messageEditorRequestResponse(),
+                        event.selectedRequestResponses()));
+
+                return List.of(item, sortedItem);
             }
         });
 
@@ -153,6 +159,20 @@ public class Treepeater implements BurpExtension {
             messageEditorRequestResponse.ifPresent(e -> model.insertNode(e.requestResponse()));
             for (HttpRequestResponse r : selectedRequestResponses) {
                 model.insertNode(r);
+            }
+        });
+    }
+
+    private static void sendSelectionToTreepeaterSorted(
+            MontoyaApi api,
+            TreepeaterModel model,
+            Optional<MessageEditorHttpRequestResponse> messageEditorRequestResponse,
+            List<HttpRequestResponse> selectedRequestResponses) {
+        SwingUtilities.invokeLater(() -> {
+            api.logging().logToOutput("Sent to Treepeater (sorted)");
+            messageEditorRequestResponse.ifPresent(e -> model.importRequestSorted(e.requestResponse()));
+            for (HttpRequestResponse r : selectedRequestResponses) {
+                model.importRequestSorted(r);
             }
         });
     }

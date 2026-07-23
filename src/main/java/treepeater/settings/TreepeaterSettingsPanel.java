@@ -20,8 +20,10 @@ import java.util.function.Supplier;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.ButtonGroup;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
+import javax.swing.JRadioButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
@@ -80,6 +82,18 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
             "Each status has a name, background and border/icon color, and an SVG icon.",
             this.createStatusPanel()
         ));
+
+        this.root.add(new JSeparator(JSeparator.HORIZONTAL));
+
+        JPanel importPanel = this.createTitledSection(
+            "Import",
+            "Configure how the \"Send to Treepeater (sorted)\" action places imported requests. "
+                + "In direct mode the request becomes a leaf named after the last path segment, sitting next to any folder for deeper paths. "
+                + "In method-folder mode the request is placed under a per-method folder (e.g. [GET]) with the base leaf name configured below.",
+            this.createImportSettingsPanel()
+        );
+        importPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, SECTION_GAP, 0));
+        this.root.add(importPanel);
 
         this.root.add(new JSeparator(JSeparator.HORIZONTAL));
 
@@ -184,6 +198,53 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         parent.add(hotkeyLabel, labelGbc);
         parent.add(hotkeyButton, buttonGbc);
         return row + 1;
+    }
+
+    private JComponent createImportSettingsPanel() {
+        JPanel outer = new JPanel();
+        outer.setLayout(new BoxLayout(outer, BoxLayout.Y_AXIS));
+        outer.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JRadioButton directButton = new JRadioButton(
+                "Direct: leaf named after the last path segment, next to any nesting folder");
+        JRadioButton methodButton = new JRadioButton(
+                "Method folders: leaf under a per-method folder (e.g. [GET])");
+        directButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+        methodButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+        directButton.setOpaque(false);
+        methodButton.setOpaque(false);
+
+        ButtonGroup group = new ButtonGroup();
+        group.add(directButton);
+        group.add(methodButton);
+
+        boolean methodMode = TreepeaterSettings.IMPORT_LEAF_MODE_METHOD_FOLDER
+                .equals(this.settings.getImportLeafMode());
+        directButton.setSelected(!methodMode);
+        methodButton.setSelected(methodMode);
+
+        directButton.addActionListener(e ->
+                this.settings.setImportLeafMode(TreepeaterSettings.IMPORT_LEAF_MODE_DIRECT));
+        methodButton.addActionListener(e ->
+                this.settings.setImportLeafMode(TreepeaterSettings.IMPORT_LEAF_MODE_METHOD_FOLDER));
+
+        JPanel baseNamePanel = new JPanel(new GridBagLayout());
+        baseNamePanel.setOpaque(false);
+        baseNamePanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        this.addPersistedTextRow(
+                baseNamePanel,
+                0,
+                "Method-folder base leaf name:",
+                this.settings.getImportBaseLeafName(),
+                this.settings::setImportBaseLeafName,
+                false);
+
+        outer.add(directButton);
+        outer.add(Box.createVerticalStrut(4));
+        outer.add(methodButton);
+        outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
+        outer.add(baseNamePanel);
+        return outer;
     }
 
     private JComponent createLlmSettingsPanel() {

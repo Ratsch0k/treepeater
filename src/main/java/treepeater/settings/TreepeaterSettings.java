@@ -39,6 +39,15 @@ public class TreepeaterSettings {
     /** Integer preference: number of stored default statuses (0 means none). */
     public static final String DEFAULT_STATUSES_COUNT_SETTING = DEFAULT_STATUSES_SETTING + "_COUNT";
 
+    /** Bulk-path import leaf placement mode: {@link #IMPORT_LEAF_MODE_DIRECT} or {@link #IMPORT_LEAF_MODE_METHOD_FOLDER}. */
+    public static final String IMPORT_LEAF_MODE_SETTING = "TREEPEATER_IMPORT_LEAF_MODE";
+    /** Leaf sits directly under its path folder, named after the last path segment. */
+    public static final String IMPORT_LEAF_MODE_DIRECT = "DIRECT";
+    /** Leaf sits under a per-method folder (e.g. {@code [GET]}), named with the configured base name. */
+    public static final String IMPORT_LEAF_MODE_METHOD_FOLDER = "METHOD_FOLDER";
+    /** Base leaf name used in {@link #IMPORT_LEAF_MODE_METHOD_FOLDER} mode. */
+    public static final String IMPORT_METHOD_BASE_LEAF_NAME_SETTING = "TREEPEATER_IMPORT_METHOD_BASE_LEAF_NAME";
+
     public static final String LLM_OLLAMA_BASE_URL_SETTING = "TREEPEATER_LLM_OLLAMA_BASE_URL";
     public static final String LLM_OLLAMA_MODELS_SETTING = "TREEPEATER_LLM_OLLAMA_MODELS";
     public static final String LLM_OLLAMA_MODELS_COUNT_SETTING = LLM_OLLAMA_MODELS_SETTING + "_COUNT";
@@ -86,6 +95,8 @@ public class TreepeaterSettings {
         STRING_PREFERENCE_DEFAULTS.put(TAB_PREVIOUS_HOTKEY_SETTING, "Ctrl+Alt+Left");
         STRING_PREFERENCE_DEFAULTS.put(TAB_NEXT_HOTKEY_SETTING, "Ctrl+Alt+Right");
         STRING_PREFERENCE_DEFAULTS.put(FOCUS_TREE_HOTKEY_SETTING, "Ctrl+Alt+T");
+        STRING_PREFERENCE_DEFAULTS.put(IMPORT_LEAF_MODE_SETTING, IMPORT_LEAF_MODE_DIRECT);
+        STRING_PREFERENCE_DEFAULTS.put(IMPORT_METHOD_BASE_LEAF_NAME_SETTING, "base");
         STRING_PREFERENCE_DEFAULTS.put(LLM_OLLAMA_BASE_URL_SETTING, "http://127.0.0.1:11434");
     }
 
@@ -214,6 +225,35 @@ public class TreepeaterSettings {
     public void setFocusTreeHotkey(String hotkey) {
         this.preferences.setString(FOCUS_TREE_HOTKEY_SETTING, hotkey);
         this.notifyListeners(FOCUS_TREE_HOTKEY_SETTING, hotkey);
+    }
+
+    /**
+     * Bulk-path import leaf placement mode, one of {@link #IMPORT_LEAF_MODE_DIRECT} or
+     * {@link #IMPORT_LEAF_MODE_METHOD_FOLDER}. Defaults to {@link #IMPORT_LEAF_MODE_DIRECT}.
+     */
+    public String getImportLeafMode() {
+        String value = this.getStringWithDefault(IMPORT_LEAF_MODE_SETTING);
+        return IMPORT_LEAF_MODE_METHOD_FOLDER.equals(value)
+                ? IMPORT_LEAF_MODE_METHOD_FOLDER
+                : IMPORT_LEAF_MODE_DIRECT;
+    }
+
+    public void setImportLeafMode(String mode) {
+        String normalized = IMPORT_LEAF_MODE_METHOD_FOLDER.equals(mode)
+                ? IMPORT_LEAF_MODE_METHOD_FOLDER
+                : IMPORT_LEAF_MODE_DIRECT;
+        this.preferences.setString(IMPORT_LEAF_MODE_SETTING, normalized);
+        this.notifyListeners(IMPORT_LEAF_MODE_SETTING, normalized);
+    }
+
+    /** Base leaf name used in {@link #IMPORT_LEAF_MODE_METHOD_FOLDER} mode (default {@code base}). */
+    public String getImportBaseLeafName() {
+        return this.getStringWithDefault(IMPORT_METHOD_BASE_LEAF_NAME_SETTING);
+    }
+
+    public void setImportBaseLeafName(String name) {
+        this.preferences.setString(IMPORT_METHOD_BASE_LEAF_NAME_SETTING, name);
+        this.notifyListeners(IMPORT_METHOD_BASE_LEAF_NAME_SETTING, name);
     }
 
     public String getLlmOllamaBaseUrl() {

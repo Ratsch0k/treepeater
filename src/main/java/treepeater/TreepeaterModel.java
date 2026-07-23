@@ -13,6 +13,7 @@ import burp.api.montoya.http.message.responses.HttpResponse;
 import treepeater.ai.AgentChatWorkspace;
 import treepeater.requestResponse.RequestHistory;
 import treepeater.settings.StatusRegistry;
+import treepeater.settings.TreepeaterSettings;
 import treepeater.workspace.EditorWorkspace;
 import treepeater.workspace.SplitOrientation;
 import treepeater.workspace.TabGroupNode;
@@ -291,6 +292,215 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         this.tree.insertNodeInto(folder, target, target.getChildCount());
         Treepeater.saveState();
         return folder;
+    }
+
+    /**
+     * Imports a single request into the tree, sorting it into the folder chain that best matches its
+     * URL path. Missing folders are created; the leaf placement follows the user's
+     * {@link TreepeaterSettings#getImportLeafMode() import leaf mode} setting.
+     *
+     * <p>In {@code DIRECT} mode the request becomes a leaf named after the last path segment, placed
+     * next to any folder created for deeper paths. In {@code METHOD_FOLDER} mode the full path becomes
+     * folders and the leaf is placed under a per-method folder (e.g. {@code [GET]}) using the
+     * configured base leaf name.
+     */
+    public void importRequestSorted(HttpRequestResponse requestResponse) {
+        if (requestResponse == null) {
+            return;
+        }
+        HttpRequest request = requestResponse.request();
+        if (request == null) {
+            return;
+        }
+        HttpResponse response = requestResponse.response();
+
+        List<String> segments = pathSegments(request);
+        FolderTreeNode root = (FolderTreeNode) this.tree.getTreeModel().getRoot();
+
+        TreepeaterSettings settings = TreepeaterSettings.getInstance();
+        boolean methodMode = TreepeaterSettings.IMPORT_LEAF_MODE_METHOD_FOLDER.equals(settings.getImportLeafMode());
+
+        if (methodMode) {
+            // All path segments become folders; the leaf lives under a [METHOD] folder.
+            FolderTreeNode parent = resolveFolderChain(root, segments);
+            String method = safeMethod(request);
+            FolderTreeNode methodFolder = findOrCreateChildFolder(parent, "[" + method + "]");
+            String baseName = settings.getImportBaseLeafName();
+            String leafName = (baseName != null && !baseName.isBlank()) ? baseName.trim() : "base";
+            insertRequestLeaf(methodFolder, leafName, request, response);
+        } else {
+            // Folders for all but the last segment; the leaf is named after the last segment.
+            List<String> folderSegments =
+                    segments.isEmpty() ? segments : segments.subList(0, segments.size() - 1);
+            FolderTreeNode parent = resolveFolderChain(root, folderSegments);
+            String leafName = segments.isEmpty() ? "/" : segments.get(segments.size() - 1);
+            insertRequestLeaf(parent, leafName, request, response);
+        }
+    }
+
+    /**
+     * Finds an existing child folder of {@code parent} whose name equals {@code name}, or creates one.
+     */
+    public FolderTreeNode findOrCreateChildFolder(FolderTreeNode parent, String name) {
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            TreepeaterNode child = (TreepeaterNode) parent.getChildAt(i);
+            if (child instanceof FolderTreeNode folder && folder.getName().equals(name)) {
+                return folder;
+            }
+        }
+        this.requestCount += 1;
+        FolderTreeNode folder = new FolderTreeNode(this.requestCount, StatusRegistry.getDefault(), name);
+        this.insertNodeInto(folder, parent, parent.getChildCount());
+        return folder;
+    }
+
+    private RequestTreeNode insertRequestLeaf(
+            FolderTreeNode parent, String name, HttpRequest request, HttpResponse response) {
+        this.requestCount += 1;
+        RequestTreeNode node = new RequestTreeNode(this.requestCount, name, request, response);
+        this.insertNodeInto(node, parent, parent.getChildCount());
+        return node;
+    }
+
+    /**
+     * Resolves the folder chain for {@code segments} under {@code root}, reusing the closest matching
+     * existing subtree and creating any missing folders. Returns the deepest resolved folder.
+     */
+    private FolderTreeNode resolveFolderChain(FolderTreeNode root, List<String> segments) {
+        if (segments.isEmpty()) {
+            return root;
+        }
+
+        // Greedy match starting at the root's own children.
+        Descent best = greedyDescend(root, segments, 0);
+
+        // Skip-first-layer leniency: allow absorbing one non-matching top-level grouping folder
+        // (e.g. a per-service folder that is not part of the URL path). To avoid coincidental
+        // matches (e.g. sorting /second/second into an existing first/second), only skip when the
+        // grouping folder fully contains the path and beats the direct match.
+        if (best.consumed < segments.size()) {
+            for (int i = 0; i < root.getChildCount(); i++) {
+                TreepeaterNode child = (TreepeaterNode) root.getChildAt(i);
+                if (child instanceof FolderTreeNode folder) {
+                    Descent viaFolder = greedyDescend(folder, segments, 0);
+                    if (viaFolder.consumed == segments.size() && viaFolder.consumed > best.consumed) {
+                        best = viaFolder;
+                        break;
+                    }
+                }
+            }
+        }
+
+        FolderTreeNode parent = best.node;
+        for (int i = best.consumed; i < segments.size(); i++) {
+            parent = findOrCreateChildFolder(parent, segments.get(i));
+        }
+        return parent;
+    }
+
+    /** Deepest existing folder reached by a match, and how many path segments it consumed. */
+    private record Descent(FolderTreeNode node, int consumed) {}
+
+    /**
+     * Greedily matches {@code segments} (from {@code start}) against the folder subtree rooted at
+     * {@code node}, without skipping layers. At each level it picks the child folder consuming the
+     * most segments (folder names may themselves span multiple segments, e.g. {@code api/v1}).
+     */
+    private Descent greedyDescend(FolderTreeNode node, List<String> segments, int start) {
+        FolderTreeNode current = node;
+        int cursor = start;
+        boolean advanced = true;
+        while (advanced && cursor < segments.size()) {
+            advanced = false;
+            FolderTreeNode bestChild = null;
+            int bestLen = 0;
+            for (int i = 0; i < current.getChildCount(); i++) {
+                TreepeaterNode child = (TreepeaterNode) current.getChildAt(i);
+                if (!(child instanceof FolderTreeNode folder)) {
+                    continue;
+                }
+                String[] folderSegs = folderNameSegments(folder.getName());
+                if (folderSegs.length > bestLen && matchesPrefix(segments, cursor, folderSegs)) {
+                    bestLen = folderSegs.length;
+                    bestChild = folder;
+                }
+            }
+            if (bestChild != null) {
+                current = bestChild;
+                cursor += bestLen;
+                advanced = true;
+            }
+        }
+        return new Descent(current, cursor - start);
+    }
+
+    private static String[] folderNameSegments(String name) {
+        if (name == null) {
+            return new String[0];
+        }
+        List<String> segs = new ArrayList<>();
+        for (String part : name.split("/")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                segs.add(trimmed);
+            }
+        }
+        return segs.toArray(new String[0]);
+    }
+
+    private static boolean matchesPrefix(List<String> segments, int start, String[] folderSegs) {
+        if (start + folderSegs.length > segments.size()) {
+            return false;
+        }
+        for (int i = 0; i < folderSegs.length; i++) {
+            if (!segments.get(start + i).equals(folderSegs[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String safeMethod(HttpRequest request) {
+        try {
+            String method = request.method();
+            if (method != null && !method.isBlank()) {
+                return method.trim();
+            }
+        } catch (RuntimeException ignored) {
+            // fall through to placeholder
+        }
+        return "?";
+    }
+
+    private static List<String> pathSegments(HttpRequest request) {
+        String path = null;
+        try {
+            path = request.pathWithoutQuery();
+        } catch (RuntimeException ignored) {
+            // fall through
+        }
+        if (path == null || path.isBlank()) {
+            try {
+                path = request.path();
+            } catch (RuntimeException ignored) {
+                path = null;
+            }
+        }
+        List<String> segments = new ArrayList<>();
+        if (path == null) {
+            return segments;
+        }
+        int query = path.indexOf('?');
+        if (query >= 0) {
+            path = path.substring(0, query);
+        }
+        for (String part : path.split("/")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                segments.add(trimmed);
+            }
+        }
+        return segments;
     }
 
     /**

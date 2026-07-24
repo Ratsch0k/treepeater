@@ -55,6 +55,7 @@ class BulkImportTest {
         instance.set(null, null);
 
         Map<String, String> store = new HashMap<>();
+        Map<String, Integer> intStore = new HashMap<>();
         Preferences prefs = mock(Preferences.class);
         lenient().when(prefs.getString(org.mockito.ArgumentMatchers.anyString()))
                 .thenAnswer(i -> store.get(i.<String>getArgument(0)));
@@ -67,6 +68,12 @@ class BulkImportTest {
             store.remove(i.<String>getArgument(0));
             return null;
         }).when(prefs).deleteString(org.mockito.ArgumentMatchers.anyString());
+        lenient().when(prefs.getInteger(org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(i -> intStore.get(i.<String>getArgument(0)));
+        lenient().doAnswer(i -> {
+            intStore.put(i.getArgument(0), i.getArgument(1));
+            return null;
+        }).when(prefs).setInteger(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyInt());
 
         TreepeaterSettings.init(prefs);
         this.settings = TreepeaterSettings.getInstance();
@@ -226,12 +233,49 @@ class BulkImportTest {
         // Pre-existing per-service grouping folder that is not part of the URL path.
         FolderTreeNode serviceA = model.findOrCreateChildFolder(root(model), "ServiceA");
         FolderTreeNode users = model.findOrCreateChildFolder(serviceA, "users");
+        FolderTreeNode posts = model.findOrCreateChildFolder(users, "posts");
 
-        model.importRequestSorted(rr("GET", "/users/1"));
+        model.importRequestSorted(rr("GET", "/users/posts/1"));
 
         FolderTreeNode root = root(model);
         // The leaf should be sorted into the existing ServiceA/users, not a new top-level "users".
         assertNull(folder(root, "users"), "no new top-level 'users' folder created");
-        assertNotNull(leaf(users, "1"), "endpoint leaf '1' under ServiceA/users");
+        assertNotNull(leaf(posts, "1"), "endpoint leaf '1' under ServiceA/users");
+    }
+
+    @Test
+    void picksDeepestMatchNotTheFirstMatchingBranch() {
+        this.settings.setImportLeafMode(TreepeaterSettings.IMPORT_LEAF_MODE_DIRECT);
+        TreepeaterModel model = new TreepeaterModel();
+
+        FolderTreeNode root = root(model);
+        // A shallow single folder literally named "a/b" (spans two path segments, no children)...
+        FolderTreeNode ab = model.findOrCreateChildFolder(root, "a/b");
+        // ...and a deeper separate chain a > b > c that matches more of the target path.
+        FolderTreeNode a = model.findOrCreateChildFolder(root, "a");
+        FolderTreeNode b = model.findOrCreateChildFolder(a, "b");
+        FolderTreeNode c = model.findOrCreateChildFolder(b, "c");
+
+        // A greedy descent would prefer the 2-segment "a/b" at the root and stop there (consuming 2).
+        // The enumerate-and-select algorithm should instead pick a/b/c (consuming 3).
+        model.importRequestSorted(rr("GET", "/a/b/c/x"));
+
+        assertNotNull(leaf(c, "x"), "leaf attached to the deepest matching folder a/b/c");
+        assertEquals(0, ab.getChildCount(), "shallow 'a/b' folder left untouched");
+    }
+
+    @Test
+    void lenientFolderGroupingCanBeDisabled() {
+        this.settings.setImportLeafMode(TreepeaterSettings.IMPORT_LEAF_MODE_DIRECT);
+        this.settings.setImportGroupingFolderReconciliationEnabled(false);
+        TreepeaterModel model = new TreepeaterModel();
+
+        FolderTreeNode serviceA = model.findOrCreateChildFolder(root(model), "ServiceA");
+        FolderTreeNode users = model.findOrCreateChildFolder(serviceA, "users");
+
+        model.importRequestSorted(rr("GET", "/users/1"));
+
+        assertNotNull(folder(root(model), "users"), "creates a new top-level folder when lenient folder grouping is disabled");
+        assertEquals(0, users.getChildCount(), "existing grouped folder is not used");
     }
 }

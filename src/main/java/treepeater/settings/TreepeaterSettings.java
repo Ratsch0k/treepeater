@@ -17,6 +17,8 @@ public class TreepeaterSettings {
     private final List<TreepeaterSerttingsChangeListener> listeners = new ArrayList<>();
 
     public static final String SEND_HOTKEY_SETTING = "TREEPEATER_SEND_HOTKEY";
+    /** Hotkey for the path-aware "Send to Treepeater (sorted)" action. */
+    public static final String SEND_SORTED_HOTKEY_SETTING = "TREEPEATER_SEND_SORTED_HOTKEY";
     public static final String SEND_REQUEST_HOTKEY_SETTING = "SEND_REQUEST_HOTKEY";
     public static final String HISTORY_BACK_HOTKEY_SETTING = "HISTORY_BACK_HOTKEY";
     public static final String HISTORY_FORWARD_HOTKEY_SETTING = "HISTORY_FORWARD_HOTKEY";
@@ -47,6 +49,29 @@ public class TreepeaterSettings {
     public static final String IMPORT_LEAF_MODE_METHOD_FOLDER = "METHOD_FOLDER";
     /** Base leaf name used in {@link #IMPORT_LEAF_MODE_METHOD_FOLDER} mode. */
     public static final String IMPORT_METHOD_BASE_LEAF_NAME_SETTING = "TREEPEATER_IMPORT_METHOD_BASE_LEAF_NAME";
+
+    /**
+     * When enabled, path-aware import uses {@linkplain #isImportGroupingFolderReconciliationEnabled()
+     * lenient folder grouping} to attach requests under existing folders that include extra
+     * leading organizational segments (e.g. {@code ServiceA/users} for {@code /users/1}).
+     */
+    public static final String IMPORT_GROUPING_FOLDER_RECONCILIATION_ENABLED_SETTING =
+            "TREEPEATER_IMPORT_GROUPING_FOLDER_RECONCILIATION_ENABLED";
+    /**
+     * Maximum number of leading folder segments that lenient folder grouping may skip when
+     * searching for a matching anchor in the tree.
+     */
+    public static final String IMPORT_GROUPING_FOLDER_RECONCILIATION_MAX_SKIP_SETTING =
+            "TREEPEATER_IMPORT_GROUPING_FOLDER_RECONCILIATION_MAX_SKIP";
+    /**
+     * Minimum fraction of the target path (0–100, whole percent) that the matched folder suffix must
+     * cover for lenient folder grouping to accept a candidate.
+     */
+    public static final String IMPORT_GROUPING_FOLDER_RECONCILIATION_MATCH_THRESHOLD_PERCENT_SETTING =
+            "TREEPEATER_IMPORT_GROUPING_FOLDER_RECONCILIATION_MATCH_THRESHOLD_PERCENT";
+
+    public static final int IMPORT_GROUPING_FOLDER_RECONCILIATION_MAX_SKIP_DEFAULT = 2;
+    public static final int IMPORT_GROUPING_FOLDER_RECONCILIATION_MATCH_THRESHOLD_PERCENT_DEFAULT = 60;
 
     public static final String LLM_OLLAMA_BASE_URL_SETTING = "TREEPEATER_LLM_OLLAMA_BASE_URL";
     public static final String LLM_OLLAMA_MODELS_SETTING = "TREEPEATER_LLM_OLLAMA_MODELS";
@@ -85,6 +110,7 @@ public class TreepeaterSettings {
         this.preferences = preferences;
 
         STRING_PREFERENCE_DEFAULTS.put(SEND_HOTKEY_SETTING, "Ctrl+Alt+Shift+T");
+        STRING_PREFERENCE_DEFAULTS.put(SEND_SORTED_HOTKEY_SETTING, "Ctrl+Alt+Shift+P");
         STRING_PREFERENCE_DEFAULTS.put(SEND_REQUEST_HOTKEY_SETTING, "Ctrl+Shift+Space");
         STRING_PREFERENCE_DEFAULTS.put(HISTORY_BACK_HOTKEY_SETTING, "Ctrl+Minus");
         STRING_PREFERENCE_DEFAULTS.put(HISTORY_FORWARD_HOTKEY_SETTING, "Ctrl+Plus");
@@ -97,6 +123,7 @@ public class TreepeaterSettings {
         STRING_PREFERENCE_DEFAULTS.put(FOCUS_TREE_HOTKEY_SETTING, "Ctrl+Alt+T");
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_LEAF_MODE_SETTING, IMPORT_LEAF_MODE_DIRECT);
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_METHOD_BASE_LEAF_NAME_SETTING, "base");
+        STRING_PREFERENCE_DEFAULTS.put(IMPORT_GROUPING_FOLDER_RECONCILIATION_ENABLED_SETTING, "true");
         STRING_PREFERENCE_DEFAULTS.put(LLM_OLLAMA_BASE_URL_SETTING, "http://127.0.0.1:11434");
     }
 
@@ -135,6 +162,15 @@ public class TreepeaterSettings {
     public void setSendHotkey(String hotkey) {
         this.preferences.setString(SEND_HOTKEY_SETTING, hotkey);
         this.notifyListeners(SEND_HOTKEY_SETTING, hotkey);
+    }
+
+    public String getSendSortedHotkey() {
+        return this.getStringWithDefault(SEND_SORTED_HOTKEY_SETTING);
+    }
+
+    public void setSendSortedHotkey(String hotkey) {
+        this.preferences.setString(SEND_SORTED_HOTKEY_SETTING, hotkey);
+        this.notifyListeners(SEND_SORTED_HOTKEY_SETTING, hotkey);
     }
 
     public String getSendRequestHotkey() {
@@ -254,6 +290,61 @@ public class TreepeaterSettings {
     public void setImportBaseLeafName(String name) {
         this.preferences.setString(IMPORT_METHOD_BASE_LEAF_NAME_SETTING, name);
         this.notifyListeners(IMPORT_METHOD_BASE_LEAF_NAME_SETTING, name);
+    }
+
+    /** Whether lenient folder grouping is enabled for path-aware import (default {@code true}). */
+    public boolean isImportGroupingFolderReconciliationEnabled() {
+        return Boolean.parseBoolean(
+                this.getStringWithDefault(IMPORT_GROUPING_FOLDER_RECONCILIATION_ENABLED_SETTING));
+    }
+
+    public void setImportGroupingFolderReconciliationEnabled(boolean enabled) {
+        this.preferences.setString(
+                IMPORT_GROUPING_FOLDER_RECONCILIATION_ENABLED_SETTING, Boolean.toString(enabled));
+        this.notifyListeners(IMPORT_GROUPING_FOLDER_RECONCILIATION_ENABLED_SETTING, enabled);
+    }
+
+    /**
+     * Maximum leading folder segments that lenient folder grouping may skip (default
+     * {@link #IMPORT_GROUPING_FOLDER_RECONCILIATION_MAX_SKIP_DEFAULT}, clamped to 1–10).
+     */
+    public int getImportGroupingFolderReconciliationMaxSkip() {
+        Integer value = this.preferences.getInteger(IMPORT_GROUPING_FOLDER_RECONCILIATION_MAX_SKIP_SETTING);
+        int n = value != null
+                ? value.intValue()
+                : IMPORT_GROUPING_FOLDER_RECONCILIATION_MAX_SKIP_DEFAULT;
+        return Math.max(1, Math.min(10, n));
+    }
+
+    public void setImportGroupingFolderReconciliationMaxSkip(int maxSkip) {
+        int clamped = Math.max(1, Math.min(10, maxSkip));
+        this.preferences.setInteger(IMPORT_GROUPING_FOLDER_RECONCILIATION_MAX_SKIP_SETTING, clamped);
+        this.notifyListeners(IMPORT_GROUPING_FOLDER_RECONCILIATION_MAX_SKIP_SETTING, clamped);
+    }
+
+    /**
+     * Minimum target-path overlap required by lenient folder grouping, as a whole percent from
+     * 0 to 100 (default {@link #IMPORT_GROUPING_FOLDER_RECONCILIATION_MATCH_THRESHOLD_PERCENT_DEFAULT}).
+     */
+    public int getImportGroupingFolderReconciliationMatchThresholdPercent() {
+        Integer value =
+                this.preferences.getInteger(IMPORT_GROUPING_FOLDER_RECONCILIATION_MATCH_THRESHOLD_PERCENT_SETTING);
+        int n = value != null
+                ? value.intValue()
+                : IMPORT_GROUPING_FOLDER_RECONCILIATION_MATCH_THRESHOLD_PERCENT_DEFAULT;
+        return Math.max(0, Math.min(100, n));
+    }
+
+    public void setImportGroupingFolderReconciliationMatchThresholdPercent(int percent) {
+        int clamped = Math.max(0, Math.min(100, percent));
+        this.preferences.setInteger(
+                IMPORT_GROUPING_FOLDER_RECONCILIATION_MATCH_THRESHOLD_PERCENT_SETTING, clamped);
+        this.notifyListeners(IMPORT_GROUPING_FOLDER_RECONCILIATION_MATCH_THRESHOLD_PERCENT_SETTING, clamped);
+    }
+
+    /** Overlap threshold as a fraction in {@code [0.0, 1.0]}. */
+    public double getImportGroupingFolderReconciliationMatchThreshold() {
+        return this.getImportGroupingFolderReconciliationMatchThresholdPercent() / 100.0;
     }
 
     public String getLlmOllamaBaseUrl() {

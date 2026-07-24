@@ -32,6 +32,7 @@ public class Treepeater implements BurpExtension {
     DefaultMutableTreeNode root;
 
     private Registration sendHotKeyRegistration;
+    private Registration sendSortedHotKeyRegistration;
     private javax.swing.Timer autoSaveTimer;
 
     @Override
@@ -115,11 +116,23 @@ public class Treepeater implements BurpExtension {
         };
         this.sendHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(sendHotKey, sendHotKeyHandler);
 
+        HotKey sendSortedHotKey = HotKey.hotKey("Send to Treepeater (sorted)", settings.getSendSortedHotkey());
+        HotKeyHandler sendSortedHotKeyHandler = event -> {
+            sendSelectionToTreepeaterSorted(montoyaApi, model,
+                event.messageEditorRequestResponse(),
+                event.selectedRequestResponses());
+        };
+        this.sendSortedHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(sendSortedHotKey, sendSortedHotKeyHandler);
+
         settings.addListener((key, value) -> {
             if (key.equals(TreepeaterSettings.SEND_HOTKEY_SETTING)) {
                 this.sendHotKeyRegistration.deregister();
                 HotKey newHotkey = HotKey.hotKey("Send to Treepeater", (String) value);
                 this.sendHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(newHotkey, sendHotKeyHandler);
+            } else if (key.equals(TreepeaterSettings.SEND_SORTED_HOTKEY_SETTING)) {
+                this.sendSortedHotKeyRegistration.deregister();
+                HotKey newHotkey = HotKey.hotKey("Send to Treepeater (sorted)", (String) value);
+                this.sendSortedHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(newHotkey, sendSortedHotKeyHandler);
             }
         });
 
@@ -155,7 +168,6 @@ public class Treepeater implements BurpExtension {
             Optional<MessageEditorHttpRequestResponse> messageEditorRequestResponse,
             List<HttpRequestResponse> selectedRequestResponses) {
         SwingUtilities.invokeLater(() -> {
-            api.logging().logToOutput("Sent to Treepeater");
             messageEditorRequestResponse.ifPresent(e -> model.insertNode(e.requestResponse()));
             for (HttpRequestResponse r : selectedRequestResponses) {
                 model.insertNode(r);
@@ -169,7 +181,6 @@ public class Treepeater implements BurpExtension {
             Optional<MessageEditorHttpRequestResponse> messageEditorRequestResponse,
             List<HttpRequestResponse> selectedRequestResponses) {
         SwingUtilities.invokeLater(() -> {
-            api.logging().logToOutput("Sent to Treepeater (sorted)");
             messageEditorRequestResponse.ifPresent(e -> model.importRequestSorted(e.requestResponse()));
             for (HttpRequestResponse r : selectedRequestResponses) {
                 model.importRequestSorted(r);

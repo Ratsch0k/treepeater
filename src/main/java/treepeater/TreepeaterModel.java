@@ -12,6 +12,7 @@ import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 import treepeater.ai.AgentChatWorkspace;
 import treepeater.requestResponse.RequestHistory;
+import treepeater.pathnormalization.DynamicPathNormalizer;
 import treepeater.settings.StatusRegistry;
 import treepeater.settings.TreepeaterSettings;
 import treepeater.workspace.EditorWorkspace;
@@ -303,6 +304,10 @@ public class TreepeaterModel implements TreepeaterNodeListener {
      * next to any folder created for deeper paths. In {@code METHOD_FOLDER} mode the full path becomes
      * folders and the leaf is placed under a per-method folder (e.g. {@code [GET]}) using the
      * configured base leaf name.
+     *
+     * <p>When {@link TreepeaterSettings#isImportNormalizeDynamicSegmentsEnabled() dynamic segment
+     * normalization} is enabled, path segments are rewritten into placeholders (e.g. {@code :id},
+     * {@code :uuid}) before folder resolution.
      */
     public void importRequestSorted(HttpRequestResponse requestResponse) {
         if (requestResponse == null) {
@@ -318,6 +323,9 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         FolderTreeNode root = (FolderTreeNode) this.tree.getTreeModel().getRoot();
 
         TreepeaterSettings settings = TreepeaterSettings.getInstance();
+        if (settings.isImportNormalizeDynamicSegmentsEnabled()) {
+            segments = DynamicPathNormalizer.normalize(segments);
+        }
         boolean methodMode = TreepeaterSettings.IMPORT_LEAF_MODE_METHOD_FOLDER.equals(settings.getImportLeafMode());
 
         if (methodMode) {

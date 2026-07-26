@@ -278,4 +278,55 @@ class BulkImportTest {
         assertNotNull(folder(root(model), "users"), "creates a new top-level folder when lenient folder grouping is disabled");
         assertEquals(0, users.getChildCount(), "existing grouped folder is not used");
     }
+
+    @Test
+    void dynamicSegmentNormalizationCollapsesNumericIds() {
+        this.settings.setImportLeafMode(TreepeaterSettings.IMPORT_LEAF_MODE_DIRECT);
+        this.settings.setImportNormalizeDynamicSegmentsEnabled(true);
+        TreepeaterModel model = new TreepeaterModel();
+
+        model.importRequestSorted(rr("GET", "/users/2/status"));
+        model.importRequestSorted(rr("GET", "/users/7/status"));
+
+        FolderTreeNode users = folder(root(model), "users");
+        assertNotNull(users, "top-level users folder");
+
+        FolderTreeNode idFolder = folder(users, ":id");
+        assertNotNull(idFolder, "single :id folder under users");
+        assertNotNull(leaf(idFolder, "status"), "first status leaf");
+        assertEquals(2, idFolder.getChildCount(), "two status leaves under :id");
+        assertNull(folder(users, "2"), "no literal 2 folder");
+        assertNull(folder(users, "7"), "no literal 7 folder");
+    }
+
+    @Test
+    void dynamicSegmentNormalizationDisabledByDefault() {
+        this.settings.setImportLeafMode(TreepeaterSettings.IMPORT_LEAF_MODE_DIRECT);
+        TreepeaterModel model = new TreepeaterModel();
+
+        model.importRequestSorted(rr("GET", "/users/2/status"));
+
+        FolderTreeNode users = folder(root(model), "users");
+        assertNotNull(users);
+        assertNotNull(folder(users, "2"), "literal numeric folder when normalization is off");
+        assertNull(folder(users, ":id"), "no :id folder when normalization is off");
+    }
+
+    @Test
+    void dynamicSegmentNormalizationInMethodFolderMode() {
+        this.settings.setImportLeafMode(TreepeaterSettings.IMPORT_LEAF_MODE_METHOD_FOLDER);
+        this.settings.setImportBaseLeafName("base");
+        this.settings.setImportNormalizeDynamicSegmentsEnabled(true);
+        TreepeaterModel model = new TreepeaterModel();
+
+        model.importRequestSorted(rr("POST", "/users/2"));
+
+        FolderTreeNode users = folder(root(model), "users");
+        assertNotNull(users);
+        FolderTreeNode idFolder = folder(users, ":id");
+        assertNotNull(idFolder, ":id folder under users");
+        FolderTreeNode postFolder = folder(idFolder, "[POST]");
+        assertNotNull(postFolder, "[POST] method folder under :id");
+        assertNotNull(leaf(postFolder, "base"), "base leaf under [POST]");
+    }
 }

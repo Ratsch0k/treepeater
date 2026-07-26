@@ -93,7 +93,8 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
             "Configure how the \"Send to Treepeater (path-aware)\" action places imported requests. "
                 + "In direct mode the request becomes a leaf named after the last path segment, sitting next to any folder for deeper paths. "
                 + "In method-folder mode the request is placed under a per-method folder (e.g. [GET]) with the base leaf name configured below. "
-                + "Lenient folder grouping (optional) lets path-aware import reuse existing folders that include extra leading organizational segments.",
+                + "Lenient folder grouping (optional) lets path-aware import reuse existing folders that include extra leading organizational segments. "
+                + "Dynamic path segments (optional) rewrite recognizable dynamic URL parts into placeholders such as :id or :uuid.",
             this.createImportSettingsPanel()
         );
         this.root.add(importPanel);
@@ -249,7 +250,50 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         outer.add(baseNamePanel);
         outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
         outer.add(this.createLenientFolderGroupingPanel());
+        outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
+        outer.add(this.createDynamicSegmentPanel());
         return outer;
+    }
+
+    private JComponent createDynamicSegmentPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JLabel header = this.createSubsectionHeader("Dynamic Path Segments");
+
+        JCheckBox enabledCheck = new JCheckBox("Normalize dynamic path segments");
+        enabledCheck.setAlignmentX(Component.LEFT_ALIGNMENT);
+        enabledCheck.setOpaque(false);
+        enabledCheck.setSelected(this.settings.isImportNormalizeDynamicSegmentsEnabled());
+
+        JTextArea explanation = new JTextArea(
+                "When enabled, path-aware import rewrites recognizable dynamic URL segments into "
+                        + "placeholders before building the folder tree. Examples: /users/2/status "
+                        + "becomes users/:id/status; UUIDs become :uuid; OData entity keys such as "
+                        + "Products(ID=1) become Products(ID=:id). API version segments (v1, v2) and "
+                        + "slugs are left unchanged. Existing literal folders are not merged; enabling "
+                        + "this later may create :id siblings next to existing numeric folders. The "
+                        + "original request URL is always preserved on the leaf node.");
+        explanation.setEditable(false);
+        explanation.setFocusable(false);
+        explanation.setLineWrap(true);
+        explanation.setWrapStyleWord(true);
+        explanation.setOpaque(false);
+        explanation.setBorder(null);
+        explanation.setFont(UIManager.getFont("Label.font"));
+        explanation.setForeground(UIManager.getColor("Label.foreground"));
+        explanation.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        enabledCheck.addActionListener(e ->
+                this.settings.setImportNormalizeDynamicSegmentsEnabled(enabledCheck.isSelected()));
+
+        panel.add(header);
+        panel.add(Box.createVerticalStrut(4));
+        panel.add(enabledCheck);
+        panel.add(Box.createVerticalStrut(4));
+        panel.add(explanation);
+        return panel;
     }
 
     private JComponent createLenientFolderGroupingPanel() {

@@ -70,6 +70,13 @@ public class TreepeaterSettings {
     public static final String IMPORT_GROUPING_FOLDER_RECONCILIATION_MATCH_THRESHOLD_PERCENT_SETTING =
             "TREEPEATER_IMPORT_GROUPING_FOLDER_RECONCILIATION_MATCH_THRESHOLD_PERCENT";
 
+    /**
+     * When enabled, path-aware import rewrites dynamic URL segments into placeholders
+     * (e.g. {@code /users/2/status} -> {@code /users/:id/status}).
+     */
+    public static final String IMPORT_NORMALIZE_DYNAMIC_SEGMENTS_ENABLED_SETTING =
+            "TREEPEATER_IMPORT_NORMALIZE_DYNAMIC_SEGMENTS_ENABLED";
+
     public static final int IMPORT_GROUPING_FOLDER_RECONCILIATION_MAX_SKIP_DEFAULT = 2;
     public static final int IMPORT_GROUPING_FOLDER_RECONCILIATION_MATCH_THRESHOLD_PERCENT_DEFAULT = 60;
 
@@ -124,6 +131,7 @@ public class TreepeaterSettings {
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_LEAF_MODE_SETTING, IMPORT_LEAF_MODE_DIRECT);
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_METHOD_BASE_LEAF_NAME_SETTING, "base");
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_GROUPING_FOLDER_RECONCILIATION_ENABLED_SETTING, "true");
+        STRING_PREFERENCE_DEFAULTS.put(IMPORT_NORMALIZE_DYNAMIC_SEGMENTS_ENABLED_SETTING, "true");
         STRING_PREFERENCE_DEFAULTS.put(LLM_OLLAMA_BASE_URL_SETTING, "http://127.0.0.1:11434");
     }
 
@@ -345,6 +353,18 @@ public class TreepeaterSettings {
     /** Overlap threshold as a fraction in {@code [0.0, 1.0]}. */
     public double getImportGroupingFolderReconciliationMatchThreshold() {
         return this.getImportGroupingFolderReconciliationMatchThresholdPercent() / 100.0;
+    }
+
+    /** Whether dynamic path segment normalization is enabled for path-aware import (default {@code false}). */
+    public boolean isImportNormalizeDynamicSegmentsEnabled() {
+        return Boolean.parseBoolean(
+                this.getStringWithDefault(IMPORT_NORMALIZE_DYNAMIC_SEGMENTS_ENABLED_SETTING));
+    }
+
+    public void setImportNormalizeDynamicSegmentsEnabled(boolean enabled) {
+        this.preferences.setString(
+                IMPORT_NORMALIZE_DYNAMIC_SEGMENTS_ENABLED_SETTING, Boolean.toString(enabled));
+        this.notifyListeners(IMPORT_NORMALIZE_DYNAMIC_SEGMENTS_ENABLED_SETTING, enabled);
     }
 
     public String getLlmOllamaBaseUrl() {

@@ -96,7 +96,6 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
                 + "Lenient folder grouping (optional) lets path-aware import reuse existing folders that include extra leading organizational segments.",
             this.createImportSettingsPanel()
         );
-        importPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, SECTION_GAP, 0));
         this.root.add(importPanel);
 
         this.root.add(new JSeparator(JSeparator.HORIZONTAL));
@@ -107,7 +106,6 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
                 + "The AI tab reads these values from here; pick the provider and model (or deployment name) in the AI toolbar.",
             this.createLlmSettingsPanel()
         );
-        llmPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, SECTION_GAP, 0));
         this.root.add(llmPanel);
 
 

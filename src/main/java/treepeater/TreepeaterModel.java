@@ -12,6 +12,12 @@ import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 import treepeater.ai.AgentChatWorkspace;
 import treepeater.requestResponse.RequestHistory;
+import treepeater.importing.ImportOptions;
+import treepeater.importing.ImportOptions.DirectNameMode;
+import treepeater.importing.ImportOptions.DirectPlacement;
+import treepeater.importing.ImportOptions.PathAwarePlacement;
+import treepeater.requestResponse.RequestDescriptions;
+import treepeater.requestResponse.Status;
 import treepeater.pathnormalization.DynamicPathNormalizer;
 import treepeater.settings.StatusRegistry;
 import treepeater.settings.TreepeaterSettings;
@@ -308,42 +314,92 @@ public class TreepeaterModel implements TreepeaterNodeListener {
      * <p>When {@link TreepeaterSettings#isImportNormalizeDynamicSegmentsEnabled() dynamic segment
      * normalization} is enabled, path segments are rewritten into placeholders (e.g. {@code :id},
      * {@code :uuid}) before folder resolution.
+     *
+     * <p>Options are taken from {@link ImportOptions#fromSettings()} rather than the manual import
+     * dialog.
      */
-    public void importRequestSorted(HttpRequestResponse requestResponse) {
+    public void importRequestPathAware(HttpRequestResponse requestResponse) {
         if (requestResponse == null) {
             return;
         }
+        FolderTreeNode root = (FolderTreeNode) this.tree.getTreeModel().getRoot();
+        importRequestPathAware(root, requestResponse, ImportOptions.fromSettings());
+    }
+
+    /**
+     * Imports a request under {@code destinationFolder} using options from the manual import dialog.
+     */
+    public void importRequestManual(
+            FolderTreeNode destinationFolder,
+            HttpRequestResponse requestResponse,
+            ImportOptions options) {
+        if (destinationFolder == null || requestResponse == null || options == null) {
+            return;
+        }
+        if (options.placement() instanceof PathAwarePlacement) {
+            importRequestPathAware(destinationFolder, requestResponse, options);
+            return;
+        }
+
+        HttpRequest request = requestResponse.request();
+        if (request == null) {
+            return;
+        }
+        DirectPlacement direct = options.directPlacement();
+        String leafName = direct.nameMode() == DirectNameMode.ID
+                ? String.valueOf(this.requestCount + 1)
+                : resolveDirectLeafName(request, direct);
+        insertRequestLeaf(
+                destinationFolder,
+                leafName,
+                request,
+                requestResponse.response(),
+                options.resolveStatus());
+    }
+
+    private void importRequestPathAware(
+            FolderTreeNode anchor,
+            HttpRequestResponse requestResponse,
+            ImportOptions options) {
         HttpRequest request = requestResponse.request();
         if (request == null) {
             return;
         }
         HttpResponse response = requestResponse.response();
+        PathAwarePlacement pathAware = options.pathAwarePlacement();
 
         List<String> segments = pathSegments(request);
-        FolderTreeNode root = (FolderTreeNode) this.tree.getTreeModel().getRoot();
-
-        TreepeaterSettings settings = TreepeaterSettings.getInstance();
-        if (settings.isImportNormalizeDynamicSegmentsEnabled()) {
+        if (pathAware.normalizeDynamicSegmentsEnabled()) {
             segments = DynamicPathNormalizer.normalize(segments);
         }
-        boolean methodMode = TreepeaterSettings.IMPORT_LEAF_MODE_METHOD_FOLDER.equals(settings.getImportLeafMode());
+        LenientFolderGrouping lenientGrouping = lenientFolderGroupingFromPlacement(pathAware);
+        Status status = options.resolveStatus();
 
-        if (methodMode) {
-            // All path segments become folders; the leaf lives under a [METHOD] folder.
-            FolderTreeNode parent = resolveFolderChain(root, segments);
-            String method = safeMethod(request);
+        if (pathAware.isMethodFolderMode()) {
+            FolderTreeNode parent = resolveFolderChain(anchor, segments, lenientGrouping);
+            String method = RequestDescriptions.method(request);
             FolderTreeNode methodFolder = findOrCreateChildFolder(parent, "[" + method + "]");
-            String baseName = settings.getImportBaseLeafName();
+            String baseName = pathAware.baseLeafName();
             String leafName = (baseName != null && !baseName.isBlank()) ? baseName.trim() : "base";
-            insertRequestLeaf(methodFolder, leafName, request, response);
+            insertRequestLeaf(methodFolder, leafName, request, response, status);
         } else {
-            // Folders for all but the last segment; the leaf is named after the last segment.
             List<String> folderSegments =
                     segments.isEmpty() ? segments : segments.subList(0, segments.size() - 1);
-            FolderTreeNode parent = resolveFolderChain(root, folderSegments);
+            FolderTreeNode parent = resolveFolderChain(anchor, folderSegments, lenientGrouping);
             String leafName = segments.isEmpty() ? "/" : segments.get(segments.size() - 1);
-            insertRequestLeaf(parent, leafName, request, response);
+            insertRequestLeaf(parent, leafName, request, response, status);
         }
+    }
+
+    private static String resolveDirectLeafName(HttpRequest request, DirectPlacement direct) {
+        return switch (direct.nameMode()) {
+            case URL -> RequestDescriptions.url(request);
+            case ID -> throw new IllegalStateException("ID naming is handled by importRequestManual");
+            case MANUAL -> {
+                String name = direct.manualName();
+                yield (name != null && !name.isBlank()) ? name.trim() : "?";
+            }
+        };
     }
 
     /**
@@ -363,9 +419,10 @@ public class TreepeaterModel implements TreepeaterNodeListener {
     }
 
     private RequestTreeNode insertRequestLeaf(
-            FolderTreeNode parent, String name, HttpRequest request, HttpResponse response) {
+            FolderTreeNode parent, String name, HttpRequest request, HttpResponse response, Status status) {
         this.requestCount += 1;
-        RequestTreeNode node = new RequestTreeNode(this.requestCount, name, request, response);
+        RequestTreeNode node = new RequestTreeNode(
+                this.requestCount, status, name, request, response, new RequestHistory());
         this.insertNodeInto(node, parent, parent.getChildCount());
         return node;
     }
@@ -388,15 +445,14 @@ public class TreepeaterModel implements TreepeaterNodeListener {
      * </ul>
      * When nothing matches, the chain is created directly under {@code root}.
      */
-    private FolderTreeNode resolveFolderChain(FolderTreeNode root, List<String> segments) {
+    private FolderTreeNode resolveFolderChain(
+            FolderTreeNode root, List<String> segments, LenientFolderGrouping lenientGrouping) {
         if (segments.isEmpty()) {
             return root;
         }
 
         List<FolderCandidate> candidates = new ArrayList<>();
         collectFolderCandidates(root, new ArrayList<>(), candidates);
-
-        LenientFolderGrouping lenientGrouping = lenientFolderGroupingFromSettings();
 
         FolderMatch best = null;
         for (FolderCandidate candidate : candidates) {
@@ -427,15 +483,14 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         }
     }
 
-    private static LenientFolderGrouping lenientFolderGroupingFromSettings() {
-        TreepeaterSettings settings = TreepeaterSettings.getInstance();
-        if (!settings.isImportGroupingFolderReconciliationEnabled()) {
+    private static LenientFolderGrouping lenientFolderGroupingFromPlacement(PathAwarePlacement pathAware) {
+        if (!pathAware.lenientGroupingEnabled()) {
             return LenientFolderGrouping.disabled();
         }
         return new LenientFolderGrouping(
                 true,
-                settings.getImportGroupingFolderReconciliationMaxSkip(),
-                settings.getImportGroupingFolderReconciliationMatchThreshold());
+                pathAware.lenientGroupingMaxSkip(),
+                pathAware.lenientGroupingMatchThresholdPercent() / 100.0);
     }
 
     /**
@@ -556,17 +611,6 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         return true;
     }
 
-    private static String safeMethod(HttpRequest request) {
-        try {
-            String method = request.method();
-            if (method != null && !method.isBlank()) {
-                return method.trim();
-            }
-        } catch (RuntimeException ignored) {
-            // fall through to placeholder
-        }
-        return "?";
-    }
 
     private static List<String> pathSegments(HttpRequest request) {
         String path = null;

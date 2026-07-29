@@ -150,7 +150,8 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
 
         int row = 0;
         row = this.addHotkeySetting(root, row, "Send to Treepeater hotkey:", this.settings::getSendHotkey, this.settings::setSendHotkey);
-        row = this.addHotkeySetting(root, row, "Send to Treepeater (sorted) hotkey:", this.settings::getSendSortedHotkey, this.settings::setSendSortedHotkey);
+        row = this.addHotkeySetting(root, row, "Send to Treepeater (path-aware) hotkey:", this.settings::getSendPathAwareHotkey, this.settings::setSendSortedHotkey);
+        row = this.addHotkeySetting(root, row, "Send to Treepeater (manual) hotkey:", this.settings::getSendManualHotkey, this.settings::setSendManualHotkey);
         row = this.addHotkeySetting(root,row, "Send request hotkey:", this.settings::getSendRequestHotkey, this.settings::setSendRequestHotkey);
         row = this.addHotkeySetting(root,row, "History back hotkey:", this.settings::getHistoryBackHotkey, this.settings::setHistoryBackHotkey);
         row = this.addHotkeySetting(root,row, "History forward hotkey:", this.settings::getHistoryForwardHotkey, this.settings::setHistoryForwardHotkey);

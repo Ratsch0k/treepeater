@@ -18,7 +18,9 @@ public class TreepeaterSettings {
 
     public static final String SEND_HOTKEY_SETTING = "TREEPEATER_SEND_HOTKEY";
     /** Hotkey for the path-aware "Send to Treepeater (sorted)" action. */
-    public static final String SEND_SORTED_HOTKEY_SETTING = "TREEPEATER_SEND_SORTED_HOTKEY";
+    public static final String SEND_PATH_AWARE_HOTKEY_SETTING = "TREEPEATER_SEND_PATH_AWARE_HOTKEY";
+    /** Hotkey for the manual "Send to Treepeater (manual)" action. */
+    public static final String SEND_MANUAL_HOTKEY_SETTING = "TREEPEATER_SEND_MANUAL_HOTKEY";
     public static final String SEND_REQUEST_HOTKEY_SETTING = "SEND_REQUEST_HOTKEY";
     public static final String HISTORY_BACK_HOTKEY_SETTING = "HISTORY_BACK_HOTKEY";
     public static final String HISTORY_FORWARD_HOTKEY_SETTING = "HISTORY_FORWARD_HOTKEY";
@@ -116,8 +118,9 @@ public class TreepeaterSettings {
     private TreepeaterSettings(Preferences preferences) {
         this.preferences = preferences;
 
-        STRING_PREFERENCE_DEFAULTS.put(SEND_HOTKEY_SETTING, "Ctrl+Alt+Shift+T");
-        STRING_PREFERENCE_DEFAULTS.put(SEND_SORTED_HOTKEY_SETTING, "Ctrl+Alt+Shift+P");
+        STRING_PREFERENCE_DEFAULTS.put(SEND_HOTKEY_SETTING, "Ctrl+Alt+S");
+        STRING_PREFERENCE_DEFAULTS.put(SEND_PATH_AWARE_HOTKEY_SETTING, "Ctrl+Alt+Shift+S");
+        STRING_PREFERENCE_DEFAULTS.put(SEND_MANUAL_HOTKEY_SETTING, "Ctrl+Alt+M");
         STRING_PREFERENCE_DEFAULTS.put(SEND_REQUEST_HOTKEY_SETTING, "Ctrl+Shift+Space");
         STRING_PREFERENCE_DEFAULTS.put(HISTORY_BACK_HOTKEY_SETTING, "Ctrl+Minus");
         STRING_PREFERENCE_DEFAULTS.put(HISTORY_FORWARD_HOTKEY_SETTING, "Ctrl+Plus");
@@ -172,13 +175,22 @@ public class TreepeaterSettings {
         this.notifyListeners(SEND_HOTKEY_SETTING, hotkey);
     }
 
-    public String getSendSortedHotkey() {
-        return this.getStringWithDefault(SEND_SORTED_HOTKEY_SETTING);
+    public String getSendPathAwareHotkey() {
+        return this.getStringWithDefault(SEND_PATH_AWARE_HOTKEY_SETTING);
     }
 
     public void setSendSortedHotkey(String hotkey) {
-        this.preferences.setString(SEND_SORTED_HOTKEY_SETTING, hotkey);
-        this.notifyListeners(SEND_SORTED_HOTKEY_SETTING, hotkey);
+        this.preferences.setString(SEND_PATH_AWARE_HOTKEY_SETTING, hotkey);
+        this.notifyListeners(SEND_PATH_AWARE_HOTKEY_SETTING, hotkey);
+    }
+
+    public String getSendManualHotkey() {
+        return this.getStringWithDefault(SEND_MANUAL_HOTKEY_SETTING);
+    }
+
+    public void setSendManualHotkey(String hotkey) {
+        this.preferences.setString(SEND_MANUAL_HOTKEY_SETTING, hotkey);
+        this.notifyListeners(SEND_MANUAL_HOTKEY_SETTING, hotkey);
     }
 
     public String getSendRequestHotkey() {

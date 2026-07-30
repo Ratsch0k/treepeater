@@ -18,11 +18,12 @@ import treepeater.importing.ImportOptions.DirectPlacement;
 
 /**
  * A panel for selecting options for direct imports in Treepeater's manual import dialog.
- * Allows the user to choose the node naming mode (URL, ID, or manual) and enter a manual name if needed.
+ * Allows the user to choose the node naming mode (URL, path, ID, or manual) and enter a manual name if needed.
  */
 final class DirectImportOptionsPanel extends JPanel {
 
     private final JRadioButton urlButton;
+    private final JRadioButton pathButton;
     private final JRadioButton idButton;
     private final JRadioButton manualButton;
     private final JTextField manualNameField;
@@ -33,17 +34,21 @@ final class DirectImportOptionsPanel extends JPanel {
         setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
 
         this.urlButton = new JRadioButton("URL");
+        this.pathButton = new JRadioButton("Path");
         this.idButton = new JRadioButton("ID");
         this.manualButton = new JRadioButton("Manual");
         this.urlButton.setOpaque(false);
+        this.pathButton.setOpaque(false);
         this.idButton.setOpaque(false);
         this.manualButton.setOpaque(false);
 
         ButtonGroup nameGroup = new ButtonGroup();
         nameGroup.add(this.urlButton);
+        nameGroup.add(this.pathButton);
         nameGroup.add(this.idButton);
         nameGroup.add(this.manualButton);
         this.idButton.setSelected(defaults.nameMode() == DirectNameMode.ID);
+        this.pathButton.setSelected(defaults.nameMode() == DirectNameMode.PATH);
         this.urlButton.setSelected(defaults.nameMode() == DirectNameMode.URL);
         this.manualButton.setSelected(defaults.nameMode() == DirectNameMode.MANUAL);
 
@@ -52,6 +57,7 @@ final class DirectImportOptionsPanel extends JPanel {
 
         Runnable updateManualField = () -> this.manualNameField.setEnabled(this.manualButton.isSelected());
         this.urlButton.addActionListener(e -> updateManualField.run());
+        this.pathButton.addActionListener(e -> updateManualField.run());
         this.idButton.addActionListener(e -> updateManualField.run());
         this.manualButton.addActionListener(e -> updateManualField.run());
 
@@ -65,6 +71,9 @@ final class DirectImportOptionsPanel extends JPanel {
         gbc.gridy++;
         gbc.insets = new Insets(0, 0, 2, 0);
         add(this.urlButton, gbc);
+
+        gbc.gridy++;
+        add(this.pathButton, gbc);
 
         gbc.gridy++;
         add(this.idButton, gbc);
@@ -100,6 +109,9 @@ final class DirectImportOptionsPanel extends JPanel {
     private DirectNameMode selectedNameMode() {
         if (this.urlButton.isSelected()) {
             return DirectNameMode.URL;
+        }
+        if (this.pathButton.isSelected()) {
+            return DirectNameMode.PATH;
         }
         if (this.idButton.isSelected()) {
             return DirectNameMode.ID;

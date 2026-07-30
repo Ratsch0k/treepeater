@@ -43,6 +43,7 @@ import javax.swing.UIManager;
 import burp.api.montoya.ui.settings.SettingsPanelWithData;
 import treepeater.Treepeater;
 import treepeater.ai.ollama.OllamaProvider;
+import treepeater.importing.ImportOptions.DirectNameMode;
 import treepeater.requestResponse.Status;
 
 /**
@@ -90,8 +91,10 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
 
         JPanel importPanel = this.createTitledSection(
             "Import",
-            "Configure how the \"Send to Treepeater (path-aware)\" action places imported requests. "
-                + "In direct mode the request becomes a leaf named after the last path segment, sitting next to any folder for deeper paths. "
+            "Configure how imported requests are named and placed. "
+                + "Direct import (\"Send to Treepeater (direct)\") names each request at the tree root using ID, path, or URL. "
+                + "Path-aware import (\"Send to Treepeater (path-aware)\") builds folders from the request path. "
+                + "In direct leaf mode the request becomes a leaf named after the last path segment, sitting next to any folder for deeper paths. "
                 + "In method-folder mode the request is placed under a per-method folder (e.g. [GET]) with the base leaf name configured below. "
                 + "Lenient folder grouping (optional) lets path-aware import reuse existing folders that include extra leading organizational segments. "
                 + "Dynamic path segments (optional) rewrite recognizable dynamic URL parts into placeholders such as :id or :uuid.",
@@ -210,6 +213,10 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         outer.setLayout(new BoxLayout(outer, BoxLayout.Y_AXIS));
         outer.setAlignmentX(Component.LEFT_ALIGNMENT);
 
+        outer.add(this.createDirectImportNamingPanel());
+        outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
+        outer.add(this.createSubsectionHeader("Path-aware import"));
+
         JRadioButton directButton = new JRadioButton(
                 "Direct: leaf named after the last path segment, next to any nesting folder");
         JRadioButton methodButton = new JRadioButton(
@@ -254,6 +261,45 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
         outer.add(this.createDynamicSegmentPanel());
         return outer;
+    }
+
+    private JComponent createDirectImportNamingPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        panel.add(this.createSubsectionHeader("Direct import"));
+
+        JRadioButton idButton = new JRadioButton("ID: sequential number (1, 2, …)");
+        JRadioButton pathButton = new JRadioButton("Path: request path without query (e.g. /api/users)");
+        JRadioButton urlButton = new JRadioButton("URL: full URL without query");
+        idButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+        pathButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+        urlButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+        idButton.setOpaque(false);
+        pathButton.setOpaque(false);
+        urlButton.setOpaque(false);
+
+        ButtonGroup group = new ButtonGroup();
+        group.add(idButton);
+        group.add(pathButton);
+        group.add(urlButton);
+
+        DirectNameMode currentMode = this.settings.getDirectImportNameMode();
+        idButton.setSelected(currentMode == DirectNameMode.ID);
+        pathButton.setSelected(currentMode == DirectNameMode.PATH);
+        urlButton.setSelected(currentMode == DirectNameMode.URL);
+
+        idButton.addActionListener(e -> this.settings.setDirectImportNameMode(DirectNameMode.ID));
+        pathButton.addActionListener(e -> this.settings.setDirectImportNameMode(DirectNameMode.PATH));
+        urlButton.addActionListener(e -> this.settings.setDirectImportNameMode(DirectNameMode.URL));
+
+        panel.add(idButton);
+        panel.add(Box.createVerticalStrut(4));
+        panel.add(pathButton);
+        panel.add(Box.createVerticalStrut(4));
+        panel.add(urlButton);
+        return panel;
     }
 
     private JComponent createDynamicSegmentPanel() {

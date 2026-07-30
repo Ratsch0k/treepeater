@@ -58,10 +58,18 @@ public final class RequestDescriptions {
         try {
             String url = request.url();
             if (url != null && !url.isBlank()) {
-                return url.trim();
+                return stripQuery(url.trim());
             }
         } catch (RuntimeException ignored) {
             // fall through
+        }
+        return path(request);
+    }
+
+    /** Request path without query string, or {@code "?"} when unavailable. */
+    public static String path(HttpRequest request) {
+        if (request == null) {
+            return "?";
         }
         try {
             String path = request.pathWithoutQuery();
@@ -74,11 +82,16 @@ public final class RequestDescriptions {
         try {
             String path = request.path();
             if (path != null && !path.isBlank()) {
-                return path.trim();
+                return stripQuery(path.trim());
             }
         } catch (RuntimeException ignored) {
             // fall through
         }
         return "?";
+    }
+
+    private static String stripQuery(String value) {
+        int queryIndex = value.indexOf('?');
+        return queryIndex >= 0 ? value.substring(0, queryIndex) : value;
     }
 }

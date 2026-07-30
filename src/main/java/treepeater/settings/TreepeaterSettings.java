@@ -7,6 +7,7 @@ import java.util.List;
 
 import burp.api.montoya.persistence.Preferences;
 import treepeater.Utilities;
+import treepeater.importing.ImportOptions.DirectNameMode;
 import treepeater.requestResponse.Status;
 
 public class TreepeaterSettings {
@@ -42,6 +43,9 @@ public class TreepeaterSettings {
 
     /** Integer preference: number of stored default statuses (0 means none). */
     public static final String DEFAULT_STATUSES_COUNT_SETTING = DEFAULT_STATUSES_SETTING + "_COUNT";
+
+    /** How "Send to Treepeater (direct)" names imported request nodes ({@link DirectNameMode#name()}). */
+    public static final String DIRECT_IMPORT_NAME_MODE_SETTING = "TREEPEATER_DIRECT_IMPORT_NAME_MODE";
 
     /** Bulk-path import leaf placement mode: {@link #IMPORT_LEAF_MODE_DIRECT} or {@link #IMPORT_LEAF_MODE_METHOD_FOLDER}. */
     public static final String IMPORT_LEAF_MODE_SETTING = "TREEPEATER_IMPORT_LEAF_MODE";
@@ -131,6 +135,7 @@ public class TreepeaterSettings {
         STRING_PREFERENCE_DEFAULTS.put(TAB_PREVIOUS_HOTKEY_SETTING, "Ctrl+Alt+Left");
         STRING_PREFERENCE_DEFAULTS.put(TAB_NEXT_HOTKEY_SETTING, "Ctrl+Alt+Right");
         STRING_PREFERENCE_DEFAULTS.put(FOCUS_TREE_HOTKEY_SETTING, "Ctrl+Alt+T");
+        STRING_PREFERENCE_DEFAULTS.put(DIRECT_IMPORT_NAME_MODE_SETTING, DirectNameMode.ID.name());
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_LEAF_MODE_SETTING, IMPORT_LEAF_MODE_DIRECT);
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_METHOD_BASE_LEAF_NAME_SETTING, "base");
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_GROUPING_FOLDER_RECONCILIATION_ENABLED_SETTING, "true");
@@ -281,6 +286,24 @@ public class TreepeaterSettings {
     public void setFocusTreeHotkey(String hotkey) {
         this.preferences.setString(FOCUS_TREE_HOTKEY_SETTING, hotkey);
         this.notifyListeners(FOCUS_TREE_HOTKEY_SETTING, hotkey);
+    }
+
+    public DirectNameMode getDirectImportNameMode() {
+        String value = this.getStringWithDefault(DIRECT_IMPORT_NAME_MODE_SETTING);
+        try {
+            return DirectNameMode.valueOf(value);
+        } catch (IllegalArgumentException e) {
+            return DirectNameMode.ID;
+        }
+    }
+
+    public void setDirectImportNameMode(DirectNameMode mode) {
+        DirectNameMode normalized = mode != null ? mode : DirectNameMode.ID;
+        if (normalized == DirectNameMode.MANUAL) {
+            normalized = DirectNameMode.ID;
+        }
+        this.preferences.setString(DIRECT_IMPORT_NAME_MODE_SETTING, normalized.name());
+        this.notifyListeners(DIRECT_IMPORT_NAME_MODE_SETTING, normalized);
     }
 
     /**

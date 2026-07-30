@@ -13,6 +13,7 @@ public record ImportOptions(String statusId, Placement placement) {
 
     public enum DirectNameMode {
         URL,
+        PATH,
         ID,
         MANUAL
     }

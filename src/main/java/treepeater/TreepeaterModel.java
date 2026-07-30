@@ -260,9 +260,22 @@ public class TreepeaterModel implements TreepeaterNodeListener {
     }
 
     public void insertNode(HttpRequestResponse requestResponse) {
+        if (requestResponse == null) {
+            return;
+        }
+        HttpRequest request = requestResponse.request();
+        if (request == null) {
+            return;
+        }
         this.requestCount += 1;
 
-        RequestTreeNode node = new RequestTreeNode(this.requestCount, String.valueOf(this.requestCount), requestResponse.request(), requestResponse.response());
+        DirectNameMode nameMode = TreepeaterSettings.getInstance().getDirectImportNameMode();
+        String leafName = nameMode == DirectNameMode.ID
+                ? String.valueOf(this.requestCount)
+                : resolveDirectLeafName(request, nameMode, "");
+
+        RequestTreeNode node = new RequestTreeNode(
+                this.requestCount, leafName, request, requestResponse.response());
 
         node.addListener(this);
 
@@ -348,7 +361,7 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         DirectPlacement direct = options.directPlacement();
         String leafName = direct.nameMode() == DirectNameMode.ID
                 ? String.valueOf(this.requestCount + 1)
-                : resolveDirectLeafName(request, direct);
+                : resolveDirectLeafName(request, direct.nameMode(), direct.manualName());
         insertRequestLeaf(
                 destinationFolder,
                 leafName,
@@ -391,14 +404,18 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         }
     }
 
-    private static String resolveDirectLeafName(HttpRequest request, DirectPlacement direct) {
-        return switch (direct.nameMode()) {
+    private static String resolveDirectLeafName(HttpRequest request, DirectNameMode mode, String manualName) {
+        if (mode == DirectNameMode.ID) {
+            throw new IllegalStateException("ID naming uses requestCount");
+        }
+        return switch (mode) {
             case URL -> RequestDescriptions.url(request);
-            case ID -> throw new IllegalStateException("ID naming is handled by importRequestManual");
+            case PATH -> RequestDescriptions.path(request);
             case MANUAL -> {
-                String name = direct.manualName();
+                String name = manualName;
                 yield (name != null && !name.isBlank()) ? name.trim() : "?";
             }
+            case ID -> throw new IllegalStateException("ID naming uses requestCount");
         };
     }
 

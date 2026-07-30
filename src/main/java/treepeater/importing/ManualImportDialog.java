@@ -34,10 +34,10 @@ import treepeater.components.CustomButton;
 import treepeater.components.StatusComboBox;
 import treepeater.components.StatusComboBoxRenderer;
 import treepeater.components.StatusComboBoxUi;
-import treepeater.importing.ImportOptions.DirectNameMode;
 import treepeater.importing.ImportOptions.DirectPlacement;
 import treepeater.importing.ImportOptions.PathAwarePlacement;
 import treepeater.requestResponse.RequestDescriptions;
+import treepeater.settings.TreepeaterSettings;
 import treepeater.requestResponse.Status;
 import treepeater.settings.StatusRegistry;
 import treepeater.tree.FolderTreeNode;
@@ -210,7 +210,7 @@ final class ManualImportDialog {
         if (options.placement() instanceof DirectPlacement direct) {
             return direct;
         }
-        return new DirectPlacement(DirectNameMode.ID, "");
+        return new DirectPlacement(TreepeaterSettings.getInstance().getDirectImportNameMode(), "");
     }
 
     private static PathAwarePlacement initialPathAwarePlacement(ImportOptions options) {

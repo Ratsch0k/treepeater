@@ -95,9 +95,14 @@ public abstract class ImportTestSupport {
     }
 
     protected static HttpRequestResponse rr(String method, String path, String url) {
+        return rr(method, path, url, null);
+    }
+
+    protected static HttpRequestResponse rr(String method, String path, String url, String pathWithQuery) {
         HttpRequest req = mock(HttpRequest.class);
         lenient().when(req.pathWithoutQuery()).thenReturn(path);
-        lenient().when(req.path()).thenReturn(path);
+        String fullPath = pathWithQuery != null ? pathWithQuery : path;
+        lenient().when(req.path()).thenReturn(fullPath);
         lenient().when(req.method()).thenReturn(method);
         if (url != null) {
             lenient().when(req.url()).thenReturn(url);

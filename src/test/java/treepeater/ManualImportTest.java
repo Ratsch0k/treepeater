@@ -85,6 +85,32 @@ class ManualImportTest extends ImportTestSupport {
     }
 
     @Test
+    void directUrlModeExcludesQueryString() {
+        TreepeaterModel model = new TreepeaterModel();
+        FolderTreeNode anchor = model.createFolder(root(model));
+
+        model.importRequestManual(
+                anchor,
+                rr("GET", "/api/users", "https://example.com/api/users?x=1"),
+                directOptions(DirectNameMode.URL, ""));
+
+        assertNotNull(leaf(anchor, "https://example.com/api/users"));
+    }
+
+    @Test
+    void directPathModeUsesPathWithoutQuery() {
+        TreepeaterModel model = new TreepeaterModel();
+        FolderTreeNode anchor = model.createFolder(root(model));
+
+        model.importRequestManual(
+                anchor,
+                rr("GET", "/api/users", null, "/api/users?x=1"),
+                directOptions(DirectNameMode.PATH, ""));
+
+        assertNotNull(leaf(anchor, "/api/users"));
+    }
+
+    @Test
     void directUrlModeUsesRequestUrl() {
         TreepeaterModel model = new TreepeaterModel();
         FolderTreeNode anchor = model.createFolder(root(model));

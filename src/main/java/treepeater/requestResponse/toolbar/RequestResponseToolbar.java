@@ -21,6 +21,7 @@ import treepeater.icons.DoubleArrowLeftIcon;
 import treepeater.requestResponse.RequestResponsePanelUi;
 import treepeater.requestResponse.toolbar.ai.AIToolbarTab;
 import treepeater.requestResponse.toolbar.diff.CompareToolbarTab;
+import treepeater.requestResponse.toolbar.inspector.InspectorToolbarTab;
 
 /**
  * Narrow vertical strip of actions to the right of the request/response editors.

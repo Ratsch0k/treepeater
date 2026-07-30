@@ -7,7 +7,6 @@ import java.awt.Dialog;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
-import java.awt.FontMetrics;
 import java.awt.Window;
 import java.util.List;
 
@@ -31,7 +30,6 @@ import javax.swing.WindowConstants;
 import burp.api.montoya.http.message.HttpRequestResponse;
 import treepeater.Treepeater;
 import treepeater.TreepeaterModel;
-import treepeater.Utilities;
 import treepeater.components.CustomButton;
 import treepeater.components.StatusComboBox;
 import treepeater.components.StatusComboBoxRenderer;
@@ -47,7 +45,6 @@ import treepeater.tree.FolderTreeNode;
 /** Modal dialog for manually choosing a destination folder and import options. */
 final class ManualImportDialog {
 
-    private static final int REQUEST_URL_MAX_WIDTH_PX = 540;
     private static final String CARD_DIRECT = "direct";
     private static final String CARD_PATH_AWARE = "pathAware";
 

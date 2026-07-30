@@ -1,6 +1,9 @@
-package treepeater.requestResponse.toolbar;
+package treepeater.requestResponse.toolbar.inspector;
 
 import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Container;
 import java.awt.Font;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -18,20 +21,28 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
-import javax.swing.Timer;
 import javax.swing.UIManager;
+import javax.swing.event.CaretListener;
+import javax.swing.plaf.basic.BasicTextUI;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.Caret;
+import javax.swing.text.Highlighter;
+import javax.swing.text.JTextComponent;
+import javax.swing.text.DefaultHighlighter.DefaultHighlightPainter;
 
 import burp.api.montoya.core.ByteArray;
 import burp.api.montoya.core.Range;
 import burp.api.montoya.ui.Selection;
-import burp.api.montoya.ui.editor.Editor;
 import burp.api.montoya.ui.editor.HttpRequestEditor;
 import burp.api.montoya.ui.editor.HttpResponseEditor;
 
 import treepeater.Treepeater;
+import treepeater.Utilities;
 import treepeater.components.RoundedPanel;
 import treepeater.icons.InspectorIcon;
 import treepeater.requestResponse.RequestResponsePanel;
+import treepeater.requestResponse.toolbar.ToolbarIconButton;
+import treepeater.requestResponse.toolbar.ToolbarTabTitle;
 
 /**
  * Repeater-style "Inspector" tab.
@@ -72,7 +83,7 @@ public class InspectorToolbarTab {
         NONE
     }
 
-    private static final int POLL_INTERVAL_MS = 200;
+    private static final String SYNTAX_TEXT_AREA_NAME = "syntaxTextArea";
 
     private final ToolbarIconButton button;
     private final JPanel content;
@@ -88,7 +99,7 @@ public class InspectorToolbarTab {
     private RoundedPanel selectionCard;
     private RoundedPanel decodedCard;
 
-    private final Timer pollTimer;
+    private final List<EditorCaretBinding> editorCaretBindings = new ArrayList<>();
 
     // Bound active tab (set by TreepeaterUI on tab-selection change).
     private RequestResponsePanel activePanel;
@@ -116,10 +127,6 @@ public class InspectorToolbarTab {
             this.reDecodeWithSelectedScheme();
         });
 
-        this.pollTimer = new Timer(POLL_INTERVAL_MS, e -> this.pollSelection());
-        this.pollTimer.setRepeats(true);
-        this.pollTimer.start();
-
         this.refreshApplyEnabled();
     }
 
@@ -143,9 +150,12 @@ public class InspectorToolbarTab {
 
     /** Binds the Inspector to the currently selected request/response tab. */
     public void setActivePanel(RequestResponsePanel panel) {
+        this.unbindEditorCaretListeners();
         this.activePanel = panel;
         if (panel == null) {
             this.clearDisplay();
+        } else {
+            this.bindEditorCaretListeners(panel);
         }
     }
 
@@ -169,61 +179,107 @@ public class InspectorToolbarTab {
         }
     }
 
-    // ------------------------------------------------------------------
-    // Selection polling
-    // ------------------------------------------------------------------
+    private void unbindEditorCaretListeners() {
+        for (EditorCaretBinding binding : this.editorCaretBindings) {
+            binding.component().removeCaretListener(binding.listener());
+        }
+        this.editorCaretBindings.clear();
+    }
 
-    private void pollSelection() {
-        RequestResponsePanel panel = this.activePanel;
-        if (panel == null) {
-            if (this.currentSource != Source.NONE) {
-                this.clearDisplay();
+    private void bindEditorCaretListeners(RequestResponsePanel panel) {
+        HttpRequestEditor requestEditor = panel.getRequestEditor();
+        if (requestEditor != null) {
+            this.bindSyntaxTextAreaCaretListener(requestEditor.uiComponent(), Source.REQUEST);
+        }
+        HttpResponseEditor responseEditor = panel.getResponseEditor();
+        if (responseEditor != null) {
+            this.bindSyntaxTextAreaCaretListener(responseEditor.uiComponent(), Source.RESPONSE);
+        }
+    }
+
+    private void bindSyntaxTextAreaCaretListener(Component root, Source source) {
+        JTextComponent syntaxTextArea = findSyntaxTextArea(root);
+        if (syntaxTextArea == null) {
+            return;
+        }
+        CaretListener listener = e -> this.handleEditorSelection(syntaxTextArea, source);
+        syntaxTextArea.addCaretListener(listener);
+        this.editorCaretBindings.add(new EditorCaretBinding(syntaxTextArea, listener));
+    }
+
+    private static JTextComponent findSyntaxTextArea(Component root) {
+        if (root instanceof JTextComponent textComponent && SYNTAX_TEXT_AREA_NAME.equals(textComponent.getName())) {
+            return textComponent;
+        }
+        if (root instanceof Container container) {
+            for (Component child : container.getComponents()) {
+                JTextComponent found = findSyntaxTextArea(child);
+                if (found != null) {
+                    return found;
+                }
             }
+        }
+        return null;
+    }
+
+    private void handleEditorSelection(JTextComponent textComponent, Source source) {
+        if (this.activePanel == null) {
+            return;
+        }
+        String raw = textComponent.getSelectedText();
+        if (raw == null || raw.isEmpty()) {
+            // No selection: keep the last inspected value visible so the user can still edit/apply it.
             return;
         }
 
-        HttpRequestEditor reqEditor = safe(panel::getRequestEditor, null);
-        HttpResponseEditor respEditor = safe(panel::getResponseEditor, null);
-
-        Selection sel = null;
-        Source source = Source.NONE;
-
-        if (reqEditor != null) {
-            sel = safe(() -> reqEditor.selection().orElse(null), null);
-            if (sel != null) {
-                source = Source.REQUEST;
-            }
-        }
-        if (sel == null && respEditor != null) {
-            Selection respSel = safe(() -> respEditor.selection().orElse(null), null);
-            if (respSel != null) {
-                sel = respSel;
-                source = Source.RESPONSE;
-            }
-        }
-
-        if (sel == null) {
-            // No selection anywhere: keep the last inspected value visible so the user can still edit/apply it,
-            // but only if it originated from the request editor (response is read-only anyway).
+        Range offsets = this.resolveSelectionOffsets(textComponent, source);
+        if (offsets == null) {
             return;
         }
 
-        String raw = contentsToString(sel.contents());
-        if (raw == null) {
-            return;
-        }
-
-        boolean sameSelection = source == this.currentSource
-                && raw.equals(this.lastRawSeen);
+        boolean sameSelection = source == this.currentSource && raw.equals(this.lastRawSeen);
         if (sameSelection) {
             return;
         }
 
         this.currentSource = source;
-        this.currentOffsets = safe(sel::offsets, null);
+        this.currentOffsets = offsets;
         this.lastRawSeen = raw;
         this.showSelection(raw, source);
     }
+
+    private Range resolveSelectionOffsets(JTextComponent textComponent, Source source) {
+        RequestResponsePanel panel = this.activePanel;
+        if (panel == null) {
+            return null;
+        }
+        Selection sel = null;
+        if (source == Source.REQUEST) {
+            HttpRequestEditor editor = panel.getRequestEditor();
+            if (editor != null) {
+                sel = editor.selection().orElse(null);
+            }
+        } else if (source == Source.RESPONSE) {
+            HttpResponseEditor editor = panel.getResponseEditor();
+            if (editor != null) {
+                sel = editor.selection().orElse(null);
+            }
+        }
+        if (sel != null) {
+            Range offsets = sel.offsets();
+            if (offsets != null) {
+                return offsets;
+            }
+        }
+        int start = textComponent.getSelectionStart();
+        int end = textComponent.getSelectionEnd();
+        if (start < 0 || end < start) {
+            return null;
+        }
+        return Range.range(start, end);
+    }
+
+    private record EditorCaretBinding(JTextComponent component, CaretListener listener) {}
 
     private void showSelection(String raw, Source source) {
         this.updatingFromSelection = true;
@@ -301,7 +357,7 @@ public class InspectorToolbarTab {
         if (panel == null || this.currentSource != Source.REQUEST || this.currentOffsets == null) {
             return;
         }
-        HttpRequestEditor editor = safe(panel::getRequestEditor, null);
+        HttpRequestEditor editor = panel.getRequestEditor();
         if (editor == null) {
             return;
         }
@@ -312,7 +368,7 @@ public class InspectorToolbarTab {
         }
         String reEncoded = encode(this.decodedArea.getText(), scheme);
 
-        ByteArray current = safe(() -> editor.getRequest().toByteArray(), null);
+        ByteArray current = editor.getRequest().toByteArray();
         if (current == null) {
             this.statusLine.setText("Could not read the current request to apply the change.");
             return;
@@ -348,10 +404,6 @@ public class InspectorToolbarTab {
             }
         });
     }
-
-    // ------------------------------------------------------------------
-    // Encoding detection / transforms (backed by Burp utilities)
-    // ------------------------------------------------------------------
 
     private static Encoding detectEncoding(String raw) {
         if (raw == null || raw.isEmpty()) {
@@ -435,7 +487,7 @@ public class InspectorToolbarTab {
             return false;
         }
         // Guard against ordinary lowercase words that happen to be multiples of 4 characters.
-        String decoded = safe(() -> Treepeater.api.utilities().base64Utils().decode(t).toString(), null);
+        String decoded = Treepeater.api.utilities().base64Utils().decode(t).toString();
         if (decoded == null || decoded.isEmpty()) {
             return false;
         }
@@ -501,17 +553,6 @@ public class InspectorToolbarTab {
 
     private static boolean isHex(char c) {
         return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-    }
-
-    private static String contentsToString(ByteArray contents) {
-        if (contents == null) {
-            return null;
-        }
-        try {
-            return contents.toString();
-        } catch (Exception ex) {
-            return null;
-        }
     }
 
     // ------------------------------------------------------------------
@@ -736,19 +777,5 @@ public class InspectorToolbarTab {
 
     private static String emDash() {
         return "\u2014";
-    }
-
-    private static <T> T safe(Supplier<T> supplier, T onFailure) {
-        try {
-            return supplier.get();
-        } catch (Exception ignored) {
-            return onFailure;
-        }
-    }
-
-    // Kept for symmetry with other tabs; the list allows future multi-selection features.
-    @SuppressWarnings("unused")
-    private static List<String> emptyList() {
-        return new ArrayList<>();
     }
 }

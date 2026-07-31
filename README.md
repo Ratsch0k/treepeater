@@ -48,6 +48,10 @@ Pick any two tree nodes and diff their requests and responses side by side. Chan
 
 ![Compare view](./images/diff-view.png)
 
+### API and MCP server
+
+Drive Treepeater from other Burp extensions or from external agents. An embedded server, bound to loopback and off by default, serves a REST API at `/api/v1` and an MCP endpoint at `/mcp`, both backed by the same tools the built-in AI chat uses: browsing and restructuring the tree, folders, statuses, notes, and the direct and path-aware importers. Access needs a bearer token, and the write and execute permissions are granted separately in the settings. See [docs/api-and-mcp.md](./docs/api-and-mcp.md).
+
 
 ## How To Install
 

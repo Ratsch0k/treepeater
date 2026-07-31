@@ -9,6 +9,8 @@ import java.awt.Graphics;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
+import java.awt.Toolkit;
+import java.awt.datatransfer.StringSelection;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.util.ArrayList;
@@ -112,7 +114,16 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         );
         this.root.add(llmPanel);
 
+        this.root.add(new JSeparator(JSeparator.HORIZONTAL));
 
+        JPanel apiPanel = this.createTitledSection(
+            "API & MCP server",
+            "Expose Treepeater to local tooling and MCP clients through a loopback HTTP server. "
+                + "The server is off by default; enable it only while you need it, and grant the write and "
+                + "execute permissions deliberately, since they let callers change your tree and send traffic.",
+            this.createApiSettingsPanel()
+        );
+        this.root.add(apiPanel);
     }
 
     private JPanel createTitledSection(String title, String description, JComponent content) {
@@ -625,6 +636,118 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         return wrapper;
     }
 
+    private JComponent createApiSettingsPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JCheckBox enabledCheck = new JCheckBox("Enable local API and MCP server");
+        enabledCheck.setAlignmentX(Component.LEFT_ALIGNMENT);
+        enabledCheck.setOpaque(false);
+        enabledCheck.setSelected(this.settings.isApiEnabled());
+
+        JSpinner portSpinner = new JSpinner(
+                new SpinnerNumberModel(this.settings.getApiPort(), 1024, 65535, 1));
+        portSpinner.setEditor(new JSpinner.NumberEditor(portSpinner, "#"));
+        portSpinner.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JLabel portLabel = new JLabel("Port:");
+        JPanel portRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        portRow.setOpaque(false);
+        portRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        portRow.add(portLabel);
+        portRow.add(portSpinner);
+
+        JTextField tokenField = new JTextField(this.settings.getOrCreateApiToken(), 40);
+        tokenField.setEditable(false);
+        JButton copyButton = new JButton("Copy");
+        JButton regenerateButton = new JButton("Regenerate");
+
+        JLabel tokenLabel = new JLabel("Bearer token:");
+        JPanel tokenRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        tokenRow.setOpaque(false);
+        tokenRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        tokenRow.add(tokenLabel);
+        tokenRow.add(tokenField);
+        tokenRow.add(copyButton);
+        tokenRow.add(regenerateButton);
+
+        JCheckBox allowWriteCheck = new JCheckBox("Allow write tools (modify requests and the tree)");
+        allowWriteCheck.setAlignmentX(Component.LEFT_ALIGNMENT);
+        allowWriteCheck.setOpaque(false);
+        allowWriteCheck.setSelected(this.settings.isApiAllowWrite());
+
+        JCheckBox allowExecuteCheck = new JCheckBox("Allow execute tools (send HTTP requests)");
+        allowExecuteCheck.setAlignmentX(Component.LEFT_ALIGNMENT);
+        allowExecuteCheck.setOpaque(false);
+        allowExecuteCheck.setSelected(this.settings.isApiAllowExecute());
+
+        JLabel endpointsLabel = new JLabel(apiEndpointsText(this.settings.getApiPort()));
+        endpointsLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        Runnable updateEnabledState = () -> {
+            boolean enabled = enabledCheck.isSelected();
+            portLabel.setEnabled(enabled);
+            portSpinner.setEnabled(enabled);
+            portRow.setEnabled(enabled);
+            tokenLabel.setEnabled(enabled);
+            tokenField.setEnabled(enabled);
+            copyButton.setEnabled(enabled);
+            regenerateButton.setEnabled(enabled);
+            tokenRow.setEnabled(enabled);
+            allowWriteCheck.setEnabled(enabled);
+            allowExecuteCheck.setEnabled(enabled);
+        };
+
+        enabledCheck.addActionListener(e -> {
+            this.settings.setApiEnabled(enabledCheck.isSelected());
+            updateEnabledState.run();
+        });
+
+        portSpinner.addChangeListener(e -> {
+            this.settings.setApiPort(((Number) portSpinner.getValue()).intValue());
+            endpointsLabel.setText(apiEndpointsText(this.settings.getApiPort()));
+        });
+
+        copyButton.addActionListener(e -> {
+            StringSelection selection = new StringSelection(tokenField.getText());
+            Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, selection);
+        });
+
+        regenerateButton.addActionListener(e -> {
+            this.settings.setApiToken(TreepeaterSettings.generateApiToken());
+            tokenField.setText(this.settings.getOrCreateApiToken());
+        });
+
+        allowWriteCheck.addActionListener(e -> this.settings.setApiAllowWrite(allowWriteCheck.isSelected()));
+        allowExecuteCheck.addActionListener(e -> this.settings.setApiAllowExecute(allowExecuteCheck.isSelected()));
+
+        panel.add(enabledCheck);
+        panel.add(Box.createVerticalStrut(INNER_SECTION_GAP));
+        panel.add(portRow);
+        panel.add(Box.createVerticalStrut(ROW_GAP));
+        panel.add(tokenRow);
+        panel.add(Box.createVerticalStrut(INNER_SECTION_GAP));
+        panel.add(this.createSubsectionHeader("Permissions"));
+        panel.add(Box.createVerticalStrut(4));
+        panel.add(allowWriteCheck);
+        panel.add(Box.createVerticalStrut(4));
+        panel.add(allowExecuteCheck);
+        panel.add(Box.createVerticalStrut(INNER_SECTION_GAP));
+        panel.add(endpointsLabel);
+        updateEnabledState.run();
+        return panel;
+    }
+
+    /** HTML so the label wraps; the width hint is required because JLabel does not wrap on its own. */
+    private static String apiEndpointsText(int port) {
+        return "<html><body style='width: 520px'>The server listens on 127.0.0.1 only and never accepts "
+                + "connections from other hosts. Every request must carry the bearer token above in an "
+                + "<code>Authorization: Bearer &lt;token&gt;</code> header. The MCP endpoint is "
+                + "<code>http://127.0.0.1:" + port + "/mcp</code> and the REST API is at "
+                + "<code>http://127.0.0.1:" + port + "/api/v1</code>.</body></html>";
+    }
+
     private int addPersistedTextRow(
             JPanel parent,
             int row,
@@ -951,7 +1074,8 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
                 "Anthropic",
                 "AI",
                 "model",
-                "API");
+                "API",
+                "MCP");
     }
 
     @Override

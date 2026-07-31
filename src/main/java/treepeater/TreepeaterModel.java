@@ -259,13 +259,14 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         }
     }
 
-    public void insertNode(HttpRequestResponse requestResponse) {
+    /** @return the created leaf, or {@code null} when {@code requestResponse} carries no request */
+    public RequestTreeNode insertNode(HttpRequestResponse requestResponse) {
         if (requestResponse == null) {
-            return;
+            return null;
         }
         HttpRequest request = requestResponse.request();
         if (request == null) {
-            return;
+            return null;
         }
         this.requestCount += 1;
 
@@ -282,6 +283,7 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         this.tree.insertRootNode(node);
         Treepeater.saveState();
         notifyTreeChanged();
+        return node;
     }
 
     public void insertNodeInto(TreepeaterNode child, TreepeaterNode parent, int index) {
@@ -331,38 +333,39 @@ public class TreepeaterModel implements TreepeaterNodeListener {
      * <p>Options are taken from {@link ImportOptions#fromSettings()} rather than the manual import
      * dialog.
      */
-    public void importRequestPathAware(HttpRequestResponse requestResponse) {
+    public RequestTreeNode importRequestPathAware(HttpRequestResponse requestResponse) {
         if (requestResponse == null) {
-            return;
+            return null;
         }
         FolderTreeNode root = (FolderTreeNode) this.tree.getTreeModel().getRoot();
-        importRequestPathAware(root, requestResponse, ImportOptions.fromSettings());
+        return importRequestPathAware(root, requestResponse, ImportOptions.fromSettings());
     }
 
     /**
      * Imports a request under {@code destinationFolder} using options from the manual import dialog.
+     *
+     * @return the created leaf, or {@code null} when the arguments are incomplete
      */
-    public void importRequestManual(
+    public RequestTreeNode importRequestManual(
             FolderTreeNode destinationFolder,
             HttpRequestResponse requestResponse,
             ImportOptions options) {
         if (destinationFolder == null || requestResponse == null || options == null) {
-            return;
+            return null;
         }
         if (options.placement() instanceof PathAwarePlacement) {
-            importRequestPathAware(destinationFolder, requestResponse, options);
-            return;
+            return importRequestPathAware(destinationFolder, requestResponse, options);
         }
 
         HttpRequest request = requestResponse.request();
         if (request == null) {
-            return;
+            return null;
         }
         DirectPlacement direct = options.directPlacement();
         String leafName = direct.nameMode() == DirectNameMode.ID
                 ? String.valueOf(this.requestCount + 1)
                 : resolveDirectLeafName(request, direct.nameMode(), direct.manualName());
-        insertRequestLeaf(
+        return insertRequestLeaf(
                 destinationFolder,
                 leafName,
                 request,
@@ -370,13 +373,13 @@ public class TreepeaterModel implements TreepeaterNodeListener {
                 options.resolveStatus());
     }
 
-    private void importRequestPathAware(
+    private RequestTreeNode importRequestPathAware(
             FolderTreeNode anchor,
             HttpRequestResponse requestResponse,
             ImportOptions options) {
         HttpRequest request = requestResponse.request();
         if (request == null) {
-            return;
+            return null;
         }
         HttpResponse response = requestResponse.response();
         PathAwarePlacement pathAware = options.pathAwarePlacement();
@@ -394,14 +397,13 @@ public class TreepeaterModel implements TreepeaterNodeListener {
             FolderTreeNode methodFolder = findOrCreateChildFolder(parent, "[" + method + "]");
             String baseName = pathAware.baseLeafName();
             String leafName = (baseName != null && !baseName.isBlank()) ? baseName.trim() : "base";
-            insertRequestLeaf(methodFolder, leafName, request, response, status);
-        } else {
-            List<String> folderSegments =
-                    segments.isEmpty() ? segments : segments.subList(0, segments.size() - 1);
-            FolderTreeNode parent = resolveFolderChain(anchor, folderSegments, lenientGrouping);
-            String leafName = segments.isEmpty() ? "/" : segments.get(segments.size() - 1);
-            insertRequestLeaf(parent, leafName, request, response, status);
+            return insertRequestLeaf(methodFolder, leafName, request, response, status);
         }
+        List<String> folderSegments =
+                segments.isEmpty() ? segments : segments.subList(0, segments.size() - 1);
+        FolderTreeNode parent = resolveFolderChain(anchor, folderSegments, lenientGrouping);
+        String leafName = segments.isEmpty() ? "/" : segments.get(segments.size() - 1);
+        return insertRequestLeaf(parent, leafName, request, response, status);
     }
 
     private static String resolveDirectLeafName(HttpRequest request, DirectNameMode mode, String manualName) {

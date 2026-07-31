@@ -36,6 +36,7 @@ import treepeater.ai.RepeaterTabAgentBridge;
 import treepeater.ai.StreamingChatClient;
 import treepeater.ai.model.LlmModelDefinition;
 import treepeater.ai.model.LlmModelOptionValues;
+import treepeater.api.TreepeaterToolRegistry;
 import treepeater.components.StyledButton;
 import treepeater.icons.WandIcon;
 import treepeater.requestResponse.toolbar.ToolbarIconButton;
@@ -96,16 +97,24 @@ public class AIToolbarTab implements AIChatHost {
         return model.provider().createClient(model, values != null ? values : model.defaults());
     }
 
-    /** Built-in HTTP target tools; approval depends on {@link AgentMode}. */
+    /**
+     * Tools from the shared registry, so the chat sees the tree, import and status tools alongside the
+     * built-in editor tools; approval depends on {@link AgentMode}. Falls back to the built-in tools alone
+     * when the registry has not been built yet.
+     */
     @Override
     public ChatTooling chatTooling(AgentMode mode) {
         if (this.agentBridge == null) {
             return ChatTooling.none();
         }
         AgentMode m = mode != null ? mode : AgentMode.ASK;
-        ChatToolExecutor exec = ctx -> HttpTargetTools.execute(ctx, this.agentBridge);
+        TreepeaterToolRegistry registry = Treepeater.getToolRegistry();
+        ChatToolExecutor exec =
+                registry != null
+                        ? registry::executeForChat
+                        : ctx -> HttpTargetTools.execute(ctx, this.agentBridge);
         return new ChatTooling(
-                HttpTargetTools.definitions(),
+                registry != null ? registry.chatToolDefinitions() : HttpTargetTools.definitions(),
                 exec,
                 () -> {
                     AgentToolContext c = this.agentBridge.contextForAgent(OptionalInt.empty());

@@ -9,6 +9,9 @@ import burp.api.montoya.ui.contextmenu.ContextMenuItemsProvider;
 import burp.api.montoya.ui.contextmenu.MessageEditorHttpRequestResponse;
 import burp.api.montoya.ui.hotkey.HotKey;
 import burp.api.montoya.ui.hotkey.HotKeyHandler;
+import treepeater.api.TreepeaterService;
+import treepeater.api.TreepeaterToolRegistry;
+import treepeater.api.server.TreepeaterHttpServer;
 import treepeater.importing.ManualImport;
 import treepeater.persistence.TreepeaterPersistence;
 import treepeater.requestResponse.Status;
@@ -30,6 +33,8 @@ public class Treepeater implements BurpExtension {
     private static StatusRegistry statusRegistry;
     private static TreepeaterModel model;
     private static TreepeaterPersistence persistence;
+    private static TreepeaterToolRegistry toolRegistry;
+    private static TreepeaterHttpServer apiServer;
     private static volatile boolean dirty = false;
     DefaultMutableTreeNode root;
 
@@ -82,11 +87,23 @@ public class Treepeater implements BurpExtension {
             if (this.autoSaveTimer != null) {
                 this.autoSaveTimer.stop();
             }
+            if (Treepeater.apiServer != null) {
+                Treepeater.apiServer.stop();
+            }
             Treepeater.persistence.saveStatusRegistry(Treepeater.statusRegistry);
             Treepeater.persistence.saveModel(Treepeater.model);
         });
 
         TreepeaterUI ui = new TreepeaterUI(model);
+
+        // The UI doubles as the RepeaterTabAgentBridge, so the registry can expose the editor-centric
+        // tools alongside the headless tree and import tools.
+        TreepeaterService apiService = new TreepeaterService(model);
+        Treepeater.toolRegistry = TreepeaterToolRegistry.create(apiService, ui);
+        Treepeater.apiServer = new TreepeaterHttpServer(Treepeater.toolRegistry, apiService);
+        if (settings.isApiEnabled()) {
+            Treepeater.apiServer.start();
+        }
 
         montoyaApi.userInterface().registerSuiteTab("Treepeater", ui);
 
@@ -154,6 +171,14 @@ public class Treepeater implements BurpExtension {
                 this.sendManualHotKeyRegistration.deregister();
                 HotKey newHotkey = HotKey.hotKey("Send to Treepeater (manual)", (String) value);
                 this.sendManualHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(newHotkey, sendManualHotKeyHandler);
+            } else if (key.equals(TreepeaterSettings.API_ENABLED_SETTING)) {
+                if (Boolean.TRUE.equals(value)) {
+                    Treepeater.apiServer.start();
+                } else {
+                    Treepeater.apiServer.stop();
+                }
+            } else if (key.equals(TreepeaterSettings.API_PORT_SETTING) && Treepeater.apiServer.isRunning()) {
+                Treepeater.apiServer.restart();
             }
         });
 
@@ -174,6 +199,13 @@ public class Treepeater implements BurpExtension {
 
     public static StatusRegistry getStatusRegistry() {
         return Treepeater.statusRegistry;
+    }
+
+    /**
+     * Shared tool registry backing the AI chat panel, the REST API, and the MCP endpoint
+     */
+    public static TreepeaterToolRegistry getToolRegistry() {
+        return Treepeater.toolRegistry;
     }
 
     /**

@@ -86,6 +86,19 @@ public class TreepeaterSettings {
     public static final int IMPORT_GROUPING_FOLDER_RECONCILIATION_MAX_SKIP_DEFAULT = 2;
     public static final int IMPORT_GROUPING_FOLDER_RECONCILIATION_MATCH_THRESHOLD_PERCENT_DEFAULT = 60;
 
+    /** Whether the loopback REST + MCP server runs. Disabled by default. */
+    public static final String API_ENABLED_SETTING = "TREEPEATER_API_ENABLED";
+    /** TCP port for the loopback REST + MCP server. */
+    public static final String API_PORT_SETTING = "TREEPEATER_API_PORT";
+    /** Bearer token required by every API request; generated on first enable. */
+    public static final String API_TOKEN_SETTING = "TREEPEATER_API_TOKEN";
+    /** Whether API callers may run {@link treepeater.ai.ToolActionLevel#WRITE} tools. */
+    public static final String API_ALLOW_WRITE_SETTING = "TREEPEATER_API_ALLOW_WRITE";
+    /** Whether API callers may run {@link treepeater.ai.ToolActionLevel#EXECUTE} tools, which send traffic. */
+    public static final String API_ALLOW_EXECUTE_SETTING = "TREEPEATER_API_ALLOW_EXECUTE";
+
+    public static final int API_PORT_DEFAULT = 8666;
+
     public static final String LLM_OLLAMA_BASE_URL_SETTING = "TREEPEATER_LLM_OLLAMA_BASE_URL";
     public static final String LLM_OLLAMA_MODELS_SETTING = "TREEPEATER_LLM_OLLAMA_MODELS";
     public static final String LLM_OLLAMA_MODELS_COUNT_SETTING = LLM_OLLAMA_MODELS_SETTING + "_COUNT";
@@ -140,6 +153,9 @@ public class TreepeaterSettings {
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_METHOD_BASE_LEAF_NAME_SETTING, "base");
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_GROUPING_FOLDER_RECONCILIATION_ENABLED_SETTING, "true");
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_NORMALIZE_DYNAMIC_SEGMENTS_ENABLED_SETTING, "true");
+        STRING_PREFERENCE_DEFAULTS.put(API_ENABLED_SETTING, "false");
+        STRING_PREFERENCE_DEFAULTS.put(API_ALLOW_WRITE_SETTING, "false");
+        STRING_PREFERENCE_DEFAULTS.put(API_ALLOW_EXECUTE_SETTING, "false");
         STRING_PREFERENCE_DEFAULTS.put(LLM_OLLAMA_BASE_URL_SETTING, "http://127.0.0.1:11434");
     }
 
@@ -400,6 +416,84 @@ public class TreepeaterSettings {
         this.preferences.setString(
                 IMPORT_NORMALIZE_DYNAMIC_SEGMENTS_ENABLED_SETTING, Boolean.toString(enabled));
         this.notifyListeners(IMPORT_NORMALIZE_DYNAMIC_SEGMENTS_ENABLED_SETTING, enabled);
+    }
+
+    /** Whether the loopback REST + MCP server should run (default {@code false}). */
+    public boolean isApiEnabled() {
+        return Boolean.parseBoolean(this.getStringWithDefault(API_ENABLED_SETTING));
+    }
+
+    public void setApiEnabled(boolean enabled) {
+        this.preferences.setString(API_ENABLED_SETTING, Boolean.toString(enabled));
+        this.notifyListeners(API_ENABLED_SETTING, enabled);
+    }
+
+    /** Server port, clamped to the unprivileged range (default {@link #API_PORT_DEFAULT}). */
+    public int getApiPort() {
+        Integer value = this.preferences.getInteger(API_PORT_SETTING);
+        int port = value != null ? value.intValue() : API_PORT_DEFAULT;
+        return Math.max(1024, Math.min(65535, port));
+    }
+
+    public void setApiPort(int port) {
+        int clamped = Math.max(1024, Math.min(65535, port));
+        this.preferences.setInteger(API_PORT_SETTING, clamped);
+        this.notifyListeners(API_PORT_SETTING, clamped);
+    }
+
+    /** Stored bearer token, or {@code null} when none has been generated yet. */
+    public String getApiToken() {
+        String token = this.getString(API_TOKEN_SETTING);
+        return token != null && !token.isBlank() ? token : null;
+    }
+
+    public void setApiToken(String token) {
+        this.preferences.setString(API_TOKEN_SETTING, token != null ? token : "");
+        this.notifyListeners(API_TOKEN_SETTING, token);
+    }
+
+    /**
+     * Bearer token for the API, generating and persisting one on first use so the server is never
+     * reachable without authentication.
+     */
+    public String getOrCreateApiToken() {
+        String existing = this.getApiToken();
+        if (existing != null) {
+            return existing;
+        }
+        String generated = generateApiToken();
+        this.setApiToken(generated);
+        return generated;
+    }
+
+    public static String generateApiToken() {
+        byte[] raw = new byte[24];
+        new java.security.SecureRandom().nextBytes(raw);
+        StringBuilder out = new StringBuilder(raw.length * 2);
+        for (byte b : raw) {
+            out.append(String.format("%02x", b));
+        }
+        return out.toString();
+    }
+
+    /** Whether API callers may run tools that modify requests or the tree (default {@code false}). */
+    public boolean isApiAllowWrite() {
+        return Boolean.parseBoolean(this.getStringWithDefault(API_ALLOW_WRITE_SETTING));
+    }
+
+    public void setApiAllowWrite(boolean allow) {
+        this.preferences.setString(API_ALLOW_WRITE_SETTING, Boolean.toString(allow));
+        this.notifyListeners(API_ALLOW_WRITE_SETTING, allow);
+    }
+
+    /** Whether API callers may run tools that send HTTP traffic (default {@code false}). */
+    public boolean isApiAllowExecute() {
+        return Boolean.parseBoolean(this.getStringWithDefault(API_ALLOW_EXECUTE_SETTING));
+    }
+
+    public void setApiAllowExecute(boolean allow) {
+        this.preferences.setString(API_ALLOW_EXECUTE_SETTING, Boolean.toString(allow));
+        this.notifyListeners(API_ALLOW_EXECUTE_SETTING, allow);
     }
 
     public String getLlmOllamaBaseUrl() {

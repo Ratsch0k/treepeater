@@ -397,8 +397,10 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
             p.addRequestResponseChangeListener(this.sideToolbar.getInfoToolbarTab());
             p.refreshToolbarLinkedInfo();
             this.panelBoundForInfo = p;
+            this.sideToolbar.getInspectorToolbarTab().setActivePanel(p);
         } else {
             this.sideToolbar.getInfoToolbarTab().clearDisplay();
+            this.sideToolbar.getInspectorToolbarTab().setActivePanel(null);
         }
     }
 

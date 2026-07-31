@@ -21,12 +21,14 @@ import treepeater.icons.DoubleArrowLeftIcon;
 import treepeater.requestResponse.RequestResponsePanelUi;
 import treepeater.requestResponse.toolbar.ai.AIToolbarTab;
 import treepeater.requestResponse.toolbar.diff.CompareToolbarTab;
+import treepeater.requestResponse.toolbar.inspector.InspectorToolbarTab;
 
 /**
  * Narrow vertical strip of actions to the right of the request/response editors.
  */
 public class RequestResponseToolbar extends JPanel {
     private final InfoToolbarTab infoToolbarTab;
+    private final InspectorToolbarTab inspectorToolbarTab;
     private final NotesToolbarTab notesToolbarTab;
     private final AIToolbarTab magicToolbarTab;
     private final CompareToolbarTab compareToolbarTab;
@@ -49,6 +51,7 @@ public class RequestResponseToolbar extends JPanel {
 
 
         this.infoToolbarTab = new InfoToolbarTab();
+        this.inspectorToolbarTab = new InspectorToolbarTab();
         this.notesToolbarTab = new NotesToolbarTab(model);
         this.magicToolbarTab = new AIToolbarTab(model, agentBridge);
         this.compareToolbarTab = new CompareToolbarTab(model);
@@ -57,6 +60,7 @@ public class RequestResponseToolbar extends JPanel {
         this.toolbarPanel = new JPanel(this.toolbarCardLayout);
 
         this.toolbarPanel.add(this.infoToolbarTab.getContent(), "info");
+        this.toolbarPanel.add(this.inspectorToolbarTab.getContent(), "inspector");
         this.toolbarPanel.add(this.notesToolbarTab.getContent(), "notes");
         this.toolbarPanel.add(this.magicToolbarTab.getContent(), "magic");
         this.toolbarPanel.add(this.compareToolbarTab.getContent(), "compare");
@@ -66,6 +70,13 @@ public class RequestResponseToolbar extends JPanel {
                 openToolbarToCard("info");
             } else {
                 this.toolbarCardLayout.show(this.toolbarPanel, "info");
+            }
+        });
+        this.inspectorToolbarTab.getButton().addActionListener(e -> {
+            if (!this.toolbarOpen) {
+                openToolbarToCard("inspector");
+            } else {
+                this.toolbarCardLayout.show(this.toolbarPanel, "inspector");
             }
         });
         this.notesToolbarTab.getButton().addActionListener(e -> {
@@ -112,6 +123,8 @@ public class RequestResponseToolbar extends JPanel {
         column.add(this.expandButton);
         column.add(Box.createVerticalStrut(6));
         column.add(this.infoToolbarTab.getButton());
+        column.add(Box.createVerticalStrut(6));
+        column.add(this.inspectorToolbarTab.getButton());
         column.add(Box.createVerticalStrut(6));
         column.add(this.notesToolbarTab.getButton());
         column.add(Box.createVerticalStrut(6));
@@ -181,6 +194,14 @@ public class RequestResponseToolbar extends JPanel {
         return this.infoToolbarTab;
     }
 
+    public InspectorToolbarTab getInspectorToolbarTab() {
+        return this.inspectorToolbarTab;
+    }
+
+    public JButton getInspectorButton() {
+        return this.inspectorToolbarTab.getButton();
+    }
+
     public NotesToolbarTab getNotesToolbarTab() {
         return this.notesToolbarTab;
     }
@@ -208,6 +229,9 @@ public class RequestResponseToolbar extends JPanel {
     public void applyLocalTheme() {
         if (this.infoToolbarTab != null) {
             this.infoToolbarTab.applyLocalTheme();
+        }
+        if (this.inspectorToolbarTab != null) {
+            this.inspectorToolbarTab.applyLocalTheme();
         }
         if (this.notesToolbarTab != null) {
             this.notesToolbarTab.applyLocalTheme();

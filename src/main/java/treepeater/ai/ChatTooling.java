@@ -1,5 +1,9 @@
 package treepeater.ai;
 
+import treepeater.api.tools.HttpTargetTools;
+import treepeater.api.tools.HumanToolUsage;
+import treepeater.api.tools.ToolHumanUsage;
+
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -74,8 +78,7 @@ public record ChatTooling(
                         ? HttpTargetTools.viewerHistoryIndexForToolCard(name, argsJson, this.agentBridge)
                         : currentHistoryIndexForToolStatus();
         int uiNodeForCard = HttpTargetTools.uiSelectedRequestNodeIdForToolCard(this.agentBridge);
-        HttpTargetTools.HumanToolUsage label =
-                HttpTargetTools.humanToolUsage(name, argsJson, histForCard, uiNodeForCard);
+        HumanToolUsage label = ToolHumanUsage.forTool(name, argsJson, histForCard, uiNodeForCard);
         ToolRunPolicy policy = this.toolRunPolicy;
         AtomicInteger batchChildSlot = new AtomicInteger(0);
         NestedToolInvoker childInvoker =

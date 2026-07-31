@@ -27,7 +27,7 @@ import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 
 import treepeater.ai.AgentToolContext;
-import treepeater.ai.HttpTargetTools;
+import treepeater.api.tools.HttpTargetTools;
 import treepeater.ai.RepeaterTabAgentBridge;
 import treepeater.ai.RepeaterTabQueryMatcher;
 import treepeater.ai.SearchTabRow;

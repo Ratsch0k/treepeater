@@ -7,16 +7,15 @@ import java.util.Map;
 
 import treepeater.ai.ChatToolDefinition;
 import treepeater.ai.ChatToolInvokeContext;
-import treepeater.ai.HttpTargetTools;
 import treepeater.ai.RepeaterTabAgentBridge;
+import treepeater.api.tools.HttpTargetTools;
 import treepeater.api.tools.ImportTools;
 import treepeater.api.tools.StatusTools;
 import treepeater.api.tools.TreeTools;
 
 /**
  * Single source of truth for callable Treepeater operations, consumed by the AI chat panel, the REST API,
- * and the MCP endpoint. The editor-centric tools in {@link HttpTargetTools} are wrapped rather than
- * reimplemented, so they keep their existing schemas, dispatch, and batching behaviour.
+ * and the MCP endpoint. All tool groups live under {@code treepeater.api.tools}.
  */
 public final class TreepeaterToolRegistry {
 
@@ -34,20 +33,18 @@ public final class TreepeaterToolRegistry {
     public static TreepeaterToolRegistry create(TreepeaterService service, RepeaterTabAgentBridge bridge) {
         TreepeaterToolRegistry registry = new TreepeaterToolRegistry(bridge);
         if (bridge != null) {
-            for (ChatToolDefinition definition : HttpTargetTools.definitions()) {
-                String name = definition.name();
-                registry.add(
-                        new TreepeaterTool(
-                                name,
-                                definition.description(),
-                                definition.parametersJsonSchema(),
-                                HttpTargetTools.toolActionLevel(name),
-                                args -> HttpTargetTools.execute(name, args, bridge)));
-            }
+            HttpTargetTools.register(registry, bridge);
         }
         TreeTools.register(registry, service);
         StatusTools.register(registry, service);
         ImportTools.register(registry, service);
+        return registry;
+    }
+
+    /** Registry with only editor tools; used before the full registry is initialized. */
+    public static TreepeaterToolRegistry createEditorOnly(RepeaterTabAgentBridge bridge) {
+        TreepeaterToolRegistry registry = new TreepeaterToolRegistry(bridge);
+        HttpTargetTools.register(registry, bridge);
         return registry;
     }
 

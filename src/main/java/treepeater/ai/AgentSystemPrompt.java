@@ -3,6 +3,8 @@ package treepeater.ai;
 import java.util.ArrayList;
 import java.util.List;
 
+import treepeater.api.tools.HttpTargetTools;
+
 /**
  * Default system instructions for the in-extension AI agent (authorized HTTP/API security testing).
  */

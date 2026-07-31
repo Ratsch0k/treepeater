@@ -1,6 +1,6 @@
 package treepeater.api;
 
-import treepeater.ai.HttpTargetTools;
+import treepeater.api.tools.HttpTargetTools;
 import treepeater.ai.ToolActionLevel;
 import treepeater.settings.TreepeaterSettings;
 

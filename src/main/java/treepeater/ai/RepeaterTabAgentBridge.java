@@ -6,7 +6,7 @@ import treepeater.TreepeaterModel.SiblingCopyPlacement;
 
 /**
  * Resolves {@link AgentToolContext} for the UI-selected tab or a specific open repeater tab, and runs
- * paginated tab discovery for {@link HttpTargetTools#SEARCH_TABS}.
+ * paginated tab discovery for {@link treepeater.api.tools.HttpTargetTools#SEARCH_TABS}.
  */
 public interface RepeaterTabAgentBridge {
 
@@ -40,7 +40,7 @@ public interface RepeaterTabAgentBridge {
     }
 
     /**
-     * Bridge that always returns the same context and does not support {@link HttpTargetTools#SEARCH_TABS}.
+     * Bridge that always returns the same context and does not support {@link treepeater.api.tools.HttpTargetTools#SEARCH_TABS}.
      */
     static RepeaterTabAgentBridge singleTab(AgentToolContext ctx) {
         return new RepeaterTabAgentBridge() {

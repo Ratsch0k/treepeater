@@ -1,4 +1,4 @@
-package treepeater.ai;
+package treepeater.api.tools;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -54,74 +54,44 @@ import burp.api.montoya.http.message.HttpHeader;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 import treepeater.Utilities;
-
 import treepeater.TreepeaterModel.SiblingCopyPlacement;
+import treepeater.ai.AgentMode;
+import treepeater.ai.AgentToolContext;
+import treepeater.ai.ChatToolInvokeContext;
+import treepeater.ai.HttpTargetSnapshot;
+import treepeater.ai.NestedToolInvoker;
+import treepeater.ai.RepeaterTabAgentBridge;
+import treepeater.ai.SearchTabRow;
+import treepeater.ai.ToolActionLevel;
+import treepeater.api.TreepeaterTool;
+import treepeater.api.TreepeaterToolRegistry;
 
 /**
- * Built-in tools: HTTP target summary, raw wire read ({@value #READ_HTTP_MESSAGE}), regex search
- * ({@value #SEARCH_HTTP_MESSAGE}), structured request edits ({@value #APPLY_HTTP_REQUEST_SEMANTIC_CHANGES}), tab listing
- * ({@value #SEARCH_TABS}), duplicate tree nodes ({@value #COPY_TREEPEATER_NODE}), ordered multi-step dispatch ({@value #BATCH_HTTP_TARGET_TOOLS}), other body helpers, and send in
- * Repeater.
+ * Editor-centric HTTP tools: target summary, raw message read/search, request body edits, semantic
+ * mutations, tab discovery, node copy, batch dispatch, and send in Repeater.
  */
 public final class HttpTargetTools {
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final Logger TIMING = Logger.getLogger("treepeater.ai.HttpTargetTools.commitLiveRequest");
+    private static final Logger TIMING = Logger.getLogger("treepeater.api.tools.HttpTargetTools.commitLiveRequest");
 
-    /** Tool name: current editor/target only; JSON from {@link HttpTargetSnapshot#toJson()} plus nested {@code history}. */
     public static final String GET_CURRENT_HTTP_TARGET = "get_current_http_target";
-
-    /**
-     * Byte slice of the raw request or response wire (start-line + headers + CRLFCRLF + body). Same side parameter as
-     * {@value #SEARCH_HTTP_MESSAGE}.
-     */
     public static final String READ_HTTP_MESSAGE = "read_http_message";
-
-    /** Regex over raw wire bytes (Java {@link java.util.regex.Pattern}); byte offsets match {@link #READ_HTTP_MESSAGE}. */
     public static final String SEARCH_HTTP_MESSAGE = "search_http_message";
-
-    /** Substring replace in the current (live editor) request body only. */
     public static final String REPLACE_IN_HTTP_REQUEST_BODY = "replace_in_http_request_body";
-
-    /** Replace a 1-based inclusive line range in the current request body (UTF-8 text). */
     public static final String PATCH_HTTP_REQUEST_BODY_LINES = "patch_http_request_body_lines";
-
-    /** Replace the entire current request body. */
     public static final String SET_HTTP_REQUEST_BODY = "set_http_request_body";
-
-    /** Send the current repeater request and wait for the response; tool result contains only HTTP status_code. */
     public static final String SEND_CURRENT_HTTP_REQUEST = "send_current_http_request";
-
-    /** Paginated list or search of open repeater tabs (live method/URL and title). */
     public static final String SEARCH_TABS = "search_tabs";
-
-    /** Duplicate a request tree node as a new sibling tab with a given name; returns the new request_node_id. */
     public static final String COPY_TREEPEATER_NODE = "copy_treepeater_node";
-
-    /**
-     * Batch semantic mutations on the current request (headers, cookies, JSON Pointer, XPath, method, URL). Use
-     * {@code action} {@code set} vs {@code remove}; literal JSON null in the body uses {@code set} with {@code value}
-     * null.
-     */
     public static final String APPLY_HTTP_REQUEST_SEMANTIC_CHANGES = "apply_http_request_semantic_changes";
-
-    /**
-     * Runs multiple built-in HTTP/tab tools in order; each step uses normal approval rules. Arguments are {@code tools}:
-     * array of {@code {tool_name, arguments}} where {@code arguments} is a JSON object (omit or use {@code {}} for no
-     * parameters).
-     */
     public static final String BATCH_HTTP_TARGET_TOOLS = "batch_http_target_tools";
 
-    /**
-     * Transcript line for a tool: short {@code title} plus optional {@code detail} (what will change, key arguments).
-     * {@code detail} is empty for read-only tools and for {@link #SET_HTTP_REQUEST_BODY} to avoid duplicating a large
-     * body in the chat.
-     */
-    public static record HumanToolUsage(String title, String detail) {
-        public HumanToolUsage {
-            title = title != null ? title : "";
-            detail = detail != null ? detail : "";
-        }
-    }
+    /** Minimal valid payload example (also returned in structured errors when {@code operations} is missing or invalid). */
+    public static final String APPLY_HTTP_REQUEST_SEMANTIC_CHANGES_EXAMPLE_ARGS =
+            "{\"operations\":[{\"type\":\"header\",\"action\":\"set\",\"key\":\"X-Test\",\"value\":\"1\"}]}";
+
+    /** Max URL characters per row in {@link #SEARCH_TABS} results before truncation. */
+    public static final int MAX_TAB_LIST_URL_CHARS = 512;
 
     private static final int DEFAULT_READ_CHUNK_BYTES = 4_096;
     private static final int MAX_BODY_CHUNK_BYTES = 65_536;
@@ -145,9 +115,6 @@ public final class HttpTargetTools {
     private static final int MAX_TAB_PAGE_SIZE = 50;
 
     private static final int MAX_BATCH_HTTP_TARGET_TOOLS = 24;
-
-    /** Max URL characters per row in {@link #SEARCH_TABS} results before truncation. */
-    public static final int MAX_TAB_LIST_URL_CHARS = 512;
 
     private static final String REQ_NODE_ID_PROP =
             "\"request_node_id\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Tab id from search_tabs; omit=UI tab.\"}";
@@ -201,12 +168,6 @@ public final class HttpTargetTools {
 
     private static final int MAX_SEMANTIC_OPERATIONS = 32;
 
-    /**
-     * Minimal valid payload example (also returned in structured errors when {@code operations} is missing or invalid).
-     */
-    public static final String APPLY_HTTP_REQUEST_SEMANTIC_CHANGES_EXAMPLE_ARGS =
-            "{\"operations\":[{\"type\":\"header\",\"action\":\"set\",\"key\":\"X-Test\",\"value\":\"1\"}]}";
-
     private static final String SEMANTIC_ITEMS_ALLOF =
             "["
                     + "{\"if\":{\"properties\":{\"type\":{\"const\":\"header\"},\"action\":{\"const\":\"set\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"key\",\"value\"]}}"
@@ -250,36 +211,39 @@ public final class HttpTargetTools {
 
     private HttpTargetTools() {}
 
-    /**
-     * Stable id for nested tool approval cards when a step runs inside {@link #BATCH_HTTP_TARGET_TOOLS}.
-     */
-    public static String syntheticBatchChildToolCallId(String parentToolCallId, int batchSlot) {
-        String base =
-                parentToolCallId != null && !parentToolCallId.isBlank() ? parentToolCallId.trim() : "tool";
-        return base + ":batch:" + batchSlot;
-    }
-
-    public static List<ChatToolDefinition> definitions() {
-        return List.of(
-                new ChatToolDefinition(
+    public static void register(TreepeaterToolRegistry registry, RepeaterTabAgentBridge bridge) {
+        registry.add(
+                new TreepeaterTool(
                         GET_CURRENT_HTTP_TARGET,
                         "Current tab: scheme, host, port, SNI, method, URL, path, send history. "
                                 + "Optional request_node_id (search_tabs). Raw wire: read_http_message / search_http_message.",
-                        OPTIONAL_TAB_PARAMS_SCHEMA),
-                new ChatToolDefinition(
+                        OPTIONAL_TAB_PARAMS_SCHEMA,
+                        ToolActionLevel.READ_ONLY,
+                        args -> execute(GET_CURRENT_HTTP_TARGET, args, bridge)));
+
+        registry.add(
+                new TreepeaterTool(
                         SEARCH_TABS,
                         "Paged open tabs. Empty query = all. Query matches live method+URL or title (CI). "
                                 + "Returns request_node_id. offset default 0; page_size default "
                                 + DEFAULT_TAB_PAGE_SIZE + " max " + MAX_TAB_PAGE_SIZE + ".",
-                        SEARCH_TABS_SCHEMA),
-                new ChatToolDefinition(
+                        SEARCH_TABS_SCHEMA,
+                        ToolActionLevel.READ_ONLY,
+                        args -> execute(SEARCH_TABS, args, bridge)));
+
+        registry.add(
+                new TreepeaterTool(
                         COPY_TREEPEATER_NODE,
                         "Duplicate a request tree node as a new sibling tab with the given name. Returns "
                                 + "request_node_id for the copy. Use when the user wants a copy, or in multi-step "
                                 + "processes to create separate steps from a baseline node. request_node_id is any "
                                 + "request node id (from search_tabs or a prior copy).",
-                        COPY_TREEPEATER_NODE_SCHEMA),
-                new ChatToolDefinition(
+                        COPY_TREEPEATER_NODE_SCHEMA,
+                        ToolActionLevel.WRITE,
+                        args -> execute(COPY_TREEPEATER_NODE, args, bridge)));
+
+        registry.add(
+                new TreepeaterTool(
                         BATCH_HTTP_TARGET_TOOLS,
                         "Runs several built-in tools in fixed order in a single call; each tools[] entry is "
                                 + "tool_name plus an arguments object ({} if none); returns per-step results. "
@@ -287,45 +251,84 @@ public final class HttpTargetTools {
                                 + "especially ordered flows such as changing the request, send_current_http_request, "
                                 + "then read_http_message with side \"response\". Steps run one after another; write/send "
                                 + "still need approval.",
-                        BATCH_HTTP_TARGET_TOOLS_SCHEMA),
-                new ChatToolDefinition(
+                        BATCH_HTTP_TARGET_TOOLS_SCHEMA,
+                        ToolActionLevel.READ_ONLY,
+                        args -> execute(BATCH_HTTP_TARGET_TOOLS, args, bridge)));
+
+        registry.add(
+                new TreepeaterTool(
                         READ_HTTP_MESSAGE,
                         "Raw wire slice for one history entry (status-line, headers, body). side required. "
                                 + "Default first 1024B. Fields: total_bytes, header_bytes, has_more, next_offset, text|base64. "
                                 + "Needles: prefer search_http_message.",
-                        READ_MESSAGE_SCHEMA),
-                new ChatToolDefinition(
+                        READ_MESSAGE_SCHEMA,
+                        ToolActionLevel.READ_ONLY,
+                        args -> execute(READ_HTTP_MESSAGE, args, bridge)));
+
+        registry.add(
+                new TreepeaterTool(
                         SEARCH_HTTP_MESSAGE,
                         "Regex on raw bytes (offsets align with read_http_message). max_matches 10 dflt /100 max; "
                                 + "context_bytes 64 dflt /512 max. scope headers|body|all. Java Pattern (?i)(?m)(?s). "
                                 + "Latin-1 indexing; pattern <=1024 chars; scan <=1MB (scan_limited_bytes when clipped).",
-                        SEARCH_MESSAGE_SCHEMA),
-                new ChatToolDefinition(
+                        SEARCH_MESSAGE_SCHEMA,
+                        ToolActionLevel.READ_ONLY,
+                        args -> execute(SEARCH_HTTP_MESSAGE, args, bridge)));
+
+        registry.add(
+                new TreepeaterTool(
                         REPLACE_IN_HTTP_REQUEST_BODY,
                         "Literal find/replace in current request body (UTF-8). Non-UTF-8: set_http_request_body+base64. "
                                 + "Default max_replacements=1 needs single match; replace_all=all.",
-                        REPLACE_BODY_SCHEMA),
-                new ChatToolDefinition(
+                        REPLACE_BODY_SCHEMA,
+                        ToolActionLevel.WRITE,
+                        args -> execute(REPLACE_IN_HTTP_REQUEST_BODY, args, bridge)));
+
+        registry.add(
+                new TreepeaterTool(
                         PATCH_HTTP_REQUEST_BODY_LINES,
                         "Replace 1-based inclusive line range in current body (UTF-8; Java \\R). Binary: set_http_request_body.",
-                        PATCH_LINES_SCHEMA),
-                new ChatToolDefinition(
+                        PATCH_LINES_SCHEMA,
+                        ToolActionLevel.WRITE,
+                        args -> execute(PATCH_HTTP_REQUEST_BODY_LINES, args, bridge)));
+
+        registry.add(
+                new TreepeaterTool(
                         SET_HTTP_REQUEST_BODY,
                         "Replace full current body. One of body_utf8|body_base64 (aliases bodyUtf8|bodyBase64). "
                                 + "Object/array body_utf8 serializes to compact JSON. Arbitrary bytes: base64.",
-                        SET_BODY_SCHEMA),
-                new ChatToolDefinition(
+                        SET_BODY_SCHEMA,
+                        ToolActionLevel.WRITE,
+                        args -> execute(SET_HTTP_REQUEST_BODY, args, bridge)));
+
+        registry.add(
+                new TreepeaterTool(
                         APPLY_HTTP_REQUEST_SEMANTIC_CHANGES,
                         "Batch edit current request. Required operations[] (non-empty). Per op: type header|cookie|json|"
                                 + "xml|method|url + action set|remove; fields per JSON Schema. remove: omit value. "
                                 + "json set value:null = literal null. path: RFC6901 (json) or XPath (xml). method|url set: "
                                 + "empty key. Bad body yields error op_index; fix via read/set body. Example in system prompt.",
-                        APPLY_SEMANTIC_CHANGES_SCHEMA),
-                new ChatToolDefinition(
+                        APPLY_SEMANTIC_CHANGES_SCHEMA,
+                        ToolActionLevel.WRITE,
+                        args -> execute(APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, bridge)));
+
+        registry.add(
+                new TreepeaterTool(
                         SEND_CURRENT_HTTP_REQUEST,
                         "Send current repeater request; wait for response. Updates UI/history. Result: status_code only. "
                                 + "Optional request_node_id.",
-                        OPTIONAL_TAB_PARAMS_SCHEMA));
+                        OPTIONAL_TAB_PARAMS_SCHEMA,
+                        ToolActionLevel.EXECUTE,
+                        args -> execute(SEND_CURRENT_HTTP_REQUEST, args, bridge)));
+    }
+
+    /**
+     * Stable id for nested tool approval cards when a step runs inside {@link #BATCH_HTTP_TARGET_TOOLS}.
+     */
+    public static String syntheticBatchChildToolCallId(String parentToolCallId, int batchSlot) {
+        String base =
+                parentToolCallId != null && !parentToolCallId.isBlank() ? parentToolCallId.trim() : "tool";
+        return base + ":batch:" + batchSlot;
     }
 
     /**
@@ -2212,9 +2215,7 @@ public final class HttpTargetTools {
     }
 
     /**
-     * @param uiSelectedRequestNodeId {@link RepeaterTabAgentBridge#uiSelectedRequestNodeIdForToolCard()}; used to add
-     *     {@code · node id n} to titles and to omit that suffix when {@code request_node_id} matches the UI-selected
-     *     tab. {@link Integer#MIN_VALUE} skips suffix unless {@code request_node_id} is set in args.
+     * @return label for an editor tool, or {@code null} when {@code toolName} is not handled here
      */
     public static HumanToolUsage humanToolUsage(
             String toolName, String argumentsJson, int viewerHistoryIndex, int uiSelectedRequestNodeId) {
@@ -2355,7 +2356,7 @@ public final class HttpTargetTools {
                         toolsNode != null && toolsNode.isArray() ? toolsNode.size() : 0;
                 yield new HumanToolUsage("Run batched tools · " + steps + " step(s)", "");
             }
-            default -> new HumanToolUsage("Working…" + nodeSuf, "");
+            default -> null;
         };
     }
 

@@ -1,4 +1,4 @@
-package treepeater.ai;
+package treepeater.api.tools;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -28,6 +28,16 @@ import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 
 import treepeater.TreepeaterModel.SiblingCopyPlacement;
+import treepeater.ai.AgentMode;
+import treepeater.ai.AgentToolContext;
+import treepeater.ai.ChatToolDefinition;
+import treepeater.ai.ChatToolInvokeContext;
+import treepeater.ai.HttpTargetSnapshot;
+import treepeater.ai.NestedToolInvoker;
+import treepeater.ai.RepeaterTabAgentBridge;
+import treepeater.ai.SearchTabRow;
+import treepeater.ai.ToolActionLevel;
+import treepeater.api.TreepeaterToolRegistry;
 
 class HttpTargetToolsTest {
 
@@ -204,6 +214,10 @@ class HttpTargetToolsTest {
         return JSON.readTree(json);
     }
 
+    private static TreepeaterToolRegistry editorRegistry(AgentToolContext ctx) {
+        return TreepeaterToolRegistry.createEditorOnly(RepeaterTabAgentBridge.singleTab(ctx));
+    }
+
     // ===== toolActionLevel =====
 
     @Test
@@ -276,14 +290,26 @@ class HttpTargetToolsTest {
         assertTrue(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SEND_CURRENT_HTTP_REQUEST, null));
     }
 
-    // ===== definitions =====
+    // ===== register =====
 
     @Test
-    void definitions_returnsAllBuiltInTools() {
-        assertEquals(11, HttpTargetTools.definitions().size());
-        assertTrue(
-                HttpTargetTools.definitions().stream()
-                        .anyMatch(d -> HttpTargetTools.COPY_TREEPEATER_NODE.equals(d.name())));
+    void register_exposesAllBuiltInTools() {
+        HttpRequest request = req("GET", "https://example.com/", "/", List.of(), new byte[0]);
+        TreepeaterToolRegistry registry = editorRegistry(singleEntryCtx(request, null));
+        assertEquals(11, registry.tools().size());
+        assertTrue(registry.find(HttpTargetTools.COPY_TREEPEATER_NODE) != null);
+    }
+
+    @Test
+    void register_allHaveNonEmptyNamesAndDescriptions() throws Exception {
+        HttpRequest request = req("GET", "https://example.com/", "/", List.of(), new byte[0]);
+        for (ChatToolDefinition def : editorRegistry(singleEntryCtx(request, null)).chatToolDefinitions()) {
+            assertFalse(def.name().isBlank(), "tool name should not be blank");
+            assertFalse(def.description().isBlank(), "description should not be blank for: " + def.name());
+            assertFalse(def.parametersJsonSchema().isBlank(), "schema should not be blank for: " + def.name());
+            JsonNode schema = JSON.readTree(def.parametersJsonSchema());
+            assertTrue(schema.isObject(), "schema must parse as JSON object for: " + def.name());
+        }
     }
 
     @Test
@@ -338,17 +364,6 @@ class HttpTargetToolsTest {
         assertTrue(result.has("max_result_chars"));
         assertTrue(result.get("result_chars").asInt() > result.get("max_result_chars").asInt());
         assertTrue(result.has("hint"), "cap response should point the model at paginated alternatives");
-    }
-
-    @Test
-    void definitions_allHaveNonEmptyNamesAndDescriptions() throws Exception {
-        for (ChatToolDefinition def : HttpTargetTools.definitions()) {
-            assertFalse(def.name().isBlank(), "tool name should not be blank");
-            assertFalse(def.description().isBlank(), "description should not be blank for: " + def.name());
-            assertFalse(def.parametersJsonSchema().isBlank(), "schema should not be blank for: " + def.name());
-            JsonNode schema = JSON.readTree(def.parametersJsonSchema());
-            assertTrue(schema.isObject(), "schema must parse as JSON object for: " + def.name());
-        }
     }
 
     // ===== execute – error cases =====
@@ -1203,14 +1218,14 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_getCurrentAndReadMessages() {
-        HttpTargetTools.HumanToolUsage t1 = HttpTargetTools.humanToolUsage(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{}", 0);
+        HumanToolUsage t1 = HttpTargetTools.humanToolUsage(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{}", 0);
         assertTrue(t1.detail().isEmpty());
         assertFalse(t1.title().isBlank());
-        HttpTargetTools.HumanToolUsage t2 =
+        HumanToolUsage t2 =
                 HttpTargetTools.humanToolUsage(HttpTargetTools.READ_HTTP_MESSAGE, "{\"side\":\"request\"}", 0);
         assertTrue(t2.title().contains("offset 0, max 4096"));
         assertTrue(t2.detail().isEmpty());
-        HttpTargetTools.HumanToolUsage t3 = HttpTargetTools.humanToolUsage(
+        HumanToolUsage t3 = HttpTargetTools.humanToolUsage(
                 HttpTargetTools.SEARCH_HTTP_MESSAGE, "{\"side\":\"request\",\"pattern\":\"^Host:\"}", 0);
         assertTrue(t3.title().contains("Searching request"));
     }
@@ -1223,7 +1238,7 @@ class HttpTargetToolsTest {
                         + "{\"type\":\"method\",\"action\":\"set\",\"key\":\"\",\"value\":\"POST\"},"
                         + "{\"type\":\"json\",\"action\":\"remove\",\"path\":\"/a\"}"
                         + "]}";
-        HttpTargetTools.HumanToolUsage usage =
+        HumanToolUsage usage =
                 HttpTargetTools.humanToolUsage(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, json, 0);
 
         assertEquals("Apply semantic request changes", usage.title());
@@ -1239,7 +1254,7 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_replaceBody_showsOldAndNewText() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
+        HumanToolUsage usage = HttpTargetTools.humanToolUsage(
                 HttpTargetTools.REPLACE_IN_HTTP_REQUEST_BODY,
                 "{\"old_text\":\"foo\",\"new_text\":\"bar\"}", 0);
 
@@ -1250,7 +1265,7 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_replaceBodyWithReplaceAll_showsAllOccurrencesNote() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
+        HumanToolUsage usage = HttpTargetTools.humanToolUsage(
                 HttpTargetTools.REPLACE_IN_HTTP_REQUEST_BODY,
                 "{\"old_text\":\"x\",\"new_text\":\"y\",\"replace_all\":true}", 0);
 
@@ -1259,7 +1274,7 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_patchLines_showsLineRange() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
+        HumanToolUsage usage = HttpTargetTools.humanToolUsage(
                 HttpTargetTools.PATCH_HTTP_REQUEST_BODY_LINES,
                 "{\"start_line\":3,\"end_line\":5,\"content\":\"new content\"}", 0);
 
@@ -1271,9 +1286,9 @@ class HttpTargetToolsTest {
     @Test
     void humanToolUsage_historyIndexSuffix_omittedWhenSameAsViewer() {
         String args = "{\"side\":\"request\",\"history_index\":3}";
-        HttpTargetTools.HumanToolUsage withSuffix = HttpTargetTools.humanToolUsage(
+        HumanToolUsage withSuffix = HttpTargetTools.humanToolUsage(
                 HttpTargetTools.READ_HTTP_MESSAGE, args, 0);
-        HttpTargetTools.HumanToolUsage withoutSuffix = HttpTargetTools.humanToolUsage(
+        HumanToolUsage withoutSuffix = HttpTargetTools.humanToolUsage(
                 HttpTargetTools.READ_HTTP_MESSAGE, args, 3);
 
         assertTrue(withSuffix.title().contains("#3"),
@@ -1284,7 +1299,7 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_sendRequest_hasTitleAndDetail() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
+        HumanToolUsage usage = HttpTargetTools.humanToolUsage(
                 HttpTargetTools.SEND_CURRENT_HTTP_REQUEST, "{}", 0);
 
         assertFalse(usage.title().isBlank());
@@ -1293,7 +1308,7 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_setBody_noDetailToAvoidDuplicatingLargeBody() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
+        HumanToolUsage usage = HttpTargetTools.humanToolUsage(
                 HttpTargetTools.SET_HTTP_REQUEST_BODY, "{\"body_utf8\":\"large body content\"}", 0);
 
         assertFalse(usage.title().isBlank());
@@ -1301,9 +1316,14 @@ class HttpTargetToolsTest {
     }
 
     @Test
-    void humanToolUsage_unknownTool_returnsDefaultTitle() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage("no_such_tool", "{}", 0);
-        assertFalse(usage.title().isBlank());
+    void humanToolUsage_unknownTool_returnsNullFromHttpTargetTools() {
+        assertNull(HttpTargetTools.humanToolUsage("no_such_tool", "{}", 0));
+    }
+
+    @Test
+    void humanToolUsage_unknownTool_returnsDefaultTitleFromDispatcher() {
+        HumanToolUsage usage = ToolHumanUsage.forTool("no_such_tool", "{}", 0);
+        assertEquals("Working…", usage.title());
     }
 
     @Test
@@ -1314,14 +1334,14 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_nodeSuffix_whenUiSelected_appendsId() {
-        HttpTargetTools.HumanToolUsage u =
+        HumanToolUsage u =
                 HttpTargetTools.humanToolUsage(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{}", 0, 99);
         assertTrue(u.title().contains("node id 99"), u.title());
     }
 
     @Test
     void humanToolUsage_nodeSuffix_omittedWhenRequestNodeIdMatchesUi() {
-        HttpTargetTools.HumanToolUsage u =
+        HumanToolUsage u =
                 HttpTargetTools.humanToolUsage(
                         HttpTargetTools.READ_HTTP_MESSAGE,
                         "{\"side\":\"request\",\"request_node_id\":12}",
@@ -1332,7 +1352,7 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_nodeSuffix_whenNoArg_usesUiSelectedId() {
-        HttpTargetTools.HumanToolUsage u =
+        HumanToolUsage u =
                 HttpTargetTools.humanToolUsage(
                         HttpTargetTools.READ_HTTP_MESSAGE, "{\"side\":\"request\"}", 0, 12);
         assertTrue(u.title().contains("node id 12"), u.title());
@@ -1340,7 +1360,7 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_nodeSuffix_showsExplicitWhenDifferentFromUi() {
-        HttpTargetTools.HumanToolUsage u =
+        HumanToolUsage u =
                 HttpTargetTools.humanToolUsage(
                         HttpTargetTools.READ_HTTP_MESSAGE,
                         "{\"side\":\"request\",\"request_node_id\":99}",
@@ -1351,7 +1371,7 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_searchTabs_hasNoNodeSuffix() {
-        HttpTargetTools.HumanToolUsage u =
+        HumanToolUsage u =
                 HttpTargetTools.humanToolUsage(HttpTargetTools.SEARCH_TABS, "{}", 0, 12);
         assertFalse(u.title().contains("node id"), u.title());
     }

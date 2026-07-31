@@ -25,4 +25,12 @@ public final class StatusTools {
                         ToolActionLevel.READ_ONLY,
                         args -> service.statusesJson()));
     }
+
+    /** @return label for a status tool, or {@code null} when {@code toolName} is not handled here */
+    public static HumanToolUsage humanToolUsage(String toolName, String argumentsJson) {
+        if (LIST_STATUSES.equals(toolName)) {
+            return new HumanToolUsage("List statuses", "");
+        }
+        return null;
+    }
 }

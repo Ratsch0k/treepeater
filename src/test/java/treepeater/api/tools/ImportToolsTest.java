@@ -363,6 +363,27 @@ class ImportToolsTest extends ImportTestSupport {
         assertEquals(0, root(this.model).getChildCount());
     }
 
+    @Test
+    void humanToolUsage_directImport_showsTargetUrl() {
+        HumanToolUsage usage =
+                ImportTools.humanToolUsage(
+                        ImportTools.IMPORT_HTTP_REQUEST,
+                        "{\"base_url\":\"https://api.example.com/users\"}");
+        assertEquals("Import HTTP request (direct)", usage.title());
+        assertTrue(usage.detail().contains("api.example.com"));
+    }
+
+    @Test
+    void humanToolUsage_intoFolder_showsFolderAndPlacement() {
+        HumanToolUsage usage =
+                ImportTools.humanToolUsage(
+                        ImportTools.IMPORT_HTTP_REQUEST_INTO_FOLDER,
+                        "{\"folder_id\":3,\"placement\":\"path_aware\",\"host\":\"example.com\"}");
+        assertEquals("Import HTTP request into folder", usage.title());
+        assertTrue(usage.detail().contains("folder id 3"));
+        assertTrue(usage.detail().contains("path_aware"));
+    }
+
     private static int countFolders(treepeater.tree.TreepeaterNode parent, String name) {
         int total = 0;
         for (int i = 0; i < parent.getChildCount(); i++) {

@@ -4,7 +4,7 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Filter for {@link HttpTargetTools#SEARCH_TABS}: OR of live URL/method rules and tab title substring match.
+ * Filter for {@link treepeater.api.tools.HttpTargetTools#SEARCH_TABS}: OR of live URL/method rules and tab title substring match.
  */
 public final class RepeaterTabQueryMatcher {
 

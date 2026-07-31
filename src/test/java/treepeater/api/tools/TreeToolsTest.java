@@ -365,4 +365,25 @@ class TreeToolsTest extends ImportTestSupport {
 
         assertTrue(MAPPER.readTree(result).get("error").asText().contains("unknown tool"));
     }
+
+    @Test
+    void humanToolUsage_renameNode_showsNewName() {
+        HumanToolUsage usage =
+                TreeTools.humanToolUsage(
+                        TreeTools.RENAME_NODE, "{\"node_id\":5,\"name\":\"Renamed API\"}");
+        assertTrue(usage.title().contains("id 5"));
+        assertTrue(usage.detail().contains("Renamed API"));
+    }
+
+    @Test
+    void humanToolUsage_deleteNode_warnsAboutSubtree() {
+        HumanToolUsage usage = TreeTools.humanToolUsage(TreeTools.DELETE_NODE, "{\"node_id\":9}");
+        assertTrue(usage.title().contains("id 9"));
+        assertTrue(usage.detail().contains("cannot be undone"));
+    }
+
+    @Test
+    void humanToolUsage_unknownTool_returnsNull() {
+        assertNull(TreeTools.humanToolUsage("get_current_http_target", "{}"));
+    }
 }

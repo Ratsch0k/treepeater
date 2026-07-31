@@ -141,6 +141,54 @@ public final class ImportTools {
                         })));
     }
 
+    /** @return label for an import tool, or {@code null} when {@code toolName} is not handled here */
+    public static HumanToolUsage humanToolUsage(String toolName, String argumentsJson) {
+        JsonNode args = Json.readArgs(argumentsJson);
+        if (args == null) {
+            args = Json.obj();
+        }
+        return switch (toolName) {
+            case IMPORT_HTTP_REQUEST ->
+                    new HumanToolUsage("Import HTTP request (direct)", importTargetDetail(args));
+            case IMPORT_HTTP_REQUEST_PATH_AWARE ->
+                    new HumanToolUsage("Import HTTP request (path-aware)", importTargetDetail(args));
+            case IMPORT_HTTP_REQUEST_INTO_FOLDER -> {
+                OptionalInt folderId = Json.integer(args, "folder_id", "folderId");
+                String placement = Json.text(args, "placement");
+                StringBuilder det = new StringBuilder(importTargetDetail(args));
+                if (folderId.isPresent()) {
+                    if (!det.isEmpty()) {
+                        det.append(" · ");
+                    }
+                    det.append("folder id ").append(folderId.getAsInt());
+                }
+                if (placement != null && !placement.isBlank()) {
+                    if (!det.isEmpty()) {
+                        det.append(" · ");
+                    }
+                    det.append("placement ").append(placement);
+                }
+                yield new HumanToolUsage("Import HTTP request into folder", det.toString());
+            }
+            default -> null;
+        };
+    }
+
+    private static String importTargetDetail(JsonNode args) {
+        String baseUrl = Json.text(args, "base_url", "baseUrl", "url");
+        if (baseUrl != null && !baseUrl.isBlank()) {
+            return ToolHumanUsage.quotedSnippet(baseUrl, 96);
+        }
+        String host = Json.text(args, "host");
+        if (host != null && !host.isBlank()) {
+            boolean secure = Json.bool(args, "secure", "https").orElse(Boolean.TRUE);
+            int port = Json.integer(args, "port").orElse(secure ? 443 : 80);
+            int defaultPort = secure ? 443 : 80;
+            return port == defaultPort ? host : host + ":" + port;
+        }
+        return "";
+    }
+
     private static String statusId(JsonNode args) {
         String requested = Json.text(args, "status_id", "statusId");
         return requested != null ? requested : StatusRegistry.getDefault().getId();

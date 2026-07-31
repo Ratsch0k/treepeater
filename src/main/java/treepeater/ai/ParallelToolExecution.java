@@ -8,6 +8,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+import treepeater.api.tools.HttpTargetTools;
+
 /**
  * Runs a round of model-requested {@link ChatToolCall tool calls}. When every call in the batch is
  * auto-approved (no {@link ChatStreamMessage.ToolApprovalRequest} needed) the calls are dispatched

@@ -192,6 +192,92 @@ public final class TreeTools {
                         args -> withNodeId(args, service::deleteNode)));
     }
 
+    /** @return label for a tree tool, or {@code null} when {@code toolName} is not handled here */
+    public static HumanToolUsage humanToolUsage(String toolName, String argumentsJson) {
+        JsonNode args = Json.readArgs(argumentsJson);
+        if (args == null) {
+            args = Json.obj();
+        }
+        return switch (toolName) {
+            case LIST_TREE -> {
+                int nodeId = Json.integer(args, "node_id", "nodeId").orElse(0);
+                int maxDepth = Json.integer(args, "max_depth", "maxDepth").orElse(0);
+                StringBuilder det = new StringBuilder();
+                if (nodeId > 0) {
+                    det.append("subtree from node ").append(nodeId);
+                }
+                if (maxDepth > 0) {
+                    if (!det.isEmpty()) {
+                        det.append(" · ");
+                    }
+                    det.append("max depth ").append(maxDepth);
+                }
+                yield new HumanToolUsage("List tree", det.toString());
+            }
+            case GET_TREE_NODE -> new HumanToolUsage("Get tree node" + nodeIdSuffix(args), "");
+            case GET_NODE_NOTES -> new HumanToolUsage("Get node notes" + nodeIdSuffix(args), "");
+            case CREATE_FOLDER -> {
+                int parentId = Json.integer(args, "parent_id", "parentId").orElse(0);
+                String name = Json.text(args, "name");
+                StringBuilder det = new StringBuilder();
+                if (name != null && !name.isBlank()) {
+                    det.append(ToolHumanUsage.quotedSnippet(name, 80));
+                }
+                if (parentId > 0) {
+                    if (!det.isEmpty()) {
+                        det.append(" · ");
+                    }
+                    det.append("parent id ").append(parentId);
+                }
+                yield new HumanToolUsage("Create folder", det.toString());
+            }
+            case RENAME_NODE -> {
+                String name = Json.text(args, "name");
+                String det = name != null && !name.isBlank() ? ToolHumanUsage.quotedSnippet(name, 80) : "";
+                yield new HumanToolUsage("Rename node" + nodeIdSuffix(args), det);
+            }
+            case MOVE_NODE -> {
+                OptionalInt nodeId = Json.integer(args, "node_id", "nodeId", "id");
+                OptionalInt parentId = Json.integer(args, "parent_id", "parentId");
+                OptionalInt index = Json.integer(args, "index");
+                StringBuilder det = new StringBuilder();
+                if (parentId.isPresent()) {
+                    det.append("parent id ").append(parentId.getAsInt());
+                }
+                if (index.isPresent() && index.getAsInt() >= 0) {
+                    if (!det.isEmpty()) {
+                        det.append(" · ");
+                    }
+                    det.append("index ").append(index.getAsInt());
+                }
+                String title =
+                        nodeId.isPresent()
+                                ? "Move node · id " + nodeId.getAsInt()
+                                : "Move node";
+                yield new HumanToolUsage(title, det.toString());
+            }
+            case SET_NODE_STATUS -> {
+                String statusId = Json.text(args, "status_id", "statusId");
+                String det =
+                        statusId != null && !statusId.isBlank()
+                                ? ToolHumanUsage.quotedSnippet(statusId, 80)
+                                : "";
+                yield new HumanToolUsage("Set node status" + nodeIdSuffix(args), det);
+            }
+            case SET_NODE_NOTES -> new HumanToolUsage("Set node notes" + nodeIdSuffix(args), "");
+            case DELETE_NODE ->
+                    new HumanToolUsage(
+                            "Delete node" + nodeIdSuffix(args),
+                            "Deletes the node and its whole subtree; cannot be undone");
+            default -> null;
+        };
+    }
+
+    private static String nodeIdSuffix(JsonNode args) {
+        OptionalInt nodeId = Json.integer(args, "node_id", "nodeId", "id");
+        return nodeId.isPresent() ? " · id " + nodeId.getAsInt() : "";
+    }
+
     /** Parses arguments once and reports a consistent error for malformed JSON. */
     static String withArgs(String argumentsJson, ArgsHandler handler) {
         JsonNode parsed = Json.readArgs(argumentsJson);

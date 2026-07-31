@@ -112,7 +112,9 @@ import treepeater.ai.AgentTabMention;
 import treepeater.ai.RepeaterTabQueryMatcher;
 import treepeater.ai.AgentToolContext;
 import treepeater.ai.CoalescingChatStreamOutbound;
-import treepeater.ai.HttpTargetTools;
+import treepeater.api.tools.HttpTargetTools;
+import treepeater.api.tools.HumanToolUsage;
+import treepeater.api.tools.ToolHumanUsage;
 import treepeater.ai.LineDiffer;
 import treepeater.ai.model.BooleanOption;
 import treepeater.ai.model.EnumOption;
@@ -970,9 +972,12 @@ public final class AIAgentChatPanel extends JPanel {
 
     private void appendRestoredToolCard(ChatToolCall tc) {
         ChatTooling tooling = this.host.chatTooling(this.selectedAgentMode());
-        HttpTargetTools.HumanToolUsage label =
-                HttpTargetTools.humanToolUsage(
-                        tc.name(), tc.argumentsJson(), tooling.currentHistoryIndexForToolStatus());
+        int hist = tooling.currentHistoryIndexForToolStatus();
+        int uiNode =
+                tooling.agentBridge() != null
+                        ? HttpTargetTools.uiSelectedRequestNodeIdForToolCard(tooling.agentBridge())
+                        : Integer.MIN_VALUE;
+        HumanToolUsage label = ToolHumanUsage.forTool(tc.name(), tc.argumentsJson(), hist, uiNode);
         ChatStreamMessage.ToolApprovalRequest req =
                 new ChatStreamMessage.ToolApprovalRequest(
                         tc.id(),

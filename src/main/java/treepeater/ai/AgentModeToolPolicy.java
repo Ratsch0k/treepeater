@@ -1,5 +1,7 @@
 package treepeater.ai;
 
+import treepeater.api.tools.HttpTargetTools;
+
 /**
  * {@link ToolRunPolicy} derived from {@link AgentMode} and {@link HttpTargetTools} action levels.
  */

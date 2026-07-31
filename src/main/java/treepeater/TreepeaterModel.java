@@ -12,7 +12,15 @@ import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 import treepeater.ai.AgentChatWorkspace;
 import treepeater.requestResponse.RequestHistory;
+import treepeater.importing.ImportOptions;
+import treepeater.importing.ImportOptions.DirectNameMode;
+import treepeater.importing.ImportOptions.DirectPlacement;
+import treepeater.importing.ImportOptions.PathAwarePlacement;
+import treepeater.requestResponse.RequestDescriptions;
+import treepeater.requestResponse.Status;
+import treepeater.pathnormalization.DynamicPathNormalizer;
 import treepeater.settings.StatusRegistry;
+import treepeater.settings.TreepeaterSettings;
 import treepeater.workspace.EditorWorkspace;
 import treepeater.workspace.SplitOrientation;
 import treepeater.workspace.TabGroupNode;
@@ -291,6 +299,348 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         this.tree.insertNodeInto(folder, target, target.getChildCount());
         Treepeater.saveState();
         return folder;
+    }
+
+    /**
+     * Imports a single request into the tree, sorting it into the folder chain that best matches its
+     * URL path. Missing folders are created; the leaf placement follows the user's
+     * {@link TreepeaterSettings#getImportLeafMode() import leaf mode} setting.
+     *
+     * <p>In {@code DIRECT} mode the request becomes a leaf named after the last path segment, placed
+     * next to any folder created for deeper paths. In {@code METHOD_FOLDER} mode the full path becomes
+     * folders and the leaf is placed under a per-method folder (e.g. {@code [GET]}) using the
+     * configured base leaf name.
+     *
+     * <p>When {@link TreepeaterSettings#isImportNormalizeDynamicSegmentsEnabled() dynamic segment
+     * normalization} is enabled, path segments are rewritten into placeholders (e.g. {@code :id},
+     * {@code :uuid}) before folder resolution.
+     *
+     * <p>Options are taken from {@link ImportOptions#fromSettings()} rather than the manual import
+     * dialog.
+     */
+    public void importRequestPathAware(HttpRequestResponse requestResponse) {
+        if (requestResponse == null) {
+            return;
+        }
+        FolderTreeNode root = (FolderTreeNode) this.tree.getTreeModel().getRoot();
+        importRequestPathAware(root, requestResponse, ImportOptions.fromSettings());
+    }
+
+    /**
+     * Imports a request under {@code destinationFolder} using options from the manual import dialog.
+     */
+    public void importRequestManual(
+            FolderTreeNode destinationFolder,
+            HttpRequestResponse requestResponse,
+            ImportOptions options) {
+        if (destinationFolder == null || requestResponse == null || options == null) {
+            return;
+        }
+        if (options.placement() instanceof PathAwarePlacement) {
+            importRequestPathAware(destinationFolder, requestResponse, options);
+            return;
+        }
+
+        HttpRequest request = requestResponse.request();
+        if (request == null) {
+            return;
+        }
+        DirectPlacement direct = options.directPlacement();
+        String leafName = direct.nameMode() == DirectNameMode.ID
+                ? String.valueOf(this.requestCount + 1)
+                : resolveDirectLeafName(request, direct);
+        insertRequestLeaf(
+                destinationFolder,
+                leafName,
+                request,
+                requestResponse.response(),
+                options.resolveStatus());
+    }
+
+    private void importRequestPathAware(
+            FolderTreeNode anchor,
+            HttpRequestResponse requestResponse,
+            ImportOptions options) {
+        HttpRequest request = requestResponse.request();
+        if (request == null) {
+            return;
+        }
+        HttpResponse response = requestResponse.response();
+        PathAwarePlacement pathAware = options.pathAwarePlacement();
+
+        List<String> segments = pathSegments(request);
+        if (pathAware.normalizeDynamicSegmentsEnabled()) {
+            segments = DynamicPathNormalizer.normalize(segments);
+        }
+        LenientFolderGrouping lenientGrouping = lenientFolderGroupingFromPlacement(pathAware);
+        Status status = options.resolveStatus();
+
+        if (pathAware.isMethodFolderMode()) {
+            FolderTreeNode parent = resolveFolderChain(anchor, segments, lenientGrouping);
+            String method = RequestDescriptions.method(request);
+            FolderTreeNode methodFolder = findOrCreateChildFolder(parent, "[" + method + "]");
+            String baseName = pathAware.baseLeafName();
+            String leafName = (baseName != null && !baseName.isBlank()) ? baseName.trim() : "base";
+            insertRequestLeaf(methodFolder, leafName, request, response, status);
+        } else {
+            List<String> folderSegments =
+                    segments.isEmpty() ? segments : segments.subList(0, segments.size() - 1);
+            FolderTreeNode parent = resolveFolderChain(anchor, folderSegments, lenientGrouping);
+            String leafName = segments.isEmpty() ? "/" : segments.get(segments.size() - 1);
+            insertRequestLeaf(parent, leafName, request, response, status);
+        }
+    }
+
+    private static String resolveDirectLeafName(HttpRequest request, DirectPlacement direct) {
+        return switch (direct.nameMode()) {
+            case URL -> RequestDescriptions.url(request);
+            case ID -> throw new IllegalStateException("ID naming is handled by importRequestManual");
+            case MANUAL -> {
+                String name = direct.manualName();
+                yield (name != null && !name.isBlank()) ? name.trim() : "?";
+            }
+        };
+    }
+
+    /**
+     * Finds an existing child folder of {@code parent} whose name equals {@code name}, or creates one.
+     */
+    public FolderTreeNode findOrCreateChildFolder(FolderTreeNode parent, String name) {
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            TreepeaterNode child = (TreepeaterNode) parent.getChildAt(i);
+            if (child instanceof FolderTreeNode folder && folder.getName().equals(name)) {
+                return folder;
+            }
+        }
+        this.requestCount += 1;
+        FolderTreeNode folder = new FolderTreeNode(this.requestCount, StatusRegistry.getDefault(), name);
+        this.insertNodeInto(folder, parent, parent.getChildCount());
+        return folder;
+    }
+
+    private RequestTreeNode insertRequestLeaf(
+            FolderTreeNode parent, String name, HttpRequest request, HttpResponse response, Status status) {
+        this.requestCount += 1;
+        RequestTreeNode node = new RequestTreeNode(
+                this.requestCount, status, name, request, response, new RequestHistory());
+        this.insertNodeInto(node, parent, parent.getChildCount());
+        return node;
+    }
+
+    /**
+     * Resolves the folder chain for {@code segments} under {@code root}, reusing the best matching
+     * existing folder and creating any missing folders. Returns the deepest resolved folder.
+     *
+     * <p>Rather than descending greedily (which can commit to a locally-good branch and miss a better
+     * match elsewhere), this enumerates every existing folder as a candidate slash-path, discards the
+     * ones that do not match the target path, and then picks the best remaining candidate. A candidate
+     * matches in one of two ways:
+     * <ul>
+     *   <li><b>Prefix match</b>: the folder's path is a prefix of the target path. It consumes as many
+     *       target segments as the folder is deep. The deepest such folder is the best place to attach.
+     *   <li><b>Lenient folder grouping</b>: when enabled in settings, a folder whose path
+     *       contains the target after skipping up to the configured number of leading organizational
+     *       segments (e.g. {@code ServiceA/users} for {@code /users/1}), provided the suffix covers
+     *       at least the configured minimum overlap with the target path.
+     * </ul>
+     * When nothing matches, the chain is created directly under {@code root}.
+     */
+    private FolderTreeNode resolveFolderChain(
+            FolderTreeNode root, List<String> segments, LenientFolderGrouping lenientGrouping) {
+        if (segments.isEmpty()) {
+            return root;
+        }
+
+        List<FolderCandidate> candidates = new ArrayList<>();
+        collectFolderCandidates(root, new ArrayList<>(), candidates);
+
+        FolderMatch best = null;
+        for (FolderCandidate candidate : candidates) {
+            FolderMatch match = matchCandidate(candidate, segments, lenientGrouping);
+            if (match != null && (best == null || match.betterThan(best))) {
+                best = match;
+            }
+        }
+
+        FolderTreeNode parent = best != null ? best.folder() : root;
+        int consumed = best != null ? best.consumed() : 0;
+        for (int i = consumed; i < segments.size(); i++) {
+            parent = findOrCreateChildFolder(parent, segments.get(i));
+        }
+        return parent;
+    }
+
+    /** An existing folder together with its slash-path from the root and DFS pre-order index. */
+    private record FolderCandidate(FolderTreeNode folder, List<String> path, int order) {}
+
+    /**
+     * Configuration for {@linkplain #matchCandidate lenient folder grouping}: whether it is
+     * active and how strictly folder paths may be aligned to the import target.
+     */
+    private record LenientFolderGrouping(boolean enabled, int maxSkip, double matchThreshold) {
+        static LenientFolderGrouping disabled() {
+            return new LenientFolderGrouping(false, 0, 1.0);
+        }
+    }
+
+    private static LenientFolderGrouping lenientFolderGroupingFromPlacement(PathAwarePlacement pathAware) {
+        if (!pathAware.lenientGroupingEnabled()) {
+            return LenientFolderGrouping.disabled();
+        }
+        return new LenientFolderGrouping(
+                true,
+                pathAware.lenientGroupingMaxSkip(),
+                pathAware.lenientGroupingMatchThresholdPercent() / 100.0);
+    }
+
+    /**
+     * A matched candidate: how many target segments it consumes, how many leading grouping segments
+     * were skipped, and its DFS order (used only as a deterministic tie-breaker).
+     */
+    private record FolderMatch(FolderTreeNode folder, int consumed, int skip, int order) {
+        boolean betterThan(FolderMatch other) {
+            if (this.consumed != other.consumed) {
+                return this.consumed > other.consumed;
+            }
+            if (this.skip != other.skip) {
+                return this.skip < other.skip;
+            }
+            return this.order < other.order;
+        }
+    }
+
+    /** Depth-first collects every folder under {@code node} with its full slash-path from the root. */
+    private void collectFolderCandidates(FolderTreeNode node, List<String> prefix, List<FolderCandidate> out) {
+        for (int i = 0; i < node.getChildCount(); i++) {
+            TreepeaterNode child = (TreepeaterNode) node.getChildAt(i);
+            if (child instanceof FolderTreeNode folder) {
+                List<String> path = new ArrayList<>(prefix);
+                for (String segment : folderNameSegments(folder.getName())) {
+                    path.add(segment);
+                }
+                out.add(new FolderCandidate(folder, path, out.size()));
+                collectFolderCandidates(folder, path, out);
+            }
+        }
+    }
+
+    /** Matches a candidate against the target, or returns {@code null} if it does not match. */
+    private static FolderMatch matchCandidate(
+            FolderCandidate candidate, List<String> target, LenientFolderGrouping lenientGrouping) {
+        Treepeater.api.logging().logToOutput("Matching candidate: " + candidate.path() + " against target: " + target.toString());
+        List<String> path = candidate.path();
+        if (path.isEmpty()) {
+            return null;
+        }
+        // Prefix match: the folder path is a prefix of the target.
+        if (isPrefix(path, target)) {
+            return new FolderMatch(candidate.folder(), path.size(), 0, candidate.order());
+        }
+
+        if (!lenientGrouping.enabled()) {
+            return null;
+        }
+
+        int maxSkip = lenientGrouping.maxSkip();
+        double matchThreshold = lenientGrouping.matchThreshold();
+        int mustMatch = (int) Math.ceil(target.size() * matchThreshold);
+        if (path.size() >= mustMatch && path.size() - maxSkip <= target.size() && path.size() > maxSkip) {
+            Treepeater.api.logging().logToOutput("Starting lenient folder grouping");
+            // Lenient folder grouping: the folder path contains a prefix of the target after
+            // skipping up to maxSkip leading organizational segments. The matched suffix must cover
+            // at least matchThreshold of the target path.
+    
+            // Determine at which point the target path begins in the candidate path.
+            int lenientMatchIndex = -1;
+    
+            for (int i = 1; i <= maxSkip; i++) {
+                List<String> pathSubList = path.subList(i, path.size());
+                if (pathSubList.isEmpty()) {
+                    continue;
+                }
+                if (isPrefix(pathSubList, target)) {
+                    Treepeater.api.logging().logToOutput("Found lenient-folder match at skip index: " + i);
+                    Treepeater.api.logging().logToOutput("Path sublist: " + pathSubList.toString() + " is prefix of target: " + target.toString());
+                    lenientMatchIndex = i;
+                    break;
+                }
+            }
+    
+            if (lenientMatchIndex != -1) {
+                Treepeater.api.logging().logToOutput("Identify if lenient-folder match covers at least "+ mustMatch + " segments of the target");
+                List<String> lenientMatchList = path.subList(lenientMatchIndex, path.size());
+                List<String> mustMatchList = target.subList(0, mustMatch);
+    
+                if (isPrefix(mustMatchList, lenientMatchList)) {
+                    Treepeater.api.logging().logToOutput("Candidate matches lenient folder grouping threshold");
+                    return new FolderMatch(candidate.folder(), path.size() - lenientMatchIndex, lenientMatchIndex, candidate.order());
+                }
+
+                Treepeater.api.logging().logToOutput("Candidate does not match lenient folder grouping threshold");
+            }
+        }
+
+
+        return null;
+    }
+
+    private static String[] folderNameSegments(String name) {
+        if (name == null) {
+            return new String[0];
+        }
+        List<String> segs = new ArrayList<>();
+        for (String part : name.split("/")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                segs.add(trimmed);
+            }
+        }
+        return segs.toArray(new String[0]);
+    }
+
+    /** True if {@code candidate} is a (non-strict) prefix of {@code full}. */
+    private static boolean isPrefix(List<String> candidate, List<String> full) {
+        if (candidate.size() > full.size()) {
+            return false;
+        }
+        for (int i = 0; i < candidate.size(); i++) {
+            if (!candidate.get(i).equals(full.get(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+
+    private static List<String> pathSegments(HttpRequest request) {
+        String path = null;
+        try {
+            path = request.pathWithoutQuery();
+        } catch (RuntimeException ignored) {
+            // fall through
+        }
+        if (path == null || path.isBlank()) {
+            try {
+                path = request.path();
+            } catch (RuntimeException ignored) {
+                path = null;
+            }
+        }
+        List<String> segments = new ArrayList<>();
+        if (path == null) {
+            return segments;
+        }
+        int query = path.indexOf('?');
+        if (query >= 0) {
+            path = path.substring(0, query);
+        }
+        for (String part : path.split("/")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                segments.add(trimmed);
+            }
+        }
+        return segments;
     }
 
     /**

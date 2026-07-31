@@ -20,8 +20,11 @@ import java.util.function.Supplier;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.ButtonGroup;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JRadioButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
@@ -29,10 +32,12 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JSeparator;
+import javax.swing.JSpinner;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.ListCellRenderer;
 import javax.swing.ListSelectionModel;
+import javax.swing.SpinnerNumberModel;
 import javax.swing.UIManager;
 
 import burp.api.montoya.ui.settings.SettingsPanelWithData;
@@ -83,13 +88,25 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
 
         this.root.add(new JSeparator(JSeparator.HORIZONTAL));
 
+        JPanel importPanel = this.createTitledSection(
+            "Import",
+            "Configure how the \"Send to Treepeater (path-aware)\" action places imported requests. "
+                + "In direct mode the request becomes a leaf named after the last path segment, sitting next to any folder for deeper paths. "
+                + "In method-folder mode the request is placed under a per-method folder (e.g. [GET]) with the base leaf name configured below. "
+                + "Lenient folder grouping (optional) lets path-aware import reuse existing folders that include extra leading organizational segments. "
+                + "Dynamic path segments (optional) rewrite recognizable dynamic URL parts into placeholders such as :id or :uuid.",
+            this.createImportSettingsPanel()
+        );
+        this.root.add(importPanel);
+
+        this.root.add(new JSeparator(JSeparator.HORIZONTAL));
+
         JPanel llmPanel = this.createTitledSection(
             "LLMs",
             "Configure connection details for Ollama, Anthropic, and Azure OpenAI / Microsoft Foundry. "
                 + "The AI tab reads these values from here; pick the provider and model (or deployment name) in the AI toolbar.",
             this.createLlmSettingsPanel()
         );
-        llmPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, SECTION_GAP, 0));
         this.root.add(llmPanel);
 
 
@@ -133,6 +150,8 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
 
         int row = 0;
         row = this.addHotkeySetting(root, row, "Send to Treepeater hotkey:", this.settings::getSendHotkey, this.settings::setSendHotkey);
+        row = this.addHotkeySetting(root, row, "Send to Treepeater (path-aware) hotkey:", this.settings::getSendPathAwareHotkey, this.settings::setSendSortedHotkey);
+        row = this.addHotkeySetting(root, row, "Send to Treepeater (manual) hotkey:", this.settings::getSendManualHotkey, this.settings::setSendManualHotkey);
         row = this.addHotkeySetting(root,row, "Send request hotkey:", this.settings::getSendRequestHotkey, this.settings::setSendRequestHotkey);
         row = this.addHotkeySetting(root,row, "History back hotkey:", this.settings::getHistoryBackHotkey, this.settings::setHistoryBackHotkey);
         row = this.addHotkeySetting(root,row, "History forward hotkey:", this.settings::getHistoryForwardHotkey, this.settings::setHistoryForwardHotkey);
@@ -184,6 +203,205 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         parent.add(hotkeyLabel, labelGbc);
         parent.add(hotkeyButton, buttonGbc);
         return row + 1;
+    }
+
+    private JComponent createImportSettingsPanel() {
+        JPanel outer = new JPanel();
+        outer.setLayout(new BoxLayout(outer, BoxLayout.Y_AXIS));
+        outer.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JRadioButton directButton = new JRadioButton(
+                "Direct: leaf named after the last path segment, next to any nesting folder");
+        JRadioButton methodButton = new JRadioButton(
+                "Method folders: leaf under a per-method folder (e.g. [GET])");
+        directButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+        methodButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+        directButton.setOpaque(false);
+        methodButton.setOpaque(false);
+
+        ButtonGroup group = new ButtonGroup();
+        group.add(directButton);
+        group.add(methodButton);
+
+        boolean methodMode = TreepeaterSettings.IMPORT_LEAF_MODE_METHOD_FOLDER
+                .equals(this.settings.getImportLeafMode());
+        directButton.setSelected(!methodMode);
+        methodButton.setSelected(methodMode);
+
+        directButton.addActionListener(e ->
+                this.settings.setImportLeafMode(TreepeaterSettings.IMPORT_LEAF_MODE_DIRECT));
+        methodButton.addActionListener(e ->
+                this.settings.setImportLeafMode(TreepeaterSettings.IMPORT_LEAF_MODE_METHOD_FOLDER));
+
+        JPanel baseNamePanel = new JPanel(new GridBagLayout());
+        baseNamePanel.setOpaque(false);
+        baseNamePanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        this.addPersistedTextRow(
+                baseNamePanel,
+                0,
+                "Method-folder base leaf name:",
+                this.settings.getImportBaseLeafName(),
+                this.settings::setImportBaseLeafName,
+                false);
+
+        outer.add(directButton);
+        outer.add(Box.createVerticalStrut(4));
+        outer.add(methodButton);
+        outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
+        outer.add(baseNamePanel);
+        outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
+        outer.add(this.createLenientFolderGroupingPanel());
+        outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
+        outer.add(this.createDynamicSegmentPanel());
+        return outer;
+    }
+
+    private JComponent createDynamicSegmentPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JLabel header = this.createSubsectionHeader("Dynamic Path Segments");
+
+        JCheckBox enabledCheck = new JCheckBox("Normalize dynamic path segments");
+        enabledCheck.setAlignmentX(Component.LEFT_ALIGNMENT);
+        enabledCheck.setOpaque(false);
+        enabledCheck.setSelected(this.settings.isImportNormalizeDynamicSegmentsEnabled());
+
+        JTextArea explanation = new JTextArea(
+                "When enabled, path-aware import rewrites recognizable dynamic URL segments into "
+                        + "placeholders before building the folder tree. Examples: /users/2/status "
+                        + "becomes users/:id/status; UUIDs become :uuid; OData entity keys such as "
+                        + "Products(ID=1) become Products(ID=:id). API version segments (v1, v2) and "
+                        + "slugs are left unchanged. Existing literal folders are not merged; enabling "
+                        + "this later may create :id siblings next to existing numeric folders. The "
+                        + "original request URL is always preserved on the leaf node.");
+        explanation.setEditable(false);
+        explanation.setFocusable(false);
+        explanation.setLineWrap(true);
+        explanation.setWrapStyleWord(true);
+        explanation.setOpaque(false);
+        explanation.setBorder(null);
+        explanation.setFont(UIManager.getFont("Label.font"));
+        explanation.setForeground(UIManager.getColor("Label.foreground"));
+        explanation.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        enabledCheck.addActionListener(e ->
+                this.settings.setImportNormalizeDynamicSegmentsEnabled(enabledCheck.isSelected()));
+
+        panel.add(header);
+        panel.add(Box.createVerticalStrut(4));
+        panel.add(enabledCheck);
+        panel.add(Box.createVerticalStrut(4));
+        panel.add(explanation);
+        return panel;
+    }
+
+    private JComponent createLenientFolderGroupingPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JLabel header = this.createSubsectionHeader("Lenient Folder Grouping");
+
+        JCheckBox enabledCheck = new JCheckBox("Enable lenient folder grouping");
+        enabledCheck.setAlignmentX(Component.LEFT_ALIGNMENT);
+        enabledCheck.setOpaque(false);
+        enabledCheck.setSelected(this.settings.isImportGroupingFolderReconciliationEnabled());
+
+        JTextArea explanation = new JTextArea(
+                "When enabled, path-aware import can attach requests under existing folders whose path "
+                        + "includes extra leading organizational segments that are not part of the URL "
+                        + "(for example ServiceA/users for /users/1). Strict prefix matching is always used "
+                        + "first; lenient folder grouping only applies when no exact folder chain matches. "
+                        + "Raise the overlap threshold to reduce coincidental matches.");
+        explanation.setEditable(false);
+        explanation.setFocusable(false);
+        explanation.setLineWrap(true);
+        explanation.setWrapStyleWord(true);
+        explanation.setOpaque(false);
+        explanation.setBorder(null);
+        explanation.setFont(UIManager.getFont("Label.font"));
+        explanation.setForeground(UIManager.getColor("Label.foreground"));
+        explanation.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JSpinner maxSkipSpinner = new JSpinner(
+                new SpinnerNumberModel(
+                        this.settings.getImportGroupingFolderReconciliationMaxSkip(), 1, 10, 1));
+        maxSkipSpinner.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JTextField thresholdField = new JTextField(
+                Integer.toString(this.settings.getImportGroupingFolderReconciliationMatchThresholdPercent()),
+                6);
+        thresholdField.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JPanel maxSkipRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        maxSkipRow.setOpaque(false);
+        maxSkipRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        maxSkipRow.add(new JLabel("Max leading folders to skip:"));
+        maxSkipRow.add(maxSkipSpinner);
+
+        JPanel thresholdRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        thresholdRow.setOpaque(false);
+        thresholdRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        thresholdRow.add(new JLabel("Minimum target path overlap (%):"));
+        thresholdRow.add(thresholdField);
+
+        Runnable updateEnabledState = () -> {
+            boolean enabled = enabledCheck.isSelected();
+            maxSkipSpinner.setEnabled(enabled);
+            thresholdField.setEnabled(enabled);
+            maxSkipRow.setEnabled(enabled);
+            thresholdRow.setEnabled(enabled);
+        };
+
+        enabledCheck.addActionListener(e -> {
+            this.settings.setImportGroupingFolderReconciliationEnabled(enabledCheck.isSelected());
+            updateEnabledState.run();
+        });
+
+        maxSkipSpinner.addChangeListener(e ->
+                this.settings.setImportGroupingFolderReconciliationMaxSkip(
+                        ((Number) maxSkipSpinner.getValue()).intValue()));
+
+        thresholdField.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                try {
+                    int percent = Integer.parseInt(thresholdField.getText().trim());
+                    TreepeaterSettingsPanel.this.settings.setImportGroupingFolderReconciliationMatchThresholdPercent(percent);
+                    thresholdField.setText(Integer.toString(
+                            TreepeaterSettingsPanel.this.settings.getImportGroupingFolderReconciliationMatchThresholdPercent()));
+                } catch (NumberFormatException ex) {
+                    thresholdField.setText(Integer.toString(
+                            TreepeaterSettingsPanel.this.settings.getImportGroupingFolderReconciliationMatchThresholdPercent()));
+                }
+            }
+        });
+
+        panel.add(header);
+        panel.add(Box.createVerticalStrut(4));
+        panel.add(enabledCheck);
+        panel.add(Box.createVerticalStrut(4));
+        panel.add(explanation);
+        panel.add(Box.createVerticalStrut(INNER_SECTION_GAP));
+        panel.add(maxSkipRow);
+        panel.add(Box.createVerticalStrut(ROW_GAP));
+        panel.add(thresholdRow);
+        updateEnabledState.run();
+        return panel;
+    }
+
+    /** Small bold subsection header used inside a settings section (e.g. Import). */
+    private JLabel createSubsectionHeader(String title) {
+        JLabel label = new JLabel(title);
+        Font font = label.getFont();
+        label.setFont(font.deriveFont(Font.BOLD));
+        if (UIManager.getColor("Colors.ui.text.header") != null) {
+            label.setForeground(UIManager.getColor("Colors.ui.text.header"));
+        }
+        label.setAlignmentX(Component.LEFT_ALIGNMENT);
+        return label;
     }
 
     private JComponent createLlmSettingsPanel() {
@@ -678,6 +896,10 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
                 "shortcut",
                 "keyboard",
                 "repeater",
+                "import",
+                "lenient",
+                "grouping",
+                "path-aware",
                 "LLM",
                 "Ollama",
                 "Anthropic",

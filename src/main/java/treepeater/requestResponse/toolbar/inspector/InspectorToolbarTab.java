@@ -152,15 +152,15 @@ public class InspectorToolbarTab {
 
             if (source == Source.RESPONSE) {
                 this.statusLine.setText(encodeMode
-                        ? "Response is read-only \u2013 encoded value shown for inspection only."
-                        : "Response is read-only \u2013 decoded value shown for inspection only.");
+                        ? "Response is read-only."
+                        : "Response is read-only.");
             } else if (encodeMode) {
                 this.statusLine.setText(
-                        "Choose a scheme to encode the selection. Edit the encoded value and press Apply to write it back.");
+                        "Edit the encoded value and press Apply to write it back.");
             } else if (detected == InspectorEncoding.PLAIN) {
-                this.statusLine.setText("Edit the value and press Apply to write it back to the request.");
+                this.statusLine.setText("Press Apply to write it back to the request.");
             } else {
-                this.statusLine.setText("Edit the decoded value and press Apply to re-encode and write it back.");
+                this.statusLine.setText("Press Apply to re-encode and write it back.");
             }
         });
 

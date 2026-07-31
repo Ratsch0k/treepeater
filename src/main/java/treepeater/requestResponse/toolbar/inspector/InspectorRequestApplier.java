@@ -16,8 +16,9 @@ final class InspectorRequestApplier {
         }
     }
 
-    static Result apply(HttpRequestEditor editor, Range offsets, String decodedText, InspectorEncoding scheme) {
-        String reEncoded = InspectorEncoding.encode(decodedText, scheme);
+    static Result apply(
+            HttpRequestEditor editor, Range offsets, String valueText, InspectorEncoding scheme, boolean encodeMode) {
+        String toWrite = encodeMode ? valueText : InspectorEncoding.encode(valueText, scheme);
 
         ByteArray current = editor.getRequest().toByteArray();
         if (current == null) {
@@ -31,11 +32,11 @@ final class InspectorRequestApplier {
         }
 
         String full = current.toString();
-        String updated = full.substring(0, start) + reEncoded + full.substring(end);
+        String updated = full.substring(0, start) + toWrite + full.substring(end);
 
         editor.setRequest(HttpRequest.httpRequest(editor.getRequest().httpService(), updated));
 
-        int newEnd = start + reEncoded.length();
-        return new Result(Range.range(start, newEnd), reEncoded, "Applied to request.", true);
+        int newEnd = start + toWrite.length();
+        return new Result(Range.range(start, newEnd), toWrite, "Applied to request.", true);
     }
 }

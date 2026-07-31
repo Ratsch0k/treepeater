@@ -26,6 +26,8 @@ final class InspectorPanelLayout {
 
     record Cards(RoundedPanel selectionCard, RoundedPanel decodedCard) {}
 
+    record DecodedCard(RoundedPanel card, JLabel sectionTitle) {}
+
     static JPanel buildContent(Cards cards) {
         JPanel root = new JPanel(new BorderLayout());
         root.add(new ToolbarTabTitle("Inspector"), BorderLayout.NORTH);
@@ -71,7 +73,7 @@ final class InspectorPanelLayout {
         return card;
     }
 
-    static RoundedPanel buildDecodedCard(
+    static DecodedCard buildDecodedCard(
             JComboBox<InspectorEncoding> encodingSelector,
             JTextArea decodedArea,
             JButton applyButton,
@@ -79,7 +81,9 @@ final class InspectorPanelLayout {
         RoundedPanel card = createInfoCard();
         card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
 
-        card.add(sectionLabelRow("Decoded"));
+        JLabel sectionTitle = new JLabel("Decoded");
+        sectionTitle.setFont(sectionTitle.getFont().deriveFont(Font.BOLD).deriveFont(sectionTitle.getFont().getSize2D() + 2f));
+        card.add(leftRow(sectionTitle));
         card.add(Box.createVerticalStrut(10));
 
         card.add(leftRow(keyLabel("Scheme")));
@@ -100,7 +104,7 @@ final class InspectorPanelLayout {
         statusLine.setFont(statusLine.getFont().deriveFont(Font.ITALIC));
         card.add(leftRow(statusLine));
 
-        return card;
+        return new DecodedCard(card, sectionTitle);
     }
 
     static void applyInfoCardTheme(RoundedPanel card) {

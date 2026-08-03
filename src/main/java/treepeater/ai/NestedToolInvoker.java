@@ -2,7 +2,7 @@ package treepeater.ai;
 
 /**
  * Runs a child tool with the same approval and executor pipeline as a top-level {@link ChatToolCall}. Used by
- * {@link treepeater.api.tools.HttpTargetTools#BATCH_HTTP_TARGET_TOOLS}.
+ * {@link treepeater.api.tools.http.BatchHttpTargetToolsTool}.
  */
 @FunctionalInterface
 public interface NestedToolInvoker {

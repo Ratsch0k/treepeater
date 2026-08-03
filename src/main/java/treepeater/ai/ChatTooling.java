@@ -1,31 +1,29 @@
 package treepeater.ai;
 
-import treepeater.api.tools.HttpTargetTools;
-import treepeater.api.tools.HumanToolUsage;
-import treepeater.api.tools.ToolHumanUsage;
-
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntSupplier;
 
+import treepeater.api.TreepeaterToolRegistry;
+import treepeater.api.tools.HumanToolUsage;
+import treepeater.api.tools.ToolHumanUsage;
+import treepeater.api.tools.core.ToolResults;
+import treepeater.api.tools.http.BatchHttpTargetToolsTool;
+
 /**
  * Optional tool declarations plus an executor. When inactive, chat clients behave like plain text chat.
  * Approval is handled purely via messages on the active {@link ChatStreamSession}; there is no callback
  * interface to implement.
- *
- * @param currentHistoryIndexSupplier invoked when formatting tool status lines; returns the tab's current send-history
- *     index, or {@link Integer#MIN_VALUE} if unknown.
- * @param toolRunPolicy which tools need user approval before execution (never blocks outright).
- * @param agentBridge when non-null, tool cards use {@link HttpTargetTools#viewerHistoryIndexForToolCard} for the tab in
- *     {@code request_node_id}
  */
 public record ChatTooling(
         List<ChatToolDefinition> tools,
         ChatToolExecutor executor,
         IntSupplier currentHistoryIndexSupplier,
         ToolRunPolicy toolRunPolicy,
-        RepeaterTabAgentBridge agentBridge) {
+        TreepeaterTabAgentBridge agentBridge,
+        TreepeaterToolRegistry toolRegistry) {
+
     public ChatTooling {
         Objects.requireNonNull(toolRunPolicy, "toolRunPolicy");
     }
@@ -34,26 +32,37 @@ public record ChatTooling(
             List<ChatToolDefinition> tools,
             ChatToolExecutor executor,
             IntSupplier currentHistoryIndexSupplier,
+            ToolRunPolicy toolRunPolicy,
+            TreepeaterTabAgentBridge agentBridge) {
+        this(tools, executor, currentHistoryIndexSupplier, toolRunPolicy, agentBridge, null);
+    }
+
+    public ChatTooling(
+            List<ChatToolDefinition> tools,
+            ChatToolExecutor executor,
+            IntSupplier currentHistoryIndexSupplier,
             ToolRunPolicy toolRunPolicy) {
-        this(tools, executor, currentHistoryIndexSupplier, toolRunPolicy, null);
+        this(tools, executor, currentHistoryIndexSupplier, toolRunPolicy, null, null);
     }
 
     public static ChatTooling none() {
-        return new ChatTooling(List.of(), null, () -> Integer.MIN_VALUE, new AgentModeToolPolicy(AgentMode.ASK), null);
+        return new ChatTooling(
+                List.of(),
+                null,
+                () -> Integer.MIN_VALUE,
+                new AgentModeToolPolicy(AgentMode.ASK, null),
+                null,
+                null);
     }
 
     public boolean isActive() {
         return this.tools != null && !this.tools.isEmpty() && this.executor != null;
     }
 
-    /** Whether the given tool name needs user approval under the current policy. */
     public boolean requiresApproval(String toolName) {
         return this.toolRunPolicy.requiresApproval(toolName);
     }
 
-    /**
-     * Snapshot of the UI's current history entry index for one-line tool labels; {@link Integer#MIN_VALUE} if unknown.
-     */
     public int currentHistoryIndexForToolStatus() {
         try {
             return this.currentHistoryIndexSupplier.getAsInt();
@@ -62,11 +71,6 @@ public record ChatTooling(
         }
     }
 
-    /**
-     * Runs the executor either immediately (when the policy says no approval) or after a
-     * {@link ChatStreamMessage.ToolApprovalRequest} / {@link ChatStreamMessage.ToolApprovalResponse} exchange.
-     * Session-close and interruption both result in permission denied when approval was required.
-     */
     public String executeWithApproval(ChatToolCall tc, ChatStreamSession session) throws Exception {
         if (this.executor == null) {
             throw new IllegalStateException("No executor");
@@ -75,20 +79,23 @@ public record ChatTooling(
         String name = tc.name();
         int histForCard =
                 this.agentBridge != null
-                        ? HttpTargetTools.viewerHistoryIndexForToolCard(name, argsJson, this.agentBridge)
+                        ? treepeater.api.tools.http.support.HttpTargetSupport.viewerHistoryIndexForToolCard(
+                                name, argsJson, this.agentBridge)
                         : currentHistoryIndexForToolStatus();
-        int uiNodeForCard = HttpTargetTools.uiSelectedRequestNodeIdForToolCard(this.agentBridge);
-        HumanToolUsage label = ToolHumanUsage.forTool(name, argsJson, histForCard, uiNodeForCard);
+        int uiNodeForCard =
+                treepeater.api.tools.http.support.HttpTargetSupport.uiSelectedRequestNodeIdForToolCard(
+                        this.agentBridge);
+        HumanToolUsage label = ToolHumanUsage.forTool(name, argsJson, histForCard, uiNodeForCard, this.toolRegistry);
         ToolRunPolicy policy = this.toolRunPolicy;
         AtomicInteger batchChildSlot = new AtomicInteger(0);
         NestedToolInvoker childInvoker =
                 (childName, childArgs) -> {
                     String childId =
-                            HttpTargetTools.syntheticBatchChildToolCallId(tc.id(), batchChildSlot.getAndIncrement());
+                            BatchHttpTargetToolsTool.syntheticChildToolCallId(
+                                    tc.id(), batchChildSlot.getAndIncrement());
                     return executeWithApproval(new ChatToolCall(childId, childName, childArgs), session);
                 };
-        ChatToolInvokeContext invokeCtx =
-                new ChatToolInvokeContext(name, argsJson, childInvoker);
+        ChatToolInvokeContext invokeCtx = new ChatToolInvokeContext(name, argsJson, childInvoker);
         if (!policy.requiresApproval(name)) {
             session.emit(
                     new ChatStreamMessage.ToolApprovalRequest(
@@ -102,17 +109,15 @@ public record ChatTooling(
             while (true) {
                 ChatStreamMessage reply = session.awaitReply();
                 if (reply == null) {
-                    return HttpTargetTools.permissionDeniedResult();
+                    return ToolResults.permissionDenied();
                 }
                 if (reply instanceof ChatStreamMessage.ToolApprovalResponse r && matchesId(tc.id(), r.toolCallId())) {
-                    return r.approved()
-                            ? this.executor.invoke(invokeCtx)
-                            : HttpTargetTools.permissionDeniedResult();
+                    return r.approved() ? this.executor.invoke(invokeCtx) : ToolResults.permissionDenied();
                 }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return HttpTargetTools.permissionDeniedResult();
+            return ToolResults.permissionDenied();
         }
     }
 
@@ -122,5 +127,4 @@ public record ChatTooling(
         }
         return requestId.equals(responseId);
     }
-
 }

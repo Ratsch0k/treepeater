@@ -1,4 +1,4 @@
-package treepeater.api.tools;
+package treepeater.api.tools.http.support;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -55,42 +55,35 @@ import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 import treepeater.Utilities;
 import treepeater.TreepeaterModel.SiblingCopyPlacement;
-import treepeater.ai.AgentMode;
 import treepeater.ai.AgentToolContext;
 import treepeater.ai.ChatToolInvokeContext;
-import treepeater.ai.HttpTargetSnapshot;
 import treepeater.ai.NestedToolInvoker;
-import treepeater.ai.RepeaterTabAgentBridge;
+import treepeater.ai.TreepeaterTabAgentBridge;
 import treepeater.ai.SearchTabRow;
-import treepeater.ai.ToolActionLevel;
-import treepeater.api.TreepeaterTool;
-import treepeater.api.TreepeaterToolRegistry;
+import treepeater.api.tools.HumanToolUsage;
+import treepeater.api.tools.ToolHumanUsage;
+import treepeater.api.tools.core.ToolInvocation;
+import treepeater.api.tools.core.ToolResults;
+import treepeater.api.tools.http.ApplyHttpRequestSemanticChangesTool;
+import treepeater.api.tools.http.BatchHttpTargetToolsTool;
+import treepeater.api.tools.http.CopyTreepeaterNodeTool;
+import treepeater.api.tools.http.GetCurrentHttpTargetTool;
+import treepeater.api.tools.http.PatchHttpRequestBodyLinesTool;
+import treepeater.api.tools.http.ReadHttpMessageTool;
+import treepeater.api.tools.http.ReplaceInHttpRequestBodyTool;
+import treepeater.api.tools.http.SearchHttpMessageTool;
+import treepeater.api.tools.http.SearchTabsTool;
+import treepeater.api.tools.http.SendCurrentHttpRequestTool;
+import treepeater.api.tools.http.SetHttpRequestBodyTool;
 
 /**
- * Editor-centric HTTP tools: target summary, raw message read/search, request body edits, semantic
- * mutations, tab discovery, node copy, batch dispatch, and send in Repeater.
+ * Shared HTTP/editor tool logic (read, search, mutate, semantic ops, tab listing).
  */
-public final class HttpTargetTools {
+public final class HttpTargetSupport {
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final Logger TIMING = Logger.getLogger("treepeater.api.tools.HttpTargetTools.commitLiveRequest");
+    private static final Logger TIMING = Logger.getLogger("treepeater.api.tools.http.support.HttpTargetSupport.commitLiveRequest");
 
-    public static final String GET_CURRENT_HTTP_TARGET = "get_current_http_target";
-    public static final String READ_HTTP_MESSAGE = "read_http_message";
-    public static final String SEARCH_HTTP_MESSAGE = "search_http_message";
-    public static final String REPLACE_IN_HTTP_REQUEST_BODY = "replace_in_http_request_body";
-    public static final String PATCH_HTTP_REQUEST_BODY_LINES = "patch_http_request_body_lines";
-    public static final String SET_HTTP_REQUEST_BODY = "set_http_request_body";
-    public static final String SEND_CURRENT_HTTP_REQUEST = "send_current_http_request";
-    public static final String SEARCH_TABS = "search_tabs";
-    public static final String COPY_TREEPEATER_NODE = "copy_treepeater_node";
-    public static final String APPLY_HTTP_REQUEST_SEMANTIC_CHANGES = "apply_http_request_semantic_changes";
-    public static final String BATCH_HTTP_TARGET_TOOLS = "batch_http_target_tools";
-
-    /** Minimal valid payload example (also returned in structured errors when {@code operations} is missing or invalid). */
-    public static final String APPLY_HTTP_REQUEST_SEMANTIC_CHANGES_EXAMPLE_ARGS =
-            "{\"operations\":[{\"type\":\"header\",\"action\":\"set\",\"key\":\"X-Test\",\"value\":\"1\"}]}";
-
-    /** Max URL characters per row in {@link #SEARCH_TABS} results before truncation. */
+    /** Max URL characters per row in {@link SearchTabsTool} results before truncation. */
     public static final int MAX_TAB_LIST_URL_CHARS = 512;
 
     private static final int DEFAULT_READ_CHUNK_BYTES = 4_096;
@@ -209,188 +202,81 @@ public final class HttpTargetTools {
                     + MAX_BATCH_HTTP_TARGET_TOOLS
                     + ",\"items\":{\"type\":\"object\",\"required\":[\"tool_name\"],\"properties\":{\"tool_name\":{\"type\":\"string\",\"minLength\":1},\"arguments\":{\"type\":\"object\"}},\"additionalProperties\":false}}},\"additionalProperties\":false}";
 
-    private HttpTargetTools() {}
+    private HttpTargetSupport() {}
 
-    public static void register(TreepeaterToolRegistry registry, RepeaterTabAgentBridge bridge) {
-        registry.add(
-                new TreepeaterTool(
-                        GET_CURRENT_HTTP_TARGET,
-                        "Current tab: scheme, host, port, SNI, method, URL, path, send history. "
-                                + "Optional request_node_id (search_tabs). Raw wire: read_http_message / search_http_message.",
-                        OPTIONAL_TAB_PARAMS_SCHEMA,
-                        ToolActionLevel.READ_ONLY,
-                        args -> execute(GET_CURRENT_HTTP_TARGET, args, bridge)));
-
-        registry.add(
-                new TreepeaterTool(
-                        SEARCH_TABS,
-                        "Paged open tabs. Empty query = all. Query matches live method+URL or title (CI). "
-                                + "Returns request_node_id. offset default 0; page_size default "
-                                + DEFAULT_TAB_PAGE_SIZE + " max " + MAX_TAB_PAGE_SIZE + ".",
-                        SEARCH_TABS_SCHEMA,
-                        ToolActionLevel.READ_ONLY,
-                        args -> execute(SEARCH_TABS, args, bridge)));
-
-        registry.add(
-                new TreepeaterTool(
-                        COPY_TREEPEATER_NODE,
-                        "Duplicate a request tree node as a new sibling tab with the given name. Returns "
-                                + "request_node_id for the copy. Use when the user wants a copy, or in multi-step "
-                                + "processes to create separate steps from a baseline node. request_node_id is any "
-                                + "request node id (from search_tabs or a prior copy).",
-                        COPY_TREEPEATER_NODE_SCHEMA,
-                        ToolActionLevel.WRITE,
-                        args -> execute(COPY_TREEPEATER_NODE, args, bridge)));
-
-        registry.add(
-                new TreepeaterTool(
-                        BATCH_HTTP_TARGET_TOOLS,
-                        "Runs several built-in tools in fixed order in a single call; each tools[] entry is "
-                                + "tool_name plus an arguments object ({} if none); returns per-step results. "
-                                + "Strongly prefer this whenever your plan needs more than one tool on the same turn—"
-                                + "especially ordered flows such as changing the request, send_current_http_request, "
-                                + "then read_http_message with side \"response\". Steps run one after another; write/send "
-                                + "still need approval.",
-                        BATCH_HTTP_TARGET_TOOLS_SCHEMA,
-                        ToolActionLevel.READ_ONLY,
-                        args -> execute(BATCH_HTTP_TARGET_TOOLS, args, bridge)));
-
-        registry.add(
-                new TreepeaterTool(
-                        READ_HTTP_MESSAGE,
-                        "Raw wire slice for one history entry (status-line, headers, body). side required. "
-                                + "Default first 1024B. Fields: total_bytes, header_bytes, has_more, next_offset, text|base64. "
-                                + "Needles: prefer search_http_message.",
-                        READ_MESSAGE_SCHEMA,
-                        ToolActionLevel.READ_ONLY,
-                        args -> execute(READ_HTTP_MESSAGE, args, bridge)));
-
-        registry.add(
-                new TreepeaterTool(
-                        SEARCH_HTTP_MESSAGE,
-                        "Regex on raw bytes (offsets align with read_http_message). max_matches 10 dflt /100 max; "
-                                + "context_bytes 64 dflt /512 max. scope headers|body|all. Java Pattern (?i)(?m)(?s). "
-                                + "Latin-1 indexing; pattern <=1024 chars; scan <=1MB (scan_limited_bytes when clipped).",
-                        SEARCH_MESSAGE_SCHEMA,
-                        ToolActionLevel.READ_ONLY,
-                        args -> execute(SEARCH_HTTP_MESSAGE, args, bridge)));
-
-        registry.add(
-                new TreepeaterTool(
-                        REPLACE_IN_HTTP_REQUEST_BODY,
-                        "Literal find/replace in current request body (UTF-8). Non-UTF-8: set_http_request_body+base64. "
-                                + "Default max_replacements=1 needs single match; replace_all=all.",
-                        REPLACE_BODY_SCHEMA,
-                        ToolActionLevel.WRITE,
-                        args -> execute(REPLACE_IN_HTTP_REQUEST_BODY, args, bridge)));
-
-        registry.add(
-                new TreepeaterTool(
-                        PATCH_HTTP_REQUEST_BODY_LINES,
-                        "Replace 1-based inclusive line range in current body (UTF-8; Java \\R). Binary: set_http_request_body.",
-                        PATCH_LINES_SCHEMA,
-                        ToolActionLevel.WRITE,
-                        args -> execute(PATCH_HTTP_REQUEST_BODY_LINES, args, bridge)));
-
-        registry.add(
-                new TreepeaterTool(
-                        SET_HTTP_REQUEST_BODY,
-                        "Replace full current body. One of body_utf8|body_base64 (aliases bodyUtf8|bodyBase64). "
-                                + "Object/array body_utf8 serializes to compact JSON. Arbitrary bytes: base64.",
-                        SET_BODY_SCHEMA,
-                        ToolActionLevel.WRITE,
-                        args -> execute(SET_HTTP_REQUEST_BODY, args, bridge)));
-
-        registry.add(
-                new TreepeaterTool(
-                        APPLY_HTTP_REQUEST_SEMANTIC_CHANGES,
-                        "Batch edit current request. Required operations[] (non-empty). Per op: type header|cookie|json|"
-                                + "xml|method|url + action set|remove; fields per JSON Schema. remove: omit value. "
-                                + "json set value:null = literal null. path: RFC6901 (json) or XPath (xml). method|url set: "
-                                + "empty key. Bad body yields error op_index; fix via read/set body. Example in system prompt.",
-                        APPLY_SEMANTIC_CHANGES_SCHEMA,
-                        ToolActionLevel.WRITE,
-                        args -> execute(APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, bridge)));
-
-        registry.add(
-                new TreepeaterTool(
-                        SEND_CURRENT_HTTP_REQUEST,
-                        "Send current repeater request; wait for response. Updates UI/history. Result: status_code only. "
-                                + "Optional request_node_id.",
-                        OPTIONAL_TAB_PARAMS_SCHEMA,
-                        ToolActionLevel.EXECUTE,
-                        args -> execute(SEND_CURRENT_HTTP_REQUEST, args, bridge)));
+    /** Dispatches one HTTP tool via {@link ToolInvocation}. */
+    public static String invokeTool(ToolInvocation inv, String toolName) {
+        TreepeaterTabAgentBridge bridge = inv.runtime().bridge();
+        if (bridge == null) {
+            return errorJson("no bridge");
+        }
+        return execute(
+                new ChatToolInvokeContext(toolName, inv.argumentsJson(), inv.nestedInvoker()), bridge);
     }
 
-    /**
-     * Stable id for nested tool approval cards when a step runs inside {@link #BATCH_HTTP_TARGET_TOOLS}.
-     */
-    public static String syntheticBatchChildToolCallId(String parentToolCallId, int batchSlot) {
-        String base =
-                parentToolCallId != null && !parentToolCallId.isBlank() ? parentToolCallId.trim() : "tool";
-        return base + ":batch:" + batchSlot;
+    public static String optionalTabParamsSchema() {
+        return OPTIONAL_TAB_PARAMS_SCHEMA;
     }
 
-    /**
-     * Classifies a built-in tool by sensitivity. Unknown names return {@code null} (treat as requiring approval).
-     */
-    public static ToolActionLevel toolActionLevel(String toolName) {
-        if (toolName == null) {
-            return null;
-        }
-        return switch (toolName) {
-            case GET_CURRENT_HTTP_TARGET,
-                    READ_HTTP_MESSAGE,
-                    SEARCH_HTTP_MESSAGE,
-                    SEARCH_TABS,
-                    BATCH_HTTP_TARGET_TOOLS -> ToolActionLevel.READ_ONLY;
-            case REPLACE_IN_HTTP_REQUEST_BODY,
-                    PATCH_HTTP_REQUEST_BODY_LINES,
-                    SET_HTTP_REQUEST_BODY,
-                    APPLY_HTTP_REQUEST_SEMANTIC_CHANGES,
-                    COPY_TREEPEATER_NODE -> ToolActionLevel.WRITE;
-            case SEND_CURRENT_HTTP_REQUEST -> ToolActionLevel.EXECUTE;
-            default -> null;
-        };
+    public static String readMessageSchema() {
+        return READ_MESSAGE_SCHEMA;
     }
 
-    /**
-     * Whether the chat must collect approval before running this tool. Modes only tighten or relax approval; they do
-     * not block tools outright. Unknown tool names require approval except in {@link AgentMode#AUTONOMOUS}.
-     * <ul>
-     *   <li>{@link AgentMode#ASK}: approval for {@link ToolActionLevel#WRITE} and {@link ToolActionLevel#EXECUTE};
-     *       read-only tools run without prompting.</li>
-     *   <li>{@link AgentMode#HELPER}: approval only for {@link ToolActionLevel#EXECUTE}.</li>
-     *   <li>{@link AgentMode#AUTONOMOUS}: no approval.</li>
-     * </ul>
-     */
-    public static boolean requiresUserApprovalInAgentMode(String toolName, AgentMode mode) {
-        if (mode == null) {
-            mode = AgentMode.ASK;
-        }
-        ToolActionLevel level = toolActionLevel(toolName);
-        if (level == null) {
-            return mode != AgentMode.AUTONOMOUS;
-        }
-        return switch (mode) {
-            case ASK -> level != ToolActionLevel.READ_ONLY;
-            case HELPER -> level == ToolActionLevel.EXECUTE;
-            case AUTONOMOUS -> false;
-        };
+    public static String searchMessageSchema() {
+        return SEARCH_MESSAGE_SCHEMA;
+    }
+
+    public static String searchTabsSchema() {
+        return SEARCH_TABS_SCHEMA;
+    }
+
+    public static String copyTreepeaterNodeSchema() {
+        return COPY_TREEPEATER_NODE_SCHEMA;
+    }
+
+    public static String replaceBodySchema() {
+        return REPLACE_BODY_SCHEMA;
+    }
+
+    public static String patchLinesSchema() {
+        return PATCH_LINES_SCHEMA;
+    }
+
+    public static String setBodySchema() {
+        return SET_BODY_SCHEMA;
+    }
+
+    public static String applySemanticChangesSchema() {
+        return APPLY_SEMANTIC_CHANGES_SCHEMA;
+    }
+
+    public static String batchHttpTargetToolsSchema() {
+        return BATCH_HTTP_TARGET_TOOLS_SCHEMA;
+    }
+
+    public static int defaultTabPageSize() {
+        return DEFAULT_TAB_PAGE_SIZE;
+    }
+
+    public static int maxTabPageSize() {
+        return MAX_TAB_PAGE_SIZE;
+    }
+
+    public static int maxBatchHttpTargetTools() {
+        return MAX_BATCH_HTTP_TARGET_TOOLS;
     }
 
     /**
      * Dispatches built-in tools; resolves {@link AgentToolContext} per optional {@code request_node_id} on the bridge.
      */
-    public static String execute(String toolName, String argumentsJson, RepeaterTabAgentBridge bridge) {
+    public static String execute(String toolName, String argumentsJson, TreepeaterTabAgentBridge bridge) {
         return execute(new ChatToolInvokeContext(toolName, argumentsJson, null), bridge);
     }
 
     /**
-     * Same as {@link #execute(String, String, RepeaterTabAgentBridge)} with nested-tool support for {@link
-     * #BATCH_HTTP_TARGET_TOOLS}.
+     * Same as {@link #execute(String, String, TreepeaterTabAgentBridge)} with nested-tool support for {@link BatchHttpTargetToolsTool}.
      */
-    public static String execute(ChatToolInvokeContext invokeCtx, RepeaterTabAgentBridge bridge) {
+    public static String execute(ChatToolInvokeContext invokeCtx, TreepeaterTabAgentBridge bridge) {
         if (bridge == null) {
             return errorJson("no bridge");
         }
@@ -403,21 +289,21 @@ public final class HttpTargetTools {
         } catch (Exception e) {
             return errorJson("invalid tool arguments JSON");
         }
-        if (SEARCH_TABS.equals(toolName)) {
+        if (SearchTabsTool.NAME.equals(toolName)) {
             try {
                 return capResult(searchTabs(bridge, args));
             } catch (Exception e) {
                 return errorJson(e.getMessage() != null ? e.getMessage() : "tool error");
             }
         }
-        if (BATCH_HTTP_TARGET_TOOLS.equals(toolName)) {
+        if (BatchHttpTargetToolsTool.NAME.equals(toolName)) {
             try {
                 return capResult(batchHttpTargetTools(args, bridge, nested));
             } catch (Exception e) {
                 return errorJson(e.getMessage() != null ? e.getMessage() : "tool error");
             }
         }
-        if (COPY_TREEPEATER_NODE.equals(toolName)) {
+        if (CopyTreepeaterNodeTool.NAME.equals(toolName)) {
             try {
                 return capResult(copyTreepeaterNode(bridge, args));
             } catch (Exception e) {
@@ -432,14 +318,14 @@ public final class HttpTargetTools {
         String result;
         try {
             result = switch (toolName) {
-                case GET_CURRENT_HTTP_TARGET -> targetWithHistoryJson(ctx);
-                case READ_HTTP_MESSAGE -> readMessage(ctx, args);
-                case SEARCH_HTTP_MESSAGE -> searchMessage(ctx, args);
-                case REPLACE_IN_HTTP_REQUEST_BODY -> replaceInHttpRequestBody(ctx, args);
-                case PATCH_HTTP_REQUEST_BODY_LINES -> patchHttpRequestBodyLines(ctx, args);
-                case SET_HTTP_REQUEST_BODY -> setHttpRequestBody(ctx, args);
-                case APPLY_HTTP_REQUEST_SEMANTIC_CHANGES -> applyHttpRequestSemanticChanges(ctx, args);
-                case SEND_CURRENT_HTTP_REQUEST -> sendCurrentHttpRequest(ctx);
+                case GetCurrentHttpTargetTool.NAME -> targetWithHistoryJson(ctx);
+                case ReadHttpMessageTool.NAME -> readMessage(ctx, args);
+                case SearchHttpMessageTool.NAME -> searchMessage(ctx, args);
+                case ReplaceInHttpRequestBodyTool.NAME -> replaceInHttpRequestBody(ctx, args);
+                case PatchHttpRequestBodyLinesTool.NAME -> patchHttpRequestBodyLines(ctx, args);
+                case SetHttpRequestBodyTool.NAME -> setHttpRequestBody(ctx, args);
+                case ApplyHttpRequestSemanticChangesTool.NAME -> applyHttpRequestSemanticChanges(ctx, args);
+                case SendCurrentHttpRequestTool.NAME -> sendCurrentHttpRequest(ctx);
                 default -> "{\"error\":\"unknown tool: " + escapeJson(toolName) + "\"}";
             };
         } catch (Exception e) {
@@ -448,7 +334,7 @@ public final class HttpTargetTools {
         return capResult(result);
     }
 
-    private static String batchHttpTargetTools(JsonNode args, RepeaterTabAgentBridge bridge, NestedToolInvoker nested)
+    private static String batchHttpTargetTools(JsonNode args, TreepeaterTabAgentBridge bridge, NestedToolInvoker nested)
             throws Exception {
         JsonNode toolsNode = args.get("tools");
         if (toolsNode == null || !toolsNode.isArray()) {
@@ -519,20 +405,20 @@ public final class HttpTargetTools {
     }
 
     /**
-     * Same as {@link #execute(String, String, RepeaterTabAgentBridge)} with a fixed context (tests; {@link #SEARCH_TABS} unsupported).
+     * Same as {@link #execute(String, String, TreepeaterTabAgentBridge)} with a fixed context (tests; {@link SearchTabsTool} unsupported).
      */
     public static String execute(String toolName, String argumentsJson, AgentToolContext ctx) {
-        return execute(toolName, argumentsJson, RepeaterTabAgentBridge.singleTab(ctx));
+        return execute(toolName, argumentsJson, TreepeaterTabAgentBridge.singleTab(ctx));
     }
 
     /**
      * History index for tool transcript labels when the tool targets a specific tab via {@code request_node_id}.
      */
-    public static int viewerHistoryIndexForToolCard(String toolName, String argumentsJson, RepeaterTabAgentBridge bridge) {
+    public static int viewerHistoryIndexForToolCard(String toolName, String argumentsJson, TreepeaterTabAgentBridge bridge) {
         if (bridge == null
-                || SEARCH_TABS.equals(toolName)
-                || BATCH_HTTP_TARGET_TOOLS.equals(toolName)
-                || COPY_TREEPEATER_NODE.equals(toolName)) {
+                || SearchTabsTool.NAME.equals(toolName)
+                || BatchHttpTargetToolsTool.NAME.equals(toolName)
+                || CopyTreepeaterNodeTool.NAME.equals(toolName)) {
             return Integer.MIN_VALUE;
         }
         try {
@@ -545,7 +431,7 @@ public final class HttpTargetTools {
     }
 
     /** UI-selected tab id for {@link #humanToolUsage(String, String, int, int)}; {@link Integer#MIN_VALUE} if unknown. */
-    public static int uiSelectedRequestNodeIdForToolCard(RepeaterTabAgentBridge bridge) {
+    public static int uiSelectedRequestNodeIdForToolCard(TreepeaterTabAgentBridge bridge) {
         return bridge != null ? bridge.uiSelectedRequestNodeIdForToolCard() : Integer.MIN_VALUE;
     }
 
@@ -564,7 +450,7 @@ public final class HttpTargetTools {
         return OptionalInt.of(v);
     }
 
-    private static String searchTabs(RepeaterTabAgentBridge bridge, JsonNode args) {
+    private static String searchTabs(TreepeaterTabAgentBridge bridge, JsonNode args) {
         int offset = 0;
         JsonNode offN = argFirst(args, "offset");
         if (offN != null && offN.isNumber()) {
@@ -589,7 +475,7 @@ public final class HttpTargetTools {
         return bridge.searchTabs(offset, pageSize, query);
     }
 
-    private static String copyTreepeaterNode(RepeaterTabAgentBridge bridge, JsonNode args) {
+    private static String copyTreepeaterNode(TreepeaterTabAgentBridge bridge, JsonNode args) {
         OptionalInt sourceId = parseRequestNodeId(args);
         if (sourceId.isEmpty()) {
             return errorJson("request_node_id required");
@@ -618,7 +504,7 @@ public final class HttpTargetTools {
         };
     }
 
-    /** JSON body for {@link RepeaterTabAgentBridge#copyTreepeaterNode(int, String)}. */
+    /** JSON body for {@link TreepeaterTabAgentBridge#copyTreepeaterNode(int, String)}. */
     public static String formatCopyTreepeaterNodeResponse(int requestNodeId, String name) {
         ObjectNode root = JSON.createObjectNode();
         root.put("request_node_id", requestNodeId);
@@ -626,7 +512,7 @@ public final class HttpTargetTools {
         return write(root);
     }
 
-    /** JSON body for {@link RepeaterTabAgentBridge#searchTabs(int, int, String)}. */
+    /** JSON body for {@link TreepeaterTabAgentBridge#searchTabs(int, int, String)}. */
     public static String formatSearchTabsResponse(
             int total, int offset, int pageSize, boolean hasMore, List<SearchTabRow> rows) {
         ObjectNode root = JSON.createObjectNode();
@@ -659,24 +545,10 @@ public final class HttpTargetTools {
      * Returns an oversized tool result unchanged when within budget; otherwise replaces it with a
      * small structured error pointing the model at paginated alternatives. This backstops every tool
      * uniformly so an unexpectedly large payload can never explode the next round's input-token
-     * count. A max-sized read_http_message chunk is sized to stay under this cap.
+     * count. A max-sized ReadHttpMessageTool.NAME chunk is sized to stay under this cap.
      */
     private static String capResult(String result) {
-        if (result == null) {
-            return errorJson("tool returned null");
-        }
-        if (result.length() <= MAX_TOOL_RESULT_CHARS) {
-            return result;
-        }
-        ObjectNode n = JSON.createObjectNode();
-        n.put("error", "tool_result_too_large");
-        n.put("result_chars", result.length());
-        n.put("max_result_chars", MAX_TOOL_RESULT_CHARS);
-        n.put(
-                "hint",
-                "Call read_http_message with offset and max_bytes for smaller slices, or use search_http_message to "
-                        + "match a small substring; narrow search scope (headers|body) when possible.");
-        return write(n);
+        return ToolResults.capResult(result);
     }
 
     private static JsonNode parseArgs(String argumentsJson) throws JsonProcessingException {
@@ -686,7 +558,7 @@ public final class HttpTargetTools {
         return JSON.readTree(argumentsJson);
     }
 
-    /** Nested under {@code history} in {@link #get_current_http_target}. */
+    /** Nested under {@code history} in {@link #GetCurrentHttpTargetTool.NAME}. */
     private static ObjectNode buildHistoryStateObject(AgentToolContext ctx) {
         ObjectNode n = JSON.createObjectNode();
         int size = ctx.historySize();
@@ -1069,7 +941,7 @@ public final class HttpTargetTools {
         String text = Utilities.decodeUtf8Strict(rawBytes);
         if (text == null) {
             throw new IllegalArgumentException(
-                    "request body is not valid UTF-8; use set_http_request_body with body_base64");
+                    "request body is not valid UTF-8; use SetHttpRequestBodyTool.NAME with body_base64");
         }
 
         if (!replaceAll) {
@@ -1167,7 +1039,7 @@ public final class HttpTargetTools {
         String text = Utilities.decodeUtf8Strict(rawBytes);
         if (text == null) {
             throw new IllegalArgumentException(
-                    "request body is not valid UTF-8; use set_http_request_body with body_base64");
+                    "request body is not valid UTF-8; use SetHttpRequestBodyTool.NAME with body_base64");
         }
 
         List<String> lines = new ArrayList<>(Arrays.asList(text.split("\\R", -1)));
@@ -1409,7 +1281,7 @@ public final class HttpTargetTools {
         n.put("op_type", "");
         n.put("hint", hint);
         n.put("detail", "");
-        n.put("example", APPLY_HTTP_REQUEST_SEMANTIC_CHANGES_EXAMPLE_ARGS);
+        n.put("example", ApplyHttpRequestSemanticChangesTool.EXAMPLE_ARGS);
         return write(n);
     }
 
@@ -1630,7 +1502,7 @@ public final class HttpTargetTools {
             return semanticMutationError(
                     opIndex,
                     "json",
-                    "empty JSON Pointer is not allowed for type json; use set_http_request_body to replace the whole body",
+                    "empty JSON Pointer is not allowed for type json; use SetHttpRequestBodyTool.NAME to replace the whole body",
                     "or use a non-empty path to patch part of the JSON",
                     "");
         }
@@ -1645,8 +1517,8 @@ public final class HttpTargetTools {
                     opIndex,
                     "json",
                     "request body is not valid UTF-8 for JSON mutation",
-                    "use set_http_request_body with body_base64, or fix encoding first",
-                    "read raw bytes with read_http_message if you need to inspect the body");
+                    "use SetHttpRequestBodyTool.NAME with body_base64, or fix encoding first",
+                    "read raw bytes with ReadHttpMessageTool.NAME if you need to inspect the body");
         }
         JsonNode root;
         try {
@@ -1656,14 +1528,14 @@ public final class HttpTargetTools {
                     opIndex,
                     "json",
                     "request body is not valid JSON: " + (e.getOriginalMessage() != null ? e.getOriginalMessage() : e.getMessage()),
-                    "use set_http_request_body to replace the body, or read_http_message to inspect it",
+                    "use SetHttpRequestBodyTool.NAME to replace the body, or ReadHttpMessageTool.NAME to inspect it",
                     "");
         } catch (IOException e) {
             return semanticMutationError(
                     opIndex,
                     "json",
                     "request body is not valid JSON: " + (e.getMessage() != null ? e.getMessage() : e.toString()),
-                    "use set_http_request_body to replace the body, or read_http_message to inspect it",
+                    "use SetHttpRequestBodyTool.NAME to replace the body, or ReadHttpMessageTool.NAME to inspect it",
                     "");
         }
         try {
@@ -1692,7 +1564,7 @@ public final class HttpTargetTools {
         }
         String s = pathStr.trim();
         if (s.isEmpty() || s.equals("/")) {
-            throw new IllegalArgumentException("empty JSON Pointer is not allowed; use set_http_request_body to replace the whole body");
+            throw new IllegalArgumentException("empty JSON Pointer is not allowed; use SetHttpRequestBodyTool.NAME to replace the whole body");
         }
         if (s.charAt(0) != '/') {
             throw new IllegalArgumentException("JSON Pointer must start with /");
@@ -1775,7 +1647,7 @@ public final class HttpTargetTools {
         String utf8 = Utilities.decodeUtf8Strict(raw);
         if (utf8 == null) {
             return semanticMutationError(
-                    opIndex, "xml", "request body is not valid UTF-8 for xml mutation", "use set_http_request_body with body_base64 first", "read the body with read_http_message if needed");
+                    opIndex, "xml", "request body is not valid UTF-8 for xml mutation", "use SetHttpRequestBodyTool.NAME with body_base64 first", "read the body with ReadHttpMessageTool.NAME if needed");
         }
         DocumentBuilder db;
         try {
@@ -1792,7 +1664,7 @@ public final class HttpTargetTools {
                     opIndex,
                     "xml",
                     "request body is not well-formed XML: " + (e.getMessage() != null ? e.getMessage() : e.toString()),
-                    "use set_http_request_body to replace the body, or read_http_message to inspect it",
+                    "use SetHttpRequestBodyTool.NAME to replace the body, or ReadHttpMessageTool.NAME to inspect it",
                     "");
         }
         XPath xPath = XPathFactory.newInstance().newXPath();
@@ -1809,7 +1681,7 @@ public final class HttpTargetTools {
         }
         if (nl.getLength() == 0) {
             return semanticMutationError(
-                    opIndex, "xml", "XPath matched no nodes", "adjust path or set the body so the target exists", "use read_http_message to inspect the XML");
+                    opIndex, "xml", "XPath matched no nodes", "adjust path or set the body so the target exists", "use ReadHttpMessageTool.NAME to inspect the XML");
         }
         if ("set".equals(action)) {
             String v = op.get("value").asText();
@@ -1819,7 +1691,7 @@ public final class HttpTargetTools {
                         opIndex,
                         "xml",
                         "type xml set: attribute nodes are not supported in v1 (matched an attribute with XPath)",
-                        "use an XPath to an element and set its text, or set_http_request_body to rewrite attributes",
+                        "use an XPath to an element and set its text, or SetHttpRequestBodyTool.NAME to rewrite attributes",
                         "");
             }
             n.setTextContent(v);
@@ -2052,7 +1924,7 @@ public final class HttpTargetTools {
 
     /** JSON tool result when the user declines to run a tool. */
     public static String permissionDeniedResult() {
-        return errorJson("permission denied");
+        return ToolResults.permissionDenied();
     }
 
     private static final int MAX_SEMANTIC_HUMAN_DETAIL_CHARS = 12_000;
@@ -2188,10 +2060,10 @@ public final class HttpTargetTools {
         try {
             JsonNode args = parseArgs(argumentsJson);
             return switch (toolName) {
-                case REPLACE_IN_HTTP_REQUEST_BODY -> replaceInHttpRequestBodyOnRequest(current, args).request();
-                case PATCH_HTTP_REQUEST_BODY_LINES -> patchHttpRequestBodyLinesOnRequest(current, args).request();
-                case SET_HTTP_REQUEST_BODY -> setHttpRequestBodyOnRequest(current, args);
-                case APPLY_HTTP_REQUEST_SEMANTIC_CHANGES -> {
+                case ReplaceInHttpRequestBodyTool.NAME -> replaceInHttpRequestBodyOnRequest(current, args).request();
+                case PatchHttpRequestBodyLinesTool.NAME -> patchHttpRequestBodyLinesOnRequest(current, args).request();
+                case SetHttpRequestBodyTool.NAME -> setHttpRequestBodyOnRequest(current, args);
+                case ApplyHttpRequestSemanticChangesTool.NAME -> {
                     SemanticApplyResult s = applyHttpRequestSemanticChangesToRequest0(current, args);
                     yield s.errorResultJson() != null ? null : s.request();
                 }
@@ -2204,7 +2076,7 @@ public final class HttpTargetTools {
 
     /**
      * Title and optional detail for the tool transcript card. Mutations that change the in-editor request include a
-     * non-empty {@link HumanToolUsage#detail} describing the change, except for {@link #SET_HTTP_REQUEST_BODY} where
+     * non-empty {@link HumanToolUsage#detail} describing the change, except for {@link #SetHttpRequestBodyTool.NAME} where
      * the new body is omitted.
      *
      * @param viewerHistoryIndex the tab's current history index, or {@link Integer#MIN_VALUE} if unknown; when equal to
@@ -2237,9 +2109,9 @@ public final class HttpTargetTools {
         String hist = formatHistoryIndexArg(args, viewerHistoryIndex);
         String nodeSuf = formatRequestNodeIdSuffix(args, uiSelectedRequestNodeId);
         return switch (toolName) {
-            case GET_CURRENT_HTTP_TARGET ->
+            case GetCurrentHttpTargetTool.NAME ->
                     new HumanToolUsage("Getting current repeater target and send history" + nodeSuf, "");
-            case READ_HTTP_MESSAGE -> {
+            case ReadHttpMessageTool.NAME -> {
                 String head =
                         sideLabel.isEmpty()
                                 ? "Reading HTTP message"
@@ -2254,7 +2126,7 @@ public final class HttpTargetTools {
                 b.append(nodeSuf);
                 yield new HumanToolUsage(b.toString(), "");
             }
-            case SEARCH_HTTP_MESSAGE -> {
+            case SearchHttpMessageTool.NAME -> {
                 String head =
                         sideLabel.isEmpty()
                                 ? "Searching HTTP message"
@@ -2272,7 +2144,7 @@ public final class HttpTargetTools {
                 b.append(nodeSuf);
                 yield new HumanToolUsage(b.toString(), det);
             }
-            case REPLACE_IN_HTTP_REQUEST_BODY -> {
+            case ReplaceInHttpRequestBodyTool.NAME -> {
                 String oldT = argTextAny(args, "old_text", "oldText");
                 String newT = "";
                 JsonNode newNode = argFirst(args, "new_text", "newText");
@@ -2299,7 +2171,7 @@ public final class HttpTargetTools {
                 }
                 yield new HumanToolUsage("Replace text in request body" + nodeSuf, d.toString());
             }
-            case PATCH_HTTP_REQUEST_BODY_LINES -> {
+            case PatchHttpRequestBodyLinesTool.NAME -> {
                 int sl = jsonToInt(argFirst(args, "start_line", "startLine"));
                 int el = jsonToInt(argFirst(args, "end_line", "endLine"));
                 JsonNode contentNode = argFirst(args, "content");
@@ -2310,15 +2182,15 @@ public final class HttpTargetTools {
                                 + (preview.isEmpty() ? "" : " · new text: " + preview);
                 yield new HumanToolUsage("Patch request body line range" + nodeSuf, det);
             }
-            case SET_HTTP_REQUEST_BODY -> new HumanToolUsage("Setting full request body" + nodeSuf, "");
-            case APPLY_HTTP_REQUEST_SEMANTIC_CHANGES ->
+            case SetHttpRequestBodyTool.NAME -> new HumanToolUsage("Setting full request body" + nodeSuf, "");
+            case ApplyHttpRequestSemanticChangesTool.NAME ->
                     new HumanToolUsage(
                             "Apply semantic request changes" + nodeSuf, formatSemanticOperationsHumanDetail(args));
-            case SEND_CURRENT_HTTP_REQUEST ->
+            case SendCurrentHttpRequestTool.NAME ->
                     new HumanToolUsage(
                             "Send current HTTP request" + nodeSuf,
                             "Sends the in-editor request and waits for the response (status only)");
-            case SEARCH_TABS -> {
+            case SearchTabsTool.NAME -> {
                 int off = 0;
                 JsonNode offN = argFirst(args, "offset");
                 if (offN != null && offN.isNumber()) {
@@ -2333,7 +2205,7 @@ public final class HttpTargetTools {
                 String det = q.isEmpty() ? "all tabs" : quotedSnippet(q, 80);
                 yield new HumanToolUsage("Search repeater tabs · offset " + off + ", page " + ps, det);
             }
-            case COPY_TREEPEATER_NODE -> {
+            case CopyTreepeaterNodeTool.NAME -> {
                 JsonNode idN = argFirst(args, "request_node_id", "requestNodeId");
                 int srcId = idN != null && idN.isNumber() ? idN.intValue() : 0;
                 String newName = argTextAny(args, "name");
@@ -2350,7 +2222,7 @@ public final class HttpTargetTools {
                 }
                 yield new HumanToolUsage("Copy treepeater node · node id " + srcId, det.toString());
             }
-            case BATCH_HTTP_TARGET_TOOLS -> {
+            case BatchHttpTargetToolsTool.NAME -> {
                 JsonNode toolsNode = argFirst(args, "tools");
                 int steps =
                         toolsNode != null && toolsNode.isArray() ? toolsNode.size() : 0;

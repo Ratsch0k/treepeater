@@ -1,6 +1,6 @@
 package treepeater.api;
 
-import treepeater.api.tools.HttpTargetTools;
+import treepeater.api.tools.http.BatchHttpTargetToolsTool;
 import treepeater.ai.ToolActionLevel;
 import treepeater.settings.TreepeaterSettings;
 
@@ -25,12 +25,12 @@ public record ApiPolicy(boolean allowWrite, boolean allowExecute) {
     }
 
     /**
-     * Whether {@code toolName} may run. {@link HttpTargetTools#BATCH_HTTP_TARGET_TOOLS} is classified
-     * READ_ONLY because the chat gates each nested child individually, but an API caller's children are
-     * not re-prompted, so batch here requires every permission.
+     * Whether {@code toolName} may run. {@link BatchHttpTargetToolsTool} is classified READ_ONLY because the chat
+     * gates each nested child individually, but an API caller's children are not re-prompted, so batch here requires
+     * every permission.
      */
     public boolean allows(String toolName, ToolActionLevel level) {
-        if (HttpTargetTools.BATCH_HTTP_TARGET_TOOLS.equals(toolName)) {
+        if (BatchHttpTargetToolsTool.NAME.equals(toolName)) {
             return this.allowWrite && this.allowExecute;
         }
         if (level == null) {

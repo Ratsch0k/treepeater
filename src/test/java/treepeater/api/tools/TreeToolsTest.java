@@ -17,6 +17,17 @@ import treepeater.TreepeaterModel;
 import treepeater.api.ApiPolicy;
 import treepeater.api.TreepeaterService;
 import treepeater.api.TreepeaterToolRegistry;
+import treepeater.api.tools.core.ToolLabelContext;
+import treepeater.api.tools.status.ListStatusesTool;
+import treepeater.api.tools.tree.CreateFolderTool;
+import treepeater.api.tools.tree.DeleteNodeTool;
+import treepeater.api.tools.tree.GetNodeNotesTool;
+import treepeater.api.tools.tree.GetTreeNodeTool;
+import treepeater.api.tools.tree.ListTreeTool;
+import treepeater.api.tools.tree.MoveNodeTool;
+import treepeater.api.tools.tree.RenameNodeTool;
+import treepeater.api.tools.tree.SetNodeNotesTool;
+import treepeater.api.tools.tree.SetNodeStatusTool;
 import treepeater.importing.ImportOptions;
 import treepeater.importing.ImportOptions.DirectNameMode;
 import treepeater.importing.ImportOptions.DirectPlacement;
@@ -69,7 +80,7 @@ class TreeToolsTest extends ImportTestSupport {
         return this.model.importRequestManual(parent, rr(method, path), options);
     }
 
-    private static final String CREATE = TreeTools.CREATE_FOLDER;
+    private static final String CREATE = CreateFolderTool.NAME;
 
     // ------------------------------------------------------------------ folders
 
@@ -118,7 +129,7 @@ class TreeToolsTest extends ImportTestSupport {
     void renameNodeChangesTheDisplayName() throws Exception {
         int id = createFolder(0, "old");
 
-        JsonNode renamed = ok(TreeTools.RENAME_NODE, "{\"node_id\":" + id + ",\"name\":\"new\"}");
+        JsonNode renamed = ok(RenameNodeTool.NAME, "{\"node_id\":" + id + ",\"name\":\"new\"}");
 
         assertEquals("new", renamed.get("name").asText());
         assertNotNull(folder(root(this.model), "new"));
@@ -128,14 +139,14 @@ class TreeToolsTest extends ImportTestSupport {
     void renameNodeRequiresANonBlankName() throws Exception {
         int id = createFolder(0, "old");
 
-        assertTrue(error(TreeTools.RENAME_NODE, "{\"node_id\":" + id + "}").contains("name required"));
-        assertTrue(error(TreeTools.RENAME_NODE, "{\"node_id\":" + id + ",\"name\":\"  \"}")
+        assertTrue(error(RenameNodeTool.NAME, "{\"node_id\":" + id + "}").contains("name required"));
+        assertTrue(error(RenameNodeTool.NAME, "{\"node_id\":" + id + ",\"name\":\"  \"}")
                 .contains("name required"));
     }
 
     @Test
     void renameNodeRequiresANodeId() throws Exception {
-        assertTrue(error(TreeTools.RENAME_NODE, "{\"name\":\"x\"}").contains("node_id required"));
+        assertTrue(error(RenameNodeTool.NAME, "{\"name\":\"x\"}").contains("node_id required"));
     }
 
     // ----------------------------------------------------------------- statuses
@@ -146,7 +157,7 @@ class TreeToolsTest extends ImportTestSupport {
         String statusId = StatusRegistry.getDefault().getId();
 
         JsonNode updated =
-                ok(TreeTools.SET_NODE_STATUS, "{\"node_id\":" + id + ",\"status_id\":\"" + statusId + "\"}");
+                ok(SetNodeStatusTool.NAME, "{\"node_id\":" + id + ",\"status_id\":\"" + statusId + "\"}");
 
         assertEquals(statusId, updated.get("status_id").asText());
     }
@@ -156,10 +167,10 @@ class TreeToolsTest extends ImportTestSupport {
         int id = createFolder(0, "API");
 
         String message =
-                error(TreeTools.SET_NODE_STATUS, "{\"node_id\":" + id + ",\"status_id\":\"nope\"}");
+                error(SetNodeStatusTool.NAME, "{\"node_id\":" + id + ",\"status_id\":\"nope\"}");
 
         assertTrue(message.contains("unknown status"), message);
-        assertTrue(message.contains(StatusTools.LIST_STATUSES), message);
+        assertTrue(message.contains(ListStatusesTool.NAME), message);
     }
 
     // -------------------------------------------------------------------- notes
@@ -168,8 +179,8 @@ class TreeToolsTest extends ImportTestSupport {
     void notesRoundTripOnARequestNode() throws Exception {
         RequestTreeNode leaf = importLeaf(root(this.model), "GET", "/users");
 
-        ok(TreeTools.SET_NODE_NOTES, "{\"node_id\":" + leaf.getId() + ",\"notes\":\"check auth\"}");
-        JsonNode fetched = ok(TreeTools.GET_NODE_NOTES, "{\"node_id\":" + leaf.getId() + "}");
+        ok(SetNodeNotesTool.NAME, "{\"node_id\":" + leaf.getId() + ",\"notes\":\"check auth\"}");
+        JsonNode fetched = ok(GetNodeNotesTool.NAME, "{\"node_id\":" + leaf.getId() + "}");
 
         assertEquals("check auth", fetched.get("notes").asText());
         assertEquals("check auth", leaf.getNotes());
@@ -179,8 +190,8 @@ class TreeToolsTest extends ImportTestSupport {
     void notesOnAFolderAreRejected() throws Exception {
         int id = createFolder(0, "API");
 
-        assertTrue(error(TreeTools.GET_NODE_NOTES, "{\"node_id\":" + id + "}").contains("has no notes"));
-        assertTrue(error(TreeTools.SET_NODE_NOTES, "{\"node_id\":" + id + ",\"notes\":\"x\"}")
+        assertTrue(error(GetNodeNotesTool.NAME, "{\"node_id\":" + id + "}").contains("has no notes"));
+        assertTrue(error(SetNodeNotesTool.NAME, "{\"node_id\":" + id + ",\"notes\":\"x\"}")
                 .contains("has no notes"));
     }
 
@@ -193,7 +204,7 @@ class TreeToolsTest extends ImportTestSupport {
         RequestTreeNode leaf = importLeaf(folder(root(this.model), "src"), "GET", "/users");
 
         JsonNode moved =
-                ok(TreeTools.MOVE_NODE, "{\"node_id\":" + leaf.getId() + ",\"parent_id\":" + destination + "}");
+                ok(MoveNodeTool.NAME, "{\"node_id\":" + leaf.getId() + ",\"parent_id\":" + destination + "}");
 
         assertEquals(destination, moved.get("parent_id").asInt());
         assertEquals(0, folder(root(this.model), "src").getChildCount());
@@ -207,7 +218,7 @@ class TreeToolsTest extends ImportTestSupport {
         createFolder(destination, "first");
         int mover = createFolder(0, "mover");
 
-        ok(TreeTools.MOVE_NODE,
+        ok(MoveNodeTool.NAME,
                 "{\"node_id\":" + mover + ",\"parent_id\":" + destination + ",\"index\":0}");
 
         FolderTreeNode dst = folder(root(this.model), "dst");
@@ -220,7 +231,7 @@ class TreeToolsTest extends ImportTestSupport {
         int inner = createFolder(outer, "inner");
 
         String message =
-                error(TreeTools.MOVE_NODE, "{\"node_id\":" + outer + ",\"parent_id\":" + inner + "}");
+                error(MoveNodeTool.NAME, "{\"node_id\":" + outer + ",\"parent_id\":" + inner + "}");
 
         assertTrue(message.contains("its own subtree"), message);
         assertNotNull(folder(root(this.model), "outer"));
@@ -230,22 +241,22 @@ class TreeToolsTest extends ImportTestSupport {
     void moveNodeIntoItselfIsRejected() throws Exception {
         int id = createFolder(0, "solo");
 
-        assertTrue(error(TreeTools.MOVE_NODE, "{\"node_id\":" + id + ",\"parent_id\":" + id + "}")
+        assertTrue(error(MoveNodeTool.NAME, "{\"node_id\":" + id + ",\"parent_id\":" + id + "}")
                 .contains("itself"));
     }
 
     @Test
     void moveNodeRequiresBothIds() throws Exception {
-        assertTrue(error(TreeTools.MOVE_NODE, "{\"node_id\":1}").contains("parent_id required"));
+        assertTrue(error(MoveNodeTool.NAME, "{\"node_id\":1}").contains("parent_id required"));
     }
 
     @Test
     void theRootCannotBeMovedOrDeleted() throws Exception {
         int rootId = root(this.model).getId();
 
-        assertTrue(error(TreeTools.MOVE_NODE, "{\"node_id\":" + rootId + ",\"parent_id\":0}")
+        assertTrue(error(MoveNodeTool.NAME, "{\"node_id\":" + rootId + ",\"parent_id\":0}")
                 .contains("root cannot be moved"));
-        assertTrue(error(TreeTools.DELETE_NODE, "{\"node_id\":" + rootId + "}")
+        assertTrue(error(DeleteNodeTool.NAME, "{\"node_id\":" + rootId + "}")
                 .contains("root cannot be deleted"));
     }
 
@@ -257,7 +268,7 @@ class TreeToolsTest extends ImportTestSupport {
         createFolder(outer, "inner");
         importLeaf(folder(root(this.model), "outer"), "GET", "/users");
 
-        JsonNode deleted = ok(TreeTools.DELETE_NODE, "{\"node_id\":" + outer + "}");
+        JsonNode deleted = ok(DeleteNodeTool.NAME, "{\"node_id\":" + outer + "}");
 
         assertEquals(outer, deleted.get("deleted_id").asInt());
         assertEquals(3, deleted.get("removed_nodes").asInt());
@@ -271,7 +282,7 @@ class TreeToolsTest extends ImportTestSupport {
         int api = createFolder(0, "API");
         createFolder(api, "v1");
 
-        JsonNode listed = ok(TreeTools.LIST_TREE, "{}");
+        JsonNode listed = ok(ListTreeTool.NAME, "{}");
 
         assertEquals(3, listed.get("total_nodes").asInt());
         assertEquals(TreepeaterService.MAX_TREE_DEPTH, listed.get("max_depth").asInt());
@@ -288,7 +299,7 @@ class TreeToolsTest extends ImportTestSupport {
         int v1 = createFolder(api, "v1");
         createFolder(v1, "users");
 
-        JsonNode scoped = ok(TreeTools.LIST_TREE, "{\"node_id\":" + api + ",\"max_depth\":1}");
+        JsonNode scoped = ok(ListTreeTool.NAME, "{\"node_id\":" + api + ",\"max_depth\":1}");
 
         assertEquals(1, scoped.get("max_depth").asInt());
         JsonNode tree = scoped.get("tree");
@@ -297,7 +308,7 @@ class TreeToolsTest extends ImportTestSupport {
         assertEquals("v1", tree.get("children").get(0).get("name").asText());
         assertFalse(tree.get("children").get(0).has("children"));
 
-        JsonNode overLarge = ok(TreeTools.LIST_TREE, "{\"max_depth\":9999}");
+        JsonNode overLarge = ok(ListTreeTool.NAME, "{\"max_depth\":9999}");
         assertEquals(TreepeaterService.MAX_TREE_DEPTH, overLarge.get("max_depth").asInt());
     }
 
@@ -306,11 +317,11 @@ class TreeToolsTest extends ImportTestSupport {
         int api = createFolder(0, "API");
         importLeaf(folder(root(this.model), "API"), "GET", "/users");
 
-        JsonNode withRequests = ok(TreeTools.LIST_TREE, "{\"node_id\":" + api + "}");
+        JsonNode withRequests = ok(ListTreeTool.NAME, "{\"node_id\":" + api + "}");
         assertEquals(1, withRequests.get("tree").get("children").size());
 
         JsonNode withoutRequests =
-                ok(TreeTools.LIST_TREE, "{\"node_id\":" + api + ",\"include_requests\":false}");
+                ok(ListTreeTool.NAME, "{\"node_id\":" + api + ",\"include_requests\":false}");
         assertEquals(0, withoutRequests.get("tree").get("children").size());
         // The count is of the real subtree, so it still sees the leaf that was filtered from the output.
         assertEquals(2, withoutRequests.get("total_nodes").asInt());
@@ -320,7 +331,7 @@ class TreeToolsTest extends ImportTestSupport {
     void getTreeNodeDescribesARequestInDetail() throws Exception {
         RequestTreeNode leaf = importLeaf(root(this.model), "POST", "/users/1");
 
-        JsonNode node = ok(TreeTools.GET_TREE_NODE, "{\"node_id\":" + leaf.getId() + "}");
+        JsonNode node = ok(GetTreeNodeTool.NAME, "{\"node_id\":" + leaf.getId() + "}");
 
         assertEquals("request", node.get("type").asText());
         assertEquals("POST", node.get("method").asText());
@@ -332,19 +343,19 @@ class TreeToolsTest extends ImportTestSupport {
 
     @Test
     void anUnknownNodeIdIsReported() throws Exception {
-        assertTrue(error(TreeTools.GET_TREE_NODE, "{\"node_id\":987654}").contains("no node with id"));
+        assertTrue(error(GetTreeNodeTool.NAME, "{\"node_id\":987654}").contains("no node with id"));
     }
 
     @Test
     void malformedArgumentsAreReported() throws Exception {
-        assertTrue(error(TreeTools.LIST_TREE, "not json").contains("must be a JSON object"));
+        assertTrue(error(ListTreeTool.NAME, "not json").contains("must be a JSON object"));
     }
 
     // ------------------------------------------------------------------ policy
 
     @Test
     void readOnlyPolicyPermitsBrowsingButBlocksMutations() throws Exception {
-        String listed = this.registry.execute(TreeTools.LIST_TREE, "{}", ApiPolicy.readOnly());
+        String listed = this.registry.execute(ListTreeTool.NAME, "{}", ApiPolicy.readOnly());
         assertFalse(MAPPER.readTree(listed).has("error"));
 
         String denied = this.registry.execute(CREATE, "{\"name\":\"API\"}", ApiPolicy.readOnly());
@@ -369,21 +380,24 @@ class TreeToolsTest extends ImportTestSupport {
     @Test
     void humanToolUsage_renameNode_showsNewName() {
         HumanToolUsage usage =
-                TreeTools.humanToolUsage(
-                        TreeTools.RENAME_NODE, "{\"node_id\":5,\"name\":\"Renamed API\"}");
+                this.registry.humanLabelFor(
+                        RenameNodeTool.NAME, "{\"node_id\":5,\"name\":\"Renamed API\"}", ToolLabelContext.EMPTY);
         assertTrue(usage.title().contains("id 5"));
         assertTrue(usage.detail().contains("Renamed API"));
     }
 
     @Test
     void humanToolUsage_deleteNode_warnsAboutSubtree() {
-        HumanToolUsage usage = TreeTools.humanToolUsage(TreeTools.DELETE_NODE, "{\"node_id\":9}");
+        HumanToolUsage usage =
+                this.registry.humanLabelFor(DeleteNodeTool.NAME, "{\"node_id\":9}", ToolLabelContext.EMPTY);
         assertTrue(usage.title().contains("id 9"));
         assertTrue(usage.detail().contains("cannot be undone"));
     }
 
     @Test
-    void humanToolUsage_unknownTool_returnsNull() {
-        assertNull(TreeTools.humanToolUsage("get_current_http_target", "{}"));
+    void humanToolUsage_unknownTool_returnsDefault() {
+        HumanToolUsage usage =
+                this.registry.humanLabelFor("get_current_http_target", "{}", ToolLabelContext.EMPTY);
+        assertEquals("Working…", usage.title());
     }
 }

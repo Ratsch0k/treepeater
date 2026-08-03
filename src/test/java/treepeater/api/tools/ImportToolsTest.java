@@ -21,6 +21,10 @@ import treepeater.TreepeaterModel;
 import treepeater.api.ApiPolicy;
 import treepeater.api.TreepeaterService;
 import treepeater.api.TreepeaterToolRegistry;
+import treepeater.api.tools.core.ToolLabelContext;
+import treepeater.api.tools.importing.ImportHttpRequestIntoFolderTool;
+import treepeater.api.tools.importing.ImportHttpRequestPathAwareTool;
+import treepeater.api.tools.importing.ImportHttpRequestTool;
 import treepeater.settings.StatusRegistry;
 import treepeater.tree.FolderTreeNode;
 
@@ -80,7 +84,7 @@ class ImportToolsTest extends ImportTestSupport {
 
     @Test
     void directImportPlacesASingleLeafAtTheRoot() throws Exception {
-        JsonNode created = ok(ImportTools.IMPORT_HTTP_REQUEST, args("\"name_mode\":\"PATH\""));
+        JsonNode created = ok(ImportHttpRequestTool.NAME, args("\"name_mode\":\"PATH\""));
 
         assertEquals("request", created.get("type").asText());
         assertEquals("GET", created.get("method").asText());
@@ -93,7 +97,7 @@ class ImportToolsTest extends ImportTestSupport {
     @Test
     void directImportHonoursAManualName() throws Exception {
         JsonNode created =
-                ok(ImportTools.IMPORT_HTTP_REQUEST,
+                ok(ImportHttpRequestTool.NAME,
                         args("\"name_mode\":\"MANUAL\",\"manual_name\":\"Fetch user\""));
 
         assertEquals("Fetch user", created.get("name").asText());
@@ -101,14 +105,14 @@ class ImportToolsTest extends ImportTestSupport {
 
     @Test
     void manualNameModeRequiresAName() throws Exception {
-        String message = error(ImportTools.IMPORT_HTTP_REQUEST, args("\"name_mode\":\"MANUAL\""));
+        String message = error(ImportHttpRequestTool.NAME, args("\"name_mode\":\"MANUAL\""));
 
         assertTrue(message.contains("manual_name is required"), message);
     }
 
     @Test
     void anUnknownNameModeIsRejected() throws Exception {
-        String message = error(ImportTools.IMPORT_HTTP_REQUEST, args("\"name_mode\":\"SIDEWAYS\""));
+        String message = error(ImportHttpRequestTool.NAME, args("\"name_mode\":\"SIDEWAYS\""));
 
         assertTrue(message.contains("name_mode must be one of"), message);
     }
@@ -119,7 +123,7 @@ class ImportToolsTest extends ImportTestSupport {
         destination.setName("Saved");
 
         JsonNode created =
-                ok(ImportTools.IMPORT_HTTP_REQUEST, args("\"folder_id\":" + destination.getId()));
+                ok(ImportHttpRequestTool.NAME, args("\"folder_id\":" + destination.getId()));
 
         assertEquals(destination.getId(), created.get("parent_id").asInt());
         assertEquals(1, destination.getChildCount());
@@ -130,7 +134,7 @@ class ImportToolsTest extends ImportTestSupport {
     @Test
     void pathAwareImportBuildsFoldersFromTheUrlPath() throws Exception {
         JsonNode created =
-                ok(ImportTools.IMPORT_HTTP_REQUEST_PATH_AWARE,
+                ok(ImportHttpRequestPathAwareTool.NAME,
                         args("\"leaf_mode\":\"DIRECT\",\"normalize_dynamic_segments_enabled\":false"));
 
         assertTrue(created.has("folder_path"));
@@ -145,7 +149,7 @@ class ImportToolsTest extends ImportTestSupport {
 
     @Test
     void pathAwareImportCanNormalizeDynamicSegments() throws Exception {
-        ok(ImportTools.IMPORT_HTTP_REQUEST_PATH_AWARE,
+        ok(ImportHttpRequestPathAwareTool.NAME,
                 args("\"leaf_mode\":\"DIRECT\",\"normalize_dynamic_segments_enabled\":true"));
 
         FolderTreeNode users =
@@ -157,7 +161,7 @@ class ImportToolsTest extends ImportTestSupport {
 
     @Test
     void pathAwareImportCanNestTheLeafUnderAMethodFolder() throws Exception {
-        ok(ImportTools.IMPORT_HTTP_REQUEST_PATH_AWARE,
+        ok(ImportHttpRequestPathAwareTool.NAME,
                 args("\"leaf_mode\":\"METHOD_FOLDER\",\"base_leaf_name\":\"base\","
                         + "\"normalize_dynamic_segments_enabled\":false"));
 
@@ -173,13 +177,13 @@ class ImportToolsTest extends ImportTestSupport {
     @Test
     void pathAwareImportReusesFoldersAcrossCalls() throws Exception {
         String options = "\"leaf_mode\":\"DIRECT\",\"normalize_dynamic_segments_enabled\":false";
-        ok(ImportTools.IMPORT_HTTP_REQUEST_PATH_AWARE, args(options));
+        ok(ImportHttpRequestPathAwareTool.NAME, args(options));
 
         String second =
                 "{\"base_url\":\"https://api.example.com\",\"request_utf8\":"
                         + quote("GET /api/v1/orders HTTP/1.1\nHost: api.example.com\n\n")
                         + "," + options + "}";
-        ok(ImportTools.IMPORT_HTTP_REQUEST_PATH_AWARE, second);
+        ok(ImportHttpRequestPathAwareTool.NAME, second);
 
         FolderTreeNode v1 = folder(folder(root(this.model), "api"), "v1");
         assertNotNull(v1);
@@ -191,7 +195,7 @@ class ImportToolsTest extends ImportTestSupport {
     @Test
     void anUnknownLeafModeIsRejected() throws Exception {
         String message =
-                error(ImportTools.IMPORT_HTTP_REQUEST_PATH_AWARE, args("\"leaf_mode\":\"CHAOS\""));
+                error(ImportHttpRequestPathAwareTool.NAME, args("\"leaf_mode\":\"CHAOS\""));
 
         assertTrue(message.contains("leaf_mode must be DIRECT or METHOD_FOLDER"), message);
     }
@@ -200,7 +204,7 @@ class ImportToolsTest extends ImportTestSupport {
 
     @Test
     void importIntoFolderRequiresAFolderId() throws Exception {
-        assertTrue(error(ImportTools.IMPORT_HTTP_REQUEST_INTO_FOLDER, args(""))
+        assertTrue(error(ImportHttpRequestIntoFolderTool.NAME, args(""))
                 .contains("folder_id required"));
     }
 
@@ -210,7 +214,7 @@ class ImportToolsTest extends ImportTestSupport {
         destination.setName("Saved");
 
         JsonNode created =
-                ok(ImportTools.IMPORT_HTTP_REQUEST_INTO_FOLDER,
+                ok(ImportHttpRequestIntoFolderTool.NAME,
                         args("\"folder_id\":" + destination.getId()));
 
         assertEquals(destination.getId(), created.get("parent_id").asInt());
@@ -223,7 +227,7 @@ class ImportToolsTest extends ImportTestSupport {
         FolderTreeNode destination = this.model.createFolder(root(this.model));
         destination.setName("Saved");
 
-        ok(ImportTools.IMPORT_HTTP_REQUEST_INTO_FOLDER,
+        ok(ImportHttpRequestIntoFolderTool.NAME,
                 args("\"folder_id\":" + destination.getId()
                         + ",\"placement\":\"path_aware\",\"leaf_mode\":\"DIRECT\","
                         + "\"normalize_dynamic_segments_enabled\":false"));
@@ -233,10 +237,10 @@ class ImportToolsTest extends ImportTestSupport {
 
     @Test
     void importIntoAFolderIdThatIsARequestIsRejected() throws Exception {
-        JsonNode leaf = ok(ImportTools.IMPORT_HTTP_REQUEST, args(""));
+        JsonNode leaf = ok(ImportHttpRequestTool.NAME, args(""));
 
         String message =
-                error(ImportTools.IMPORT_HTTP_REQUEST_INTO_FOLDER,
+                error(ImportHttpRequestIntoFolderTool.NAME,
                         args("\"folder_id\":" + leaf.get("id").asInt()));
 
         assertTrue(message.contains("not a folder"), message);
@@ -250,7 +254,7 @@ class ImportToolsTest extends ImportTestSupport {
                 "{\"host\":\"api.example.com\",\"port\":8443,\"secure\":true,\"request_utf8\":"
                         + quote(GET_USERS) + "}";
 
-        JsonNode created = ok(ImportTools.IMPORT_HTTP_REQUEST, body);
+        JsonNode created = ok(ImportHttpRequestTool.NAME, body);
 
         assertEquals("https://api.example.com:8443/api/v1/users/42", created.get("url").asText());
     }
@@ -261,7 +265,7 @@ class ImportToolsTest extends ImportTestSupport {
         String body =
                 "{\"base_url\":\"https://api.example.com\",\"request_base64\":\"" + encoded + "\"}";
 
-        JsonNode created = ok(ImportTools.IMPORT_HTTP_REQUEST, body);
+        JsonNode created = ok(ImportHttpRequestTool.NAME, body);
 
         assertEquals("GET", created.get("method").asText());
         assertEquals("https://api.example.com/api/v1/users/42", created.get("url").asText());
@@ -270,7 +274,7 @@ class ImportToolsTest extends ImportTestSupport {
     @Test
     void aResponseCanBeStoredAlongsideTheRequest() throws Exception {
         JsonNode created =
-                ok(ImportTools.IMPORT_HTTP_REQUEST,
+                ok(ImportHttpRequestTool.NAME,
                         args("\"response_utf8\":" + quote("HTTP/1.1 200 OK\nContent-Length: 0\n\n")));
 
         assertTrue(created.get("has_response").asBoolean());
@@ -278,7 +282,7 @@ class ImportToolsTest extends ImportTestSupport {
 
     @Test
     void aRequestWithoutAResponseIsMarkedAsSuch() throws Exception {
-        JsonNode created = ok(ImportTools.IMPORT_HTTP_REQUEST, args(""));
+        JsonNode created = ok(ImportHttpRequestTool.NAME, args(""));
 
         assertFalse(created.get("has_response").asBoolean());
     }
@@ -290,7 +294,7 @@ class ImportToolsTest extends ImportTestSupport {
                         + ",\"request_base64\":\"" + Base64.getEncoder().encodeToString("x".getBytes())
                         + "\"}";
 
-        assertTrue(error(ImportTools.IMPORT_HTTP_REQUEST, body).contains("not both"));
+        assertTrue(error(ImportHttpRequestTool.NAME, body).contains("not both"));
     }
 
     @Test
@@ -298,13 +302,13 @@ class ImportToolsTest extends ImportTestSupport {
         String body =
                 "{\"base_url\":\"https://api.example.com\",\"request_base64\":\"not base64 !!\"}";
 
-        assertTrue(error(ImportTools.IMPORT_HTTP_REQUEST, body).contains("invalid request_base64"));
+        assertTrue(error(ImportHttpRequestTool.NAME, body).contains("invalid request_base64"));
     }
 
     @Test
     void aMissingRequestBodyIsRejected() throws Exception {
         String message =
-                error(ImportTools.IMPORT_HTTP_REQUEST, "{\"base_url\":\"https://api.example.com\"}");
+                error(ImportHttpRequestTool.NAME, "{\"base_url\":\"https://api.example.com\"}");
 
         assertTrue(message.contains("request_utf8"), message);
     }
@@ -312,7 +316,7 @@ class ImportToolsTest extends ImportTestSupport {
     @Test
     void aMissingTargetIsRejected() throws Exception {
         String message =
-                error(ImportTools.IMPORT_HTTP_REQUEST, "{\"request_utf8\":" + quote(GET_USERS) + "}");
+                error(ImportHttpRequestTool.NAME, "{\"request_utf8\":" + quote(GET_USERS) + "}");
 
         assertTrue(message.contains("provide base_url"), message);
     }
@@ -322,7 +326,7 @@ class ImportToolsTest extends ImportTestSupport {
         String body =
                 "{\"base_url\":\"ftp://api.example.com\",\"request_utf8\":" + quote(GET_USERS) + "}";
 
-        assertTrue(error(ImportTools.IMPORT_HTTP_REQUEST, body).contains("http:// or https://"));
+        assertTrue(error(ImportHttpRequestTool.NAME, body).contains("http:// or https://"));
     }
 
     @Test
@@ -330,14 +334,14 @@ class ImportToolsTest extends ImportTestSupport {
         String body =
                 "{\"host\":\"api.example.com\",\"port\":70000,\"request_utf8\":" + quote(GET_USERS) + "}";
 
-        assertTrue(error(ImportTools.IMPORT_HTTP_REQUEST, body).contains("port must be between"));
+        assertTrue(error(ImportHttpRequestTool.NAME, body).contains("port must be between"));
     }
 
     // -------------------------------------------------------------- status ids
 
     @Test
     void animportedRequestTakesTheDefaultStatusWhenNoneIsGiven() throws Exception {
-        JsonNode created = ok(ImportTools.IMPORT_HTTP_REQUEST, args(""));
+        JsonNode created = ok(ImportHttpRequestTool.NAME, args(""));
 
         assertEquals(StatusRegistry.getDefault().getId(), created.get("status_id").asText());
     }
@@ -347,7 +351,7 @@ class ImportToolsTest extends ImportTestSupport {
         String statusId = StatusRegistry.getDefault().getId();
 
         JsonNode created =
-                ok(ImportTools.IMPORT_HTTP_REQUEST, args("\"status_id\":\"" + statusId + "\""));
+                ok(ImportHttpRequestTool.NAME, args("\"status_id\":\"" + statusId + "\""));
 
         assertEquals(statusId, created.get("status_id").asText());
     }
@@ -357,7 +361,7 @@ class ImportToolsTest extends ImportTestSupport {
     @Test
     void importingIsBlockedWithoutWritePermission() throws Exception {
         String denied =
-                this.registry.execute(ImportTools.IMPORT_HTTP_REQUEST, args(""), ApiPolicy.readOnly());
+                this.registry.execute(ImportHttpRequestTool.NAME, args(""), ApiPolicy.readOnly());
 
         assertTrue(MAPPER.readTree(denied).get("error").asText().contains("not permitted"));
         assertEquals(0, root(this.model).getChildCount());
@@ -366,9 +370,10 @@ class ImportToolsTest extends ImportTestSupport {
     @Test
     void humanToolUsage_directImport_showsTargetUrl() {
         HumanToolUsage usage =
-                ImportTools.humanToolUsage(
-                        ImportTools.IMPORT_HTTP_REQUEST,
-                        "{\"base_url\":\"https://api.example.com/users\"}");
+                this.registry.humanLabelFor(
+                        ImportHttpRequestTool.NAME,
+                        "{\"base_url\":\"https://api.example.com/users\"}",
+                        ToolLabelContext.EMPTY);
         assertEquals("Import HTTP request (direct)", usage.title());
         assertTrue(usage.detail().contains("api.example.com"));
     }
@@ -376,9 +381,10 @@ class ImportToolsTest extends ImportTestSupport {
     @Test
     void humanToolUsage_intoFolder_showsFolderAndPlacement() {
         HumanToolUsage usage =
-                ImportTools.humanToolUsage(
-                        ImportTools.IMPORT_HTTP_REQUEST_INTO_FOLDER,
-                        "{\"folder_id\":3,\"placement\":\"path_aware\",\"host\":\"example.com\"}");
+                this.registry.humanLabelFor(
+                        ImportHttpRequestIntoFolderTool.NAME,
+                        "{\"folder_id\":3,\"placement\":\"path_aware\",\"host\":\"example.com\"}",
+                        ToolLabelContext.EMPTY);
         assertEquals("Import HTTP request into folder", usage.title());
         assertTrue(usage.detail().contains("folder id 3"));
         assertTrue(usage.detail().contains("path_aware"));

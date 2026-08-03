@@ -30,7 +30,7 @@ import treepeater.ai.AgentModeToolPolicy;
 import treepeater.ai.AgentTabMention;
 import treepeater.ai.AgentToolContext;
 import treepeater.ai.ChatTooling;
-import treepeater.ai.RepeaterTabAgentBridge;
+import treepeater.ai.TreepeaterTabAgentBridge;
 import treepeater.ai.StreamingChatClient;
 import treepeater.ai.model.LlmModelDefinition;
 import treepeater.ai.model.LlmModelOptionValues;
@@ -50,10 +50,10 @@ public class AIToolbarTab implements AIChatHost {
     private int nextChatTabIndex = 1;
 
     private final TreepeaterModel model;
-    private final RepeaterTabAgentBridge agentBridge;
+    private final TreepeaterTabAgentBridge agentBridge;
     private boolean blockTabPersist;
 
-    public AIToolbarTab(TreepeaterModel model, RepeaterTabAgentBridge agentBridge) {
+    public AIToolbarTab(TreepeaterModel model, TreepeaterTabAgentBridge agentBridge) {
         this.model = model;
         this.button = new ToolbarIconButton(new WandIcon());
         this.content = new JPanel(new BorderLayout());
@@ -117,8 +117,9 @@ public class AIToolbarTab implements AIChatHost {
                     AgentToolContext c = this.agentBridge.contextForAgent(OptionalInt.empty());
                     return c != null ? c.currentHistoryIndex() : Integer.MIN_VALUE;
                 },
-                new AgentModeToolPolicy(m),
-                this.agentBridge);
+                new AgentModeToolPolicy(m, registry),
+                this.agentBridge,
+                registry);
     }
 
     @Override

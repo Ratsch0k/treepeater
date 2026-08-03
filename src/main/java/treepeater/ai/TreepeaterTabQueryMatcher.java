@@ -4,9 +4,9 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Filter for {@link treepeater.api.tools.HttpTargetTools#SEARCH_TABS}: OR of live URL/method rules and tab title substring match.
+ * Filter for {@link treepeater.api.tools.http.SearchTabsTool}: OR of live URL/method rules and tab title substring match.
  */
-public final class RepeaterTabQueryMatcher {
+public final class TreepeaterTabQueryMatcher {
 
     private static final Set<String> KNOWN_METHODS =
             Set.of(
@@ -27,7 +27,7 @@ public final class RepeaterTabQueryMatcher {
                     "LOCK",
                     "UNLOCK");
 
-    private RepeaterTabQueryMatcher() {}
+    private TreepeaterTabQueryMatcher() {}
 
     /**
      * @param queryRaw non-null trimmed filter

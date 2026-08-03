@@ -7,49 +7,71 @@ import java.util.Map;
 
 import treepeater.ai.ChatToolDefinition;
 import treepeater.ai.ChatToolInvokeContext;
-import treepeater.ai.RepeaterTabAgentBridge;
-import treepeater.api.tools.HttpTargetTools;
-import treepeater.api.tools.ImportTools;
-import treepeater.api.tools.StatusTools;
-import treepeater.api.tools.TreeTools;
+import treepeater.ai.NestedToolInvoker;
+import treepeater.ai.TreepeaterTabAgentBridge;
+import treepeater.ai.ToolActionLevel;
+import treepeater.api.tools.core.ToolInvocation;
+import treepeater.api.tools.core.ToolLabelContext;
+import treepeater.api.tools.core.ToolRuntime;
+import treepeater.api.tools.core.TreepeaterToolAdapter;
+import treepeater.api.tools.core.TreepeaterToolSpec;
+import treepeater.api.tools.http.HttpTargetToolModule;
+import treepeater.api.tools.importing.ImportToolModule;
+import treepeater.api.tools.status.StatusToolModule;
+import treepeater.api.tools.tree.TreeToolModule;
+import treepeater.api.tools.HumanToolUsage;
 
 /**
  * Single source of truth for callable Treepeater operations, consumed by the AI chat panel, the REST API,
- * and the MCP endpoint. All tool groups live under {@code treepeater.api.tools}.
+ * and the MCP endpoint.
  */
 public final class TreepeaterToolRegistry {
 
     private final Map<String, TreepeaterTool> tools = new LinkedHashMap<>();
-    private final RepeaterTabAgentBridge bridge;
+    private final Map<String, TreepeaterToolSpec> specs = new LinkedHashMap<>();
+    private final ToolRuntime runtime;
+    private final TreepeaterTabAgentBridge bridge;
 
-    private TreepeaterToolRegistry(RepeaterTabAgentBridge bridge) {
+    private TreepeaterToolRegistry(TreepeaterTabAgentBridge bridge, TreepeaterService service) {
         this.bridge = bridge;
+        this.runtime = new ToolRuntime(service, bridge, this);
     }
 
     /**
      * @param bridge resolves the UI-selected or a specific repeater tab for the built-in editor tools;
      *     when {@code null} those tools are omitted and only the headless tool groups are exposed
      */
-    public static TreepeaterToolRegistry create(TreepeaterService service, RepeaterTabAgentBridge bridge) {
-        TreepeaterToolRegistry registry = new TreepeaterToolRegistry(bridge);
+    public static TreepeaterToolRegistry create(TreepeaterService service, TreepeaterTabAgentBridge bridge) {
+        TreepeaterToolRegistry registry = new TreepeaterToolRegistry(bridge, service);
         if (bridge != null) {
-            HttpTargetTools.register(registry, bridge);
+            new HttpTargetToolModule().register(registry, registry.runtime);
         }
-        TreeTools.register(registry, service);
-        StatusTools.register(registry, service);
-        ImportTools.register(registry, service);
+        new TreeToolModule().register(registry, registry.runtime);
+        new StatusToolModule().register(registry, registry.runtime);
+        new ImportToolModule().register(registry, registry.runtime);
         return registry;
     }
 
     /** Registry with only editor tools; used before the full registry is initialized. */
-    public static TreepeaterToolRegistry createEditorOnly(RepeaterTabAgentBridge bridge) {
-        TreepeaterToolRegistry registry = new TreepeaterToolRegistry(bridge);
-        HttpTargetTools.register(registry, bridge);
+    public static TreepeaterToolRegistry createEditorOnly(TreepeaterTabAgentBridge bridge) {
+        TreepeaterToolRegistry registry = new TreepeaterToolRegistry(bridge, null);
+        new HttpTargetToolModule().register(registry, registry.runtime);
         return registry;
     }
 
-    /** Adds a tool, rejecting duplicate names so a typo cannot silently shadow an existing tool. */
-    public void add(TreepeaterTool tool) {
+    /** Adds a tool spec, rejecting duplicate names. */
+    public void addSpec(TreepeaterToolSpec spec, ToolRuntime runtime) {
+        if (spec == null) {
+            return;
+        }
+        if (this.specs.putIfAbsent(spec.name(), spec) != null) {
+            throw new IllegalStateException("duplicate tool name: " + spec.name());
+        }
+        add(TreepeaterToolAdapter.toRecord(spec, runtime));
+    }
+
+    /** Adds a wire-level tool record derived from a spec. */
+    private void add(TreepeaterTool tool) {
         if (tool == null) {
             return;
         }
@@ -66,6 +88,15 @@ public final class TreepeaterToolRegistry {
         return name != null ? this.tools.get(name) : null;
     }
 
+    public TreepeaterToolSpec findSpec(String name) {
+        return name != null ? this.specs.get(name) : null;
+    }
+
+    public ToolActionLevel actionLevelFor(String name) {
+        TreepeaterToolSpec spec = findSpec(name);
+        return spec != null ? spec.actionLevel() : null;
+    }
+
     /** Declarations for the AI chat clients. */
     public List<ChatToolDefinition> chatToolDefinitions() {
         List<ChatToolDefinition> out = new ArrayList<>(this.tools.size());
@@ -75,17 +106,9 @@ public final class TreepeaterToolRegistry {
         return out;
     }
 
-    /**
-     * Chat dispatch. Built-in tools go through {@link HttpTargetTools#execute(ChatToolInvokeContext,
-     * RepeaterTabAgentBridge)} so {@link HttpTargetTools#BATCH_HTTP_TARGET_TOOLS} can still run its
-     * children through the per-tool approval flow.
-     */
+    /** Chat dispatch with nested-tool support for batch operations. */
     public String executeForChat(ChatToolInvokeContext context) {
-        String name = context.toolName();
-        if (this.bridge != null && HttpTargetTools.toolActionLevel(name) != null) {
-            return HttpTargetTools.execute(context, this.bridge);
-        }
-        return invoke(name, context.argumentsJson());
+        return invokeSpec(context.toolName(), context.argumentsJson(), context.invokeChildWithApproval());
     }
 
     /** External dispatch with policy gating; used by both the REST and MCP fronts. */
@@ -98,16 +121,32 @@ public final class TreepeaterToolRegistry {
         if (!effective.allows(name, tool.actionLevel())) {
             return ApiPolicy.deniedResult(name);
         }
-        return invoke(name, argumentsJson);
+        return invokeSpec(name, argumentsJson, null);
     }
 
-    private String invoke(String name, String argumentsJson) {
-        TreepeaterTool tool = find(name);
-        if (tool == null) {
+    /** Human-readable label for chat approval cards. */
+    public HumanToolUsage humanLabelFor(String toolName, String argumentsJson, ToolLabelContext labelCtx) {
+        TreepeaterToolSpec spec = findSpec(toolName);
+        if (spec == null) {
+            return new HumanToolUsage("Working…", "");
+        }
+        ToolInvocation inv =
+                TreepeaterToolAdapter.buildInvocation(spec, argumentsJson, this.runtime, null);
+        return spec.humanLabel(inv, labelCtx);
+    }
+
+    private String invokeSpec(String name, String argumentsJson, NestedToolInvoker nested) {
+        TreepeaterToolSpec spec = findSpec(name);
+        if (spec == null) {
             return Json.error("unknown tool: " + name);
         }
         try {
-            String result = tool.handler().invoke(argumentsJson);
+            ToolInvocation inv =
+                    TreepeaterToolAdapter.buildInvocation(spec, argumentsJson, this.runtime, nested);
+            if (inv.args() == null) {
+                return Json.error("arguments must be a JSON object");
+            }
+            String result = spec.invoke(inv);
             return result != null ? result : Json.error("tool returned no result");
         } catch (Exception e) {
             String message = e.getMessage();

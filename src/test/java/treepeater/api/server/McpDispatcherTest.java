@@ -17,8 +17,8 @@ import treepeater.TreepeaterModel;
 import treepeater.api.TreepeaterService;
 import treepeater.api.TreepeaterToolRegistry;
 import treepeater.api.server.McpDispatcher.Revision;
-import treepeater.api.tools.StatusTools;
-import treepeater.api.tools.TreeTools;
+import treepeater.api.tools.tree.ListTreeTool;
+import treepeater.api.tools.status.ListStatusesTool;
 
 /** Wire-level behaviour of the MCP endpoint for both the handshake and stateless spec revisions. */
 class McpDispatcherTest extends ImportTestSupport {
@@ -81,7 +81,7 @@ class McpDispatcherTest extends ImportTestSupport {
         assertTrue(tools.size() >= 2, "expected the headless tool groups");
         boolean sawListTree = false;
         for (JsonNode tool : tools) {
-            if (TreeTools.LIST_TREE.equals(tool.get("name").asText())) {
+            if (ListTreeTool.NAME.equals(tool.get("name").asText())) {
                 sawListTree = true;
                 // The schema must travel as a real object, not a string, or clients cannot validate calls.
                 assertTrue(tool.get("inputSchema").isObject());
@@ -105,7 +105,7 @@ class McpDispatcherTest extends ImportTestSupport {
     @Test
     void toolsCallWrapsTheToolResultAsTextContent() throws Exception {
         String body =
-                request("tools/call", "{\"name\":\"" + StatusTools.LIST_STATUSES + "\",\"arguments\":{}}");
+                request("tools/call", "{\"name\":\"" + ListStatusesTool.NAME + "\",\"arguments\":{}}");
 
         JsonNode result = call(body, Revision.STATELESS).get("result");
 
@@ -120,7 +120,7 @@ class McpDispatcherTest extends ImportTestSupport {
 
     @Test
     void toolsCallOmittingArgumentsIsTreatedAsAnEmptyObject() throws Exception {
-        String body = request("tools/call", "{\"name\":\"" + StatusTools.LIST_STATUSES + "\"}");
+        String body = request("tools/call", "{\"name\":\"" + ListStatusesTool.NAME + "\"}");
 
         JsonNode result = call(body, Revision.STATELESS).get("result");
 
@@ -169,19 +169,19 @@ class McpDispatcherTest extends ImportTestSupport {
 
     @Test
     void headerAndBodyToolNameMismatchIsRejected() throws Exception {
-        String body = request("tools/call", "{\"name\":\"" + StatusTools.LIST_STATUSES + "\"}");
+        String body = request("tools/call", "{\"name\":\"" + ListStatusesTool.NAME + "\"}");
 
-        String response = this.dispatcher.handle(body, Revision.STATELESS, "tools/call", TreeTools.LIST_TREE);
+        String response = this.dispatcher.handle(body, Revision.STATELESS, "tools/call", ListTreeTool.NAME);
 
         assertEquals(-32020, MAPPER.readTree(response).get("error").get("code").asInt());
     }
 
     @Test
     void matchingHeadersAreAccepted() throws Exception {
-        String body = request("tools/call", "{\"name\":\"" + StatusTools.LIST_STATUSES + "\"}");
+        String body = request("tools/call", "{\"name\":\"" + ListStatusesTool.NAME + "\"}");
 
         String response =
-                this.dispatcher.handle(body, Revision.STATELESS, "tools/call", StatusTools.LIST_STATUSES);
+                this.dispatcher.handle(body, Revision.STATELESS, "tools/call", ListStatusesTool.NAME);
 
         assertFalse(MAPPER.readTree(response).has("error"));
     }

@@ -25,8 +25,9 @@ import treepeater.MontoyaFactoryStub;
 import treepeater.TreepeaterModel;
 import treepeater.api.TreepeaterService;
 import treepeater.api.TreepeaterToolRegistry;
-import treepeater.api.tools.ImportTools;
-import treepeater.api.tools.TreeTools;
+import treepeater.api.tools.importing.ImportHttpRequestTool;
+import treepeater.api.tools.tree.CreateFolderTool;
+import treepeater.api.tools.tree.RenameNodeTool;
 
 /** End-to-end checks over a real loopback socket: routing, authentication and origin handling. */
 class TreepeaterHttpServerTest extends ImportTestSupport {
@@ -228,7 +229,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
 
         boolean sawCreateFolder = false;
         for (JsonNode tool : tools) {
-            if (TreeTools.CREATE_FOLDER.equals(tool.get("name").asText())) {
+            if (CreateFolderTool.NAME.equals(tool.get("name").asText())) {
                 sawCreateFolder = true;
                 assertEquals("WRITE", tool.get("action_level").asText());
                 assertTrue(tool.get("input_schema").isObject());
@@ -249,7 +250,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
     @Test
     void aFailingToolCallAnswersWith400() throws Exception {
         HttpResponse<String> response =
-                post("/api/v1/tools/" + TreeTools.RENAME_NODE, "{\"node_id\":987654,\"name\":\"x\"}");
+                post("/api/v1/tools/" + RenameNodeTool.NAME, "{\"node_id\":987654,\"name\":\"x\"}");
 
         assertEquals(400, response.statusCode());
         assertTrue(json(response).get("error").asText().contains("no node with id"));
@@ -354,7 +355,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
                         + "\\\"GET /orders HTTP/1.1\\\\nHost: api.example.com\\\\n\\\\n\\\"}";
         String body =
                 "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\""
-                        + ImportTools.IMPORT_HTTP_REQUEST
+                        + ImportHttpRequestTool.NAME
                         + "\",\"arguments\":" + arguments.replace("\\\"", "\"") + "}}";
 
         HttpResponse<String> response = post("/mcp", body);

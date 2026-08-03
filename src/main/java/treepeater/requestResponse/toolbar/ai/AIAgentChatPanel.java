@@ -109,10 +109,11 @@ import treepeater.ai.ChatStreamSession;
 import treepeater.ai.ChatToolCall;
 import treepeater.ai.ChatTooling;
 import treepeater.ai.AgentTabMention;
-import treepeater.ai.RepeaterTabQueryMatcher;
+import treepeater.ai.TreepeaterTabQueryMatcher;
 import treepeater.ai.AgentToolContext;
 import treepeater.ai.CoalescingChatStreamOutbound;
-import treepeater.api.tools.HttpTargetTools;
+import treepeater.api.tools.http.support.HttpTargetSupport;
+import treepeater.api.tools.http.support.RequestPreview;
 import treepeater.api.tools.HumanToolUsage;
 import treepeater.api.tools.ToolHumanUsage;
 import treepeater.ai.LineDiffer;
@@ -975,7 +976,7 @@ public final class AIAgentChatPanel extends JPanel {
         int hist = tooling.currentHistoryIndexForToolStatus();
         int uiNode =
                 tooling.agentBridge() != null
-                        ? HttpTargetTools.uiSelectedRequestNodeIdForToolCard(tooling.agentBridge())
+                        ? HttpTargetSupport.uiSelectedRequestNodeIdForToolCard(tooling.agentBridge())
                         : Integer.MIN_VALUE;
         HumanToolUsage label = ToolHumanUsage.forTool(tc.name(), tc.argumentsJson(), hist, uiNode);
         ChatStreamMessage.ToolApprovalRequest req =
@@ -1306,7 +1307,7 @@ public final class AIAgentChatPanel extends JPanel {
 
     private static boolean atPopupMentionMatches(AgentTabMention m, String qRaw) {
         String path = m.pathLabel() != null ? m.pathLabel() : "";
-        if (RepeaterTabQueryMatcher.matches(qRaw, "", "", path)) {
+        if (TreepeaterTabQueryMatcher.matches(qRaw, "", "", path)) {
             return true;
         }
         if (qRaw == null) {
@@ -2117,7 +2118,7 @@ public final class AIAgentChatPanel extends JPanel {
                 HttpRequest beforeR = beforeBox[0];
                 if (beforeR != null) {
                     HttpRequest afterR =
-                            HttpTargetTools.tryPreviewRequestMutation(
+                            RequestPreview.tryPreviewRequestMutation(
                                     req.toolName(), req.argumentsJson(), beforeR);
                     if (afterR != null) {
                         String wBefore = Utilities.decodeWireBytesToDisplayString(beforeR.toByteArray());

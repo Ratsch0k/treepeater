@@ -27,9 +27,9 @@ import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 
 import treepeater.ai.AgentToolContext;
-import treepeater.api.tools.HttpTargetTools;
-import treepeater.ai.RepeaterTabAgentBridge;
-import treepeater.ai.RepeaterTabQueryMatcher;
+import treepeater.api.tools.http.support.TabListingFormatter;
+import treepeater.ai.TreepeaterTabAgentBridge;
+import treepeater.ai.TreepeaterTabQueryMatcher;
 import treepeater.ai.SearchTabRow;
 import treepeater.icons.CreateNewFolderIcon;
 import treepeater.icons.DoubleArrowLeftIcon;
@@ -48,7 +48,7 @@ import treepeater.requestResponse.toolbar.ToolbarIconButton;
 import treepeater.workspace.EditorWorkspacePanel;
 import treepeater.workspace.TabGroupNode;
 
-public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarListener, RepeaterTabAgentBridge {
+public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarListener, TreepeaterTabAgentBridge {
     private static final Dimension MIN_LEFT_PANEL_SIZE = new Dimension(240, 0);
 
     private static final int TREE_PANEL_TOOLBAR_ICON_SIZE = 20;
@@ -265,7 +265,7 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return HttpTargetTools.formatSearchTabsResponse(0, Math.max(0, offset), pageSize, false, List.of());
+            return TabListingFormatter.formatSearchTabsResponse(0, Math.max(0, offset), pageSize, false, List.of());
         } catch (InvocationTargetException e) {
             return "{\"error\":\"search_tabs failed\"}";
         }
@@ -322,7 +322,7 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         this.model.getTree().setSelectionPath(path);
         this.model.getTree().scrollPathToVisible(path);
         copy.select();
-        return HttpTargetTools.formatCopyTreepeaterNodeResponse(copy.getId(), trimmedName);
+        return TabListingFormatter.formatCopyTreepeaterNodeResponse(copy.getId(), trimmedName);
     }
 
     private RequestResponsePanel findPanelForNode(RequestTreeNode node) {
@@ -356,7 +356,7 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
                 }
             }
             String title = node.getName() != null ? node.getName() : "";
-            if (!filter || RepeaterTabQueryMatcher.matches(qRaw, method, url, title)) {
+            if (!filter || TreepeaterTabQueryMatcher.matches(qRaw, method, url, title)) {
                 boolean isSel = p != null && p == selected;
                 matched.add(buildSearchTabRow(node.getId(), title, isSel, method, url));
             }
@@ -372,11 +372,11 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         int end = Math.min(off + pageSize, total);
         List<SearchTabRow> page = matched.subList(off, end);
         boolean hasMore = end < total;
-        return HttpTargetTools.formatSearchTabsResponse(total, off, pageSize, hasMore, page);
+        return TabListingFormatter.formatSearchTabsResponse(total, off, pageSize, hasMore, page);
     }
 
     private static SearchTabRow buildSearchTabRow(int id, String title, boolean selected, String method, String url) {
-        int max = HttpTargetTools.MAX_TAB_LIST_URL_CHARS;
+        int max = TabListingFormatter.MAX_TAB_LIST_URL_CHARS;
         String urlSafe = url != null ? url : "";
         boolean trunc = urlSafe.length() > max;
         String u = trunc ? urlSafe.substring(0, max) : urlSafe;

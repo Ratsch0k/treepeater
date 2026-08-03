@@ -8,7 +8,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
-import treepeater.api.tools.HttpTargetTools;
+import treepeater.api.tools.core.ToolResults;
 
 /**
  * Runs a round of model-requested {@link ChatToolCall tool calls}. When every call in the batch is
@@ -26,7 +26,7 @@ public final class ParallelToolExecution {
     /**
      * @return tool results, one per input call, in the same order as {@code calls}. On session
      *     close / thread interrupt the returned list is padded with
-     *     {@link HttpTargetTools#permissionDeniedResult()} for any not-yet-started calls.
+     *     {@link ToolResults#permissionDenied()} for any not-yet-started calls.
      */
     public static List<String> executeRound(
             List<ChatToolCall> calls, ChatTooling tooling, ChatStreamSession session) throws Exception {
@@ -51,7 +51,7 @@ public final class ParallelToolExecution {
         if (n == 1 || anyApproval) {
             for (int i = 0; i < n; i++) {
                 if (session.isClosed() || Thread.currentThread().isInterrupted()) {
-                    out.set(i, HttpTargetTools.permissionDeniedResult());
+                    out.set(i, ToolResults.permissionDenied());
                     continue;
                 }
                 out.set(i, tooling.executeWithApproval(calls.get(i), session));
@@ -85,12 +85,12 @@ public final class ParallelToolExecution {
                     throw ee;
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
-                    out.set(i, HttpTargetTools.permissionDeniedResult());
+                    out.set(i, ToolResults.permissionDenied());
                     for (int j = i; j < n; j++) {
                         futures.get(j).cancel(true);
                     }
                     for (int j = i + 1; j < n; j++) {
-                        out.set(j, HttpTargetTools.permissionDeniedResult());
+                        out.set(j, ToolResults.permissionDenied());
                     }
                     return out;
                 }

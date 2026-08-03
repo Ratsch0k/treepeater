@@ -10,7 +10,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
  * JSON helpers shared by the external API: result building, lenient argument coercion, and the
- * {@code {"error":...}} envelope that {@link treepeater.api.tools.HttpTargetTools} already uses so both
+ * {@code {"error":...}} envelope that tools return so both
  * tool families report failures the same way.
  */
 public final class Json {

@@ -1,43 +1,36 @@
 package treepeater.api.tools;
 
-/**
- * Resolves human-readable tool labels for chat transcript cards by delegating to each tool group.
- */
+import treepeater.api.TreepeaterToolRegistry;
+import treepeater.api.tools.core.ToolLabelContext;
+
+/** Resolves human-readable tool labels for chat transcript cards via the tool registry. */
 public final class ToolHumanUsage {
 
     private ToolHumanUsage() {}
 
     public static HumanToolUsage forTool(String toolName, String argumentsJson, int viewerHistoryIndex) {
-        return forTool(toolName, argumentsJson, viewerHistoryIndex, Integer.MIN_VALUE);
+        return forTool(toolName, argumentsJson, viewerHistoryIndex, Integer.MIN_VALUE, null);
     }
 
-    /**
-     * @param uiSelectedRequestNodeId {@link treepeater.ai.RepeaterTabAgentBridge#uiSelectedRequestNodeIdForToolCard()};
-     *     only used by editor tools. {@link Integer#MIN_VALUE} skips suffix unless {@code request_node_id} is set.
-     */
     public static HumanToolUsage forTool(
             String toolName, String argumentsJson, int viewerHistoryIndex, int uiSelectedRequestNodeId) {
-        HumanToolUsage usage =
-                HttpTargetTools.humanToolUsage(toolName, argumentsJson, viewerHistoryIndex, uiSelectedRequestNodeId);
-        if (usage != null) {
-            return usage;
-        }
-        usage = TreeTools.humanToolUsage(toolName, argumentsJson);
-        if (usage != null) {
-            return usage;
-        }
-        usage = ImportTools.humanToolUsage(toolName, argumentsJson);
-        if (usage != null) {
-            return usage;
-        }
-        usage = StatusTools.humanToolUsage(toolName, argumentsJson);
-        if (usage != null) {
-            return usage;
+        return forTool(toolName, argumentsJson, viewerHistoryIndex, uiSelectedRequestNodeId, null);
+    }
+
+    public static HumanToolUsage forTool(
+            String toolName,
+            String argumentsJson,
+            int viewerHistoryIndex,
+            int uiSelectedRequestNodeId,
+            TreepeaterToolRegistry registry) {
+        ToolLabelContext labelCtx = new ToolLabelContext(viewerHistoryIndex, uiSelectedRequestNodeId);
+        if (registry != null) {
+            return registry.humanLabelFor(toolName, argumentsJson, labelCtx);
         }
         return new HumanToolUsage("Working…", "");
     }
 
-    static String quotedSnippet(String s, int maxTotal) {
+    public static String quotedSnippet(String s, int maxTotal) {
         if (s == null) {
             s = "";
         }

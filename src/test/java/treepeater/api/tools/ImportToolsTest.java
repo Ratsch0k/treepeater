@@ -27,6 +27,7 @@ import treepeater.api.tools.importing.ImportHttpRequestPathAwareTool;
 import treepeater.api.tools.importing.ImportHttpRequestTool;
 import treepeater.settings.StatusRegistry;
 import treepeater.tree.FolderTreeNode;
+import treepeater.tree.RequestTreeNode;
 
 /** Importing caller-supplied requests through the direct, path-aware and explicit-folder tools. */
 class ImportToolsTest extends ImportTestSupport {
@@ -101,6 +102,9 @@ class ImportToolsTest extends ImportTestSupport {
                         args("\"name_mode\":\"MANUAL\",\"manual_name\":\"Fetch user\""));
 
         assertEquals("Fetch user", created.get("name").asText());
+        RequestTreeNode leaf = (RequestTreeNode) nodeById(this.model, created.get("id").asInt());
+        assertEquals("Fetch user", leaf.getName());
+        assertEquals("GET", leaf.getRequest().method());
     }
 
     @Test
@@ -127,6 +131,7 @@ class ImportToolsTest extends ImportTestSupport {
 
         assertEquals(destination.getId(), created.get("parent_id").asInt());
         assertEquals(1, destination.getChildCount());
+        assertEquals(destination, nodeById(this.model, created.get("id").asInt()).getParent());
     }
 
     // --------------------------------------------------------------- path aware
@@ -144,7 +149,10 @@ class ImportToolsTest extends ImportTestSupport {
         assertNotNull(v1, "expected a 'v1' folder");
         FolderTreeNode users = folder(v1, "users");
         assertNotNull(users, "expected a 'users' folder");
-        assertNotNull(leaf(users, "42"));
+        RequestTreeNode leaf = leaf(users, "42");
+        assertNotNull(leaf);
+        assertEquals("GET", leaf.getRequest().method());
+        assertEquals("/api/v1/users/42", leaf.getRequest().path());
     }
 
     @Test
@@ -220,6 +228,7 @@ class ImportToolsTest extends ImportTestSupport {
         assertEquals(destination.getId(), created.get("parent_id").asInt());
         assertEquals(1, destination.getChildCount());
         assertNull(folder(destination, "api"), "direct placement must not build path folders");
+        assertEquals("GET", ((RequestTreeNode) destination.getChildAt(0)).getRequest().method());
     }
 
     @Test
@@ -257,6 +266,8 @@ class ImportToolsTest extends ImportTestSupport {
         JsonNode created = ok(ImportHttpRequestTool.NAME, body);
 
         assertEquals("https://api.example.com:8443/api/v1/users/42", created.get("url").asText());
+        RequestTreeNode leaf = (RequestTreeNode) nodeById(this.model, created.get("id").asInt());
+        assertEquals("https://api.example.com:8443/api/v1/users/42", leaf.getRequest().url());
     }
 
     @Test
@@ -269,6 +280,9 @@ class ImportToolsTest extends ImportTestSupport {
 
         assertEquals("GET", created.get("method").asText());
         assertEquals("https://api.example.com/api/v1/users/42", created.get("url").asText());
+        RequestTreeNode leaf = (RequestTreeNode) nodeById(this.model, created.get("id").asInt());
+        assertEquals("GET", leaf.getRequest().method());
+        assertEquals("/api/v1/users/42", leaf.getRequest().path());
     }
 
     @Test
@@ -278,6 +292,8 @@ class ImportToolsTest extends ImportTestSupport {
                         args("\"response_utf8\":" + quote("HTTP/1.1 200 OK\nContent-Length: 0\n\n")));
 
         assertTrue(created.get("has_response").asBoolean());
+        RequestTreeNode leaf = (RequestTreeNode) nodeById(this.model, created.get("id").asInt());
+        assertNotNull(leaf.getResponse());
     }
 
     @Test
@@ -285,6 +301,8 @@ class ImportToolsTest extends ImportTestSupport {
         JsonNode created = ok(ImportHttpRequestTool.NAME, args(""));
 
         assertFalse(created.get("has_response").asBoolean());
+        RequestTreeNode leaf = (RequestTreeNode) nodeById(this.model, created.get("id").asInt());
+        assertNull(leaf.getResponse());
     }
 
     @Test
@@ -344,6 +362,8 @@ class ImportToolsTest extends ImportTestSupport {
         JsonNode created = ok(ImportHttpRequestTool.NAME, args(""));
 
         assertEquals(StatusRegistry.getDefault().getId(), created.get("status_id").asText());
+        RequestTreeNode leaf = (RequestTreeNode) nodeById(this.model, created.get("id").asInt());
+        assertEquals(StatusRegistry.getDefault().getId(), leaf.getStatus().getId());
     }
 
     @Test
@@ -354,6 +374,8 @@ class ImportToolsTest extends ImportTestSupport {
                 ok(ImportHttpRequestTool.NAME, args("\"status_id\":\"" + statusId + "\""));
 
         assertEquals(statusId, created.get("status_id").asText());
+        RequestTreeNode leaf = (RequestTreeNode) nodeById(this.model, created.get("id").asInt());
+        assertEquals(statusId, leaf.getStatus().getId());
     }
 
     // ------------------------------------------------------------------ policy

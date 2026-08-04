@@ -229,6 +229,15 @@ class HttpTargetSupportTest {
         return JSON.readTree(json);
     }
 
+    private static byte[] bodyBytes(HttpRequest request) {
+        ByteArray ba = request.body();
+        return ba != null && ba.getBytes() != null ? ba.getBytes() : new byte[0];
+    }
+
+    private static String bodyUtf8(HttpRequest request) {
+        return new String(bodyBytes(request), StandardCharsets.UTF_8);
+    }
+
     private static TreepeaterToolRegistry editorRegistry(AgentToolContext ctx) {
         return TreepeaterToolRegistry.createEditorOnly(TreepeaterTabAgentBridge.singleTab(ctx));
     }
@@ -693,32 +702,37 @@ class HttpTargetSupportTest {
                 result.get("bytes_after").asInt());
         assertEquals(1, result.get("replacements").asInt());
         assertNotNull(applied.get(), "applyLiveRequest should have been called");
+        assertEquals("goodbye world", bodyUtf8(applied.get()));
     }
 
     @Test
     void replaceInHttpRequestBody_oldTextNotFound_returnsError() throws Exception {
         byte[] body = "hello world".getBytes(StandardCharsets.UTF_8);
+        AtomicReference<HttpRequest> applied = new AtomicReference<>();
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), body);
-        AgentToolContext ctx = singleEntryCtx(request, null);
+        AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
 
         JsonNode result = parse(HttpTargetSupport.execute(ReplaceInHttpRequestBodyTool.NAME,
                 "{\"old_text\":\"notpresent\",\"new_text\":\"x\"}", ctx));
 
         assertTrue(result.has("error"));
         assertTrue(result.get("error").asText().contains("not found"));
+        assertNull(applied.get(), "request must not be committed when replacement fails");
     }
 
     @Test
     void replaceInHttpRequestBody_notUnique_returnsError() throws Exception {
         byte[] body = "aa bb aa".getBytes(StandardCharsets.UTF_8);
+        AtomicReference<HttpRequest> applied = new AtomicReference<>();
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), body);
-        AgentToolContext ctx = singleEntryCtx(request, null);
+        AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
 
         JsonNode result = parse(HttpTargetSupport.execute(ReplaceInHttpRequestBodyTool.NAME,
                 "{\"old_text\":\"aa\",\"new_text\":\"cc\"}", ctx));
 
         assertTrue(result.has("error"));
         assertTrue(result.get("error").asText().contains("not unique"));
+        assertNull(applied.get(), "request must not be committed when replacement is ambiguous");
     }
 
     @Test
@@ -734,6 +748,7 @@ class HttpTargetSupportTest {
         assertTrue(result.get("ok").asBoolean());
         assertEquals(3, result.get("replacements").asInt());
         assertNotNull(applied.get());
+        assertEquals("zz bb zz cc zz", bodyUtf8(applied.get()));
     }
 
     @Test
@@ -775,6 +790,7 @@ class HttpTargetSupportTest {
         assertTrue(result.get("ok").asBoolean());
         assertEquals(1, result.get("replacements").asInt());
         assertTrue(result.get("bytes_after").asInt() < result.get("bytes_before").asInt());
+        assertEquals("remove  text", bodyUtf8(applied.get()));
     }
 
     // ===== patch_http_request_body_lines =====
@@ -794,6 +810,7 @@ class HttpTargetSupportTest {
         assertEquals(1, result.get("lines_replaced_span").asInt());
         assertEquals(1, result.get("lines_patched_in").asInt());
         assertNotNull(applied.get());
+        assertEquals("line1\nreplaced line\nline3", bodyUtf8(applied.get()));
     }
 
     @Test
@@ -809,6 +826,8 @@ class HttpTargetSupportTest {
         assertTrue(result.get("ok").asBoolean());
         assertEquals(2, result.get("lines_replaced_span").asInt());
         assertEquals(3, result.get("lines_patched_in").asInt());
+        assertNotNull(applied.get());
+        assertEquals("a\nx\ny\nz\nd", bodyUtf8(applied.get()));
     }
 
     @Test
@@ -852,6 +871,7 @@ class HttpTargetSupportTest {
         assertEquals(8, result.get("bytes_before").asInt());
         assertEquals(8, result.get("bytes_after").asInt());
         assertNotNull(applied.get());
+        assertEquals("new body", bodyUtf8(applied.get()));
     }
 
     @Test
@@ -870,6 +890,7 @@ class HttpTargetSupportTest {
         assertEquals(0, result.get("bytes_before").asInt());
         assertEquals(5, result.get("bytes_after").asInt());
         assertNotNull(applied.get());
+        assertArrayEquals(newBody, bodyBytes(applied.get()));
     }
 
     @Test
@@ -884,6 +905,8 @@ class HttpTargetSupportTest {
 
         assertTrue(result.get("ok").asBoolean());
         assertTrue(result.get("bytes_after").asInt() > 0);
+        assertNotNull(applied.get());
+        assertEquals("{\"key\":\"value\"}", bodyUtf8(applied.get()));
     }
 
     @Test
@@ -1096,6 +1119,8 @@ class HttpTargetSupportTest {
         assertEquals(3, result.get("operations_applied").asInt());
         assertNotNull(applied.get());
         verify(request).withHeader("X-Test", "1");
+        assertTrue(bodyUtf8(applied.get()).contains("\"a\":null"), bodyUtf8(applied.get()));
+        assertTrue(bodyUtf8(applied.get()).contains("\"b\":2"), bodyUtf8(applied.get()));
     }
 
     @Test
@@ -1111,6 +1136,7 @@ class HttpTargetSupportTest {
         assertFalse(result.has("error"), "unexpected error: " + raw2);
         assertTrue(result.get("ok").asBoolean());
         assertNotNull(applied.get());
+        assertEquals("{\"b\":2}", bodyUtf8(applied.get()));
     }
 
     @Test
@@ -1195,7 +1221,12 @@ class HttpTargetSupportTest {
     @Test
     void sendCurrentHttpRequest_returnsStatusCode() throws Exception {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
-        Callable<Integer> sender = () -> 200;
+        AtomicReference<HttpRequest> sent = new AtomicReference<>();
+        Callable<Integer> sender =
+                () -> {
+                    sent.set(request);
+                    return 200;
+                };
         AgentToolContext ctx = new AgentToolContext(defaultTarget(), 42, 0,
                 List.of(new AgentToolContext.HistoryEntryInfo(0, "now", "GET x.com")),
                 idx -> request, idx -> null, req -> {}, sender);
@@ -1204,6 +1235,7 @@ class HttpTargetSupportTest {
 
         assertEquals(200, result.get("status_code").asInt());
         assertFalse(result.has("error"));
+        assertNotNull(sent.get(), "sender must actually run the live request");
     }
 
     @Test

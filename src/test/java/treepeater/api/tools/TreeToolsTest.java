@@ -34,6 +34,7 @@ import treepeater.importing.ImportOptions.DirectPlacement;
 import treepeater.settings.StatusRegistry;
 import treepeater.tree.FolderTreeNode;
 import treepeater.tree.RequestTreeNode;
+import treepeater.tree.TreepeaterNode;
 
 /** Behaviour of the tree browsing and restructuring tools as reached through the registry. */
 class TreeToolsTest extends ImportTestSupport {
@@ -93,6 +94,10 @@ class TreeToolsTest extends ImportTestSupport {
         assertEquals("API", created.get("path").asText());
         assertEquals(root(this.model).getId(), created.get("parent_id").asInt());
         assertNotNull(folder(root(this.model), "API"));
+        TreepeaterNode folder = nodeById(this.model, created.get("id").asInt());
+        assertNotNull(folder);
+        assertEquals("API", folder.getName());
+        assertEquals(root(this.model), folder.getParent());
     }
 
     @Test
@@ -103,6 +108,9 @@ class TreeToolsTest extends ImportTestSupport {
 
         assertEquals("API/v1", child.get("path").asText());
         assertEquals(parent, child.get("parent_id").asInt());
+        TreepeaterNode v1 = nodeById(this.model, child.get("id").asInt());
+        assertNotNull(v1);
+        assertEquals(nodeById(this.model, parent), v1.getParent());
     }
 
     @Test
@@ -132,7 +140,9 @@ class TreeToolsTest extends ImportTestSupport {
         JsonNode renamed = ok(RenameNodeTool.NAME, "{\"node_id\":" + id + ",\"name\":\"new\"}");
 
         assertEquals("new", renamed.get("name").asText());
+        assertNull(folder(root(this.model), "old"));
         assertNotNull(folder(root(this.model), "new"));
+        assertEquals("new", nodeById(this.model, id).getName());
     }
 
     @Test
@@ -160,6 +170,7 @@ class TreeToolsTest extends ImportTestSupport {
                 ok(SetNodeStatusTool.NAME, "{\"node_id\":" + id + ",\"status_id\":\"" + statusId + "\"}");
 
         assertEquals(statusId, updated.get("status_id").asText());
+        assertEquals(statusId, nodeById(this.model, id).getStatus().getId());
     }
 
     @Test
@@ -209,6 +220,7 @@ class TreeToolsTest extends ImportTestSupport {
         assertEquals(destination, moved.get("parent_id").asInt());
         assertEquals(0, folder(root(this.model), "src").getChildCount());
         assertEquals(1, folder(root(this.model), "dst").getChildCount());
+        assertEquals(folder(root(this.model), "dst"), leaf.getParent());
         assertTrue(source != destination);
     }
 
@@ -235,6 +247,7 @@ class TreeToolsTest extends ImportTestSupport {
 
         assertTrue(message.contains("its own subtree"), message);
         assertNotNull(folder(root(this.model), "outer"));
+        assertEquals(outer, ((TreepeaterNode) nodeById(this.model, inner).getParent()).getId());
     }
 
     @Test
@@ -273,6 +286,7 @@ class TreeToolsTest extends ImportTestSupport {
         assertEquals(outer, deleted.get("deleted_id").asInt());
         assertEquals(3, deleted.get("removed_nodes").asInt());
         assertNull(folder(root(this.model), "outer"));
+        assertNull(nodeById(this.model, outer));
     }
 
     // ----------------------------------------------------------------- browsing
@@ -339,6 +353,11 @@ class TreeToolsTest extends ImportTestSupport {
         assertTrue(node.has("notes"));
         assertTrue(node.has("history_size"));
         assertTrue(node.get("has_response").asBoolean());
+        assertEquals("POST", leaf.getRequest().method());
+        assertEquals("/users/1", leaf.getRequest().pathWithoutQuery());
+        assertEquals(leaf.getNotes(), node.get("notes").asText());
+        assertEquals(leaf.getHistory().size(), node.get("history_size").asInt());
+        assertNotNull(leaf.getResponse());
     }
 
     @Test

@@ -137,4 +137,22 @@ public abstract class ImportTestSupport {
         }
         return null;
     }
+
+    /** Walks the tree to find a node by its stable id (for post-tool model assertions). */
+    protected static TreepeaterNode nodeById(TreepeaterModel model, int id) {
+        return findNodeById(root(model), id);
+    }
+
+    private static TreepeaterNode findNodeById(TreepeaterNode from, int id) {
+        if (from.getId() == id) {
+            return from;
+        }
+        for (int i = 0; i < from.getChildCount(); i++) {
+            TreepeaterNode found = findNodeById((TreepeaterNode) from.getChildAt(i), id);
+            if (found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
 }

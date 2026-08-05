@@ -47,6 +47,12 @@ public class TreepeaterSettings {
     /** How "Send to Treepeater (direct)" names imported request nodes ({@link DirectNameMode#name()}). */
     public static final String DIRECT_IMPORT_NAME_MODE_SETTING = "TREEPEATER_DIRECT_IMPORT_NAME_MODE";
 
+    /**
+     * Status id applied to newly imported request leaves (Send to Treepeater / import).
+     * Defaults to {@code DEFAULT}. Not used when copying an existing node.
+     */
+    public static final String IMPORT_DEFAULT_STATUS_ID_SETTING = "TREEPEATER_IMPORT_DEFAULT_STATUS_ID";
+
     /** Bulk-path import leaf placement mode: {@link #IMPORT_LEAF_MODE_DIRECT} or {@link #IMPORT_LEAF_MODE_METHOD_FOLDER}. */
     public static final String IMPORT_LEAF_MODE_SETTING = "TREEPEATER_IMPORT_LEAF_MODE";
     /** Leaf sits directly under its path folder, named after the last path segment. */
@@ -136,6 +142,7 @@ public class TreepeaterSettings {
         STRING_PREFERENCE_DEFAULTS.put(TAB_NEXT_HOTKEY_SETTING, "Ctrl+Alt+Right");
         STRING_PREFERENCE_DEFAULTS.put(FOCUS_TREE_HOTKEY_SETTING, "Ctrl+Alt+T");
         STRING_PREFERENCE_DEFAULTS.put(DIRECT_IMPORT_NAME_MODE_SETTING, DirectNameMode.ID.name());
+        STRING_PREFERENCE_DEFAULTS.put(IMPORT_DEFAULT_STATUS_ID_SETTING, "DEFAULT");
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_LEAF_MODE_SETTING, IMPORT_LEAF_MODE_DIRECT);
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_METHOD_BASE_LEAF_NAME_SETTING, "base");
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_GROUPING_FOLDER_RECONCILIATION_ENABLED_SETTING, "true");
@@ -304,6 +311,24 @@ public class TreepeaterSettings {
         }
         this.preferences.setString(DIRECT_IMPORT_NAME_MODE_SETTING, normalized.name());
         this.notifyListeners(DIRECT_IMPORT_NAME_MODE_SETTING, normalized);
+    }
+
+    /**
+     * Status id used for newly imported request leaves. Defaults to {@code DEFAULT}.
+     * Resolution against the live registry is left to callers (e.g. {@code ImportOptions.resolveStatus()}).
+     */
+    public String getImportDefaultStatusId() {
+        String value = this.getStringWithDefault(IMPORT_DEFAULT_STATUS_ID_SETTING);
+        if (value == null || value.isBlank()) {
+            return "DEFAULT";
+        }
+        return value;
+    }
+
+    public void setImportDefaultStatusId(String statusId) {
+        String normalized = (statusId == null || statusId.isBlank()) ? "DEFAULT" : statusId;
+        this.preferences.setString(IMPORT_DEFAULT_STATUS_ID_SETTING, normalized);
+        this.notifyListeners(IMPORT_DEFAULT_STATUS_ID_SETTING, normalized);
     }
 
     /**

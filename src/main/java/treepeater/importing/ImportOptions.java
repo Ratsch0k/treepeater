@@ -44,7 +44,7 @@ public record ImportOptions(String statusId, Placement placement) {
     public static ImportOptions fromSettings() {
         TreepeaterSettings settings = TreepeaterSettings.getInstance();
         return new ImportOptions(
-                StatusRegistry.getDefault().getId(),
+                settings.getImportDefaultStatusId(),
                 new PathAwarePlacement(
                         settings.getImportLeafMode(),
                         settings.getImportBaseLeafName(),

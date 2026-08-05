@@ -274,8 +274,14 @@ public class TreepeaterModel implements TreepeaterNodeListener {
                 ? String.valueOf(this.requestCount)
                 : resolveDirectLeafName(request, nameMode, "");
 
+        Status status = ImportOptions.fromSettings().resolveStatus();
         RequestTreeNode node = new RequestTreeNode(
-                this.requestCount, leafName, request, requestResponse.response());
+                this.requestCount,
+                status,
+                leafName,
+                request,
+                requestResponse.response(),
+                new RequestHistory());
 
         node.addListener(this);
 

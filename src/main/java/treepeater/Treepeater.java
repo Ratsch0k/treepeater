@@ -9,6 +9,7 @@ import burp.api.montoya.ui.contextmenu.ContextMenuItemsProvider;
 import burp.api.montoya.ui.contextmenu.MessageEditorHttpRequestResponse;
 import burp.api.montoya.ui.hotkey.HotKey;
 import burp.api.montoya.ui.hotkey.HotKeyHandler;
+import treepeater.importing.ManualImport;
 import treepeater.persistence.TreepeaterPersistence;
 import treepeater.requestResponse.Status;
 import treepeater.settings.StatusRegistry;
@@ -20,6 +21,7 @@ import javax.swing.event.TreeModelEvent;
 import javax.swing.event.TreeModelListener;
 import javax.swing.tree.DefaultMutableTreeNode;
 import java.awt.*;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -32,6 +34,8 @@ public class Treepeater implements BurpExtension {
     DefaultMutableTreeNode root;
 
     private Registration sendHotKeyRegistration;
+    private Registration sendSortedHotKeyRegistration;
+    private Registration sendManualHotKeyRegistration;
     private javax.swing.Timer autoSaveTimer;
 
     @Override
@@ -89,13 +93,25 @@ public class Treepeater implements BurpExtension {
         montoyaApi.userInterface().registerContextMenuItemsProvider(new ContextMenuItemsProvider() {
             @Override
             public List<Component> provideMenuItems(ContextMenuEvent event) {
-                JMenuItem item = new JMenuItem("Send to Treepeater");
+                JMenuItem item = new JMenuItem("Send to Treepeater (direct)");
 
-                item.addActionListener(l -> sendSelectionToTreepeater(montoyaApi, model,
+                item.addActionListener(l -> sendSelectionToTreepeater(model,
                         event.messageEditorRequestResponse(),
                         event.selectedRequestResponses()));
 
-                return List.of(item);
+                JMenuItem sortedItem = new JMenuItem("Send to Treepeater (path-aware)");
+
+                sortedItem.addActionListener(l -> sendSelectionToTreepeaterPathAware(model,
+                        event.messageEditorRequestResponse(),
+                        event.selectedRequestResponses()));
+
+                JMenuItem manualItem = new JMenuItem("Send to Treepeater (manual)");
+
+                manualItem.addActionListener(l -> sendSelectionToTreepeaterManual(model, ui,
+                        event.messageEditorRequestResponse(),
+                        event.selectedRequestResponses()));
+
+                return List.of(item, sortedItem, manualItem);
             }
         });
 
@@ -103,17 +119,41 @@ public class Treepeater implements BurpExtension {
 
         HotKey sendHotKey = HotKey.hotKey("Send to Treepeater", settings.getSendHotkey());
         HotKeyHandler sendHotKeyHandler = event -> {
-            sendSelectionToTreepeater(montoyaApi, model,
+            sendSelectionToTreepeater(model,
                 event.messageEditorRequestResponse(),
                 event.selectedRequestResponses());
         };
         this.sendHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(sendHotKey, sendHotKeyHandler);
+
+        HotKey sendSortedHotKey = HotKey.hotKey("Send to Treepeater (path-aware)", settings.getSendPathAwareHotkey());
+        HotKeyHandler sendSortedHotKeyHandler = event -> {
+            sendSelectionToTreepeaterPathAware(model,
+                event.messageEditorRequestResponse(),
+                event.selectedRequestResponses());
+        };
+        this.sendSortedHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(sendSortedHotKey, sendSortedHotKeyHandler);
+
+        HotKey sendManualHotKey = HotKey.hotKey("Send to Treepeater (manual)", settings.getSendManualHotkey());
+        HotKeyHandler sendManualHotKeyHandler = event -> {
+            sendSelectionToTreepeaterManual(model, ui,
+                event.messageEditorRequestResponse(),
+                event.selectedRequestResponses());
+        };
+        this.sendManualHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(sendManualHotKey, sendManualHotKeyHandler);
 
         settings.addListener((key, value) -> {
             if (key.equals(TreepeaterSettings.SEND_HOTKEY_SETTING)) {
                 this.sendHotKeyRegistration.deregister();
                 HotKey newHotkey = HotKey.hotKey("Send to Treepeater", (String) value);
                 this.sendHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(newHotkey, sendHotKeyHandler);
+            } else if (key.equals(TreepeaterSettings.SEND_PATH_AWARE_HOTKEY_SETTING)) {
+                this.sendSortedHotKeyRegistration.deregister();
+                HotKey newHotkey = HotKey.hotKey("Send to Treepeater (path-aware)", (String) value);
+                this.sendSortedHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(newHotkey, sendSortedHotKeyHandler);
+            } else if (key.equals(TreepeaterSettings.SEND_MANUAL_HOTKEY_SETTING)) {
+                this.sendManualHotKeyRegistration.deregister();
+                HotKey newHotkey = HotKey.hotKey("Send to Treepeater (manual)", (String) value);
+                this.sendManualHotKeyRegistration = montoyaApi.userInterface().registerHotKeyHandler(newHotkey, sendManualHotKeyHandler);
             }
         });
 
@@ -143,18 +183,47 @@ public class Treepeater implements BurpExtension {
         Treepeater.dirty = true;
     }
 
+    private static List<HttpRequestResponse> collectSelection(
+            Optional<MessageEditorHttpRequestResponse> messageEditorRequestResponse,
+            List<HttpRequestResponse> selectedRequestResponses) {
+        List<HttpRequestResponse> requests = new ArrayList<>();
+        messageEditorRequestResponse.ifPresent(e -> requests.add(e.requestResponse()));
+        requests.addAll(selectedRequestResponses);
+        return requests;
+    }
+
     private static void sendSelectionToTreepeater(
-            MontoyaApi api,
             TreepeaterModel model,
             Optional<MessageEditorHttpRequestResponse> messageEditorRequestResponse,
             List<HttpRequestResponse> selectedRequestResponses) {
         SwingUtilities.invokeLater(() -> {
-            api.logging().logToOutput("Sent to Treepeater");
-            messageEditorRequestResponse.ifPresent(e -> model.insertNode(e.requestResponse()));
-            for (HttpRequestResponse r : selectedRequestResponses) {
-                model.insertNode(r);
+            for (HttpRequestResponse request : collectSelection(
+                    messageEditorRequestResponse, selectedRequestResponses)) {
+                model.insertNode(request);
             }
         });
+    }
+
+    private static void sendSelectionToTreepeaterPathAware(
+            TreepeaterModel model,
+            Optional<MessageEditorHttpRequestResponse> messageEditorRequestResponse,
+            List<HttpRequestResponse> selectedRequestResponses) {
+        SwingUtilities.invokeLater(() -> {
+            for (HttpRequestResponse request : collectSelection(
+                    messageEditorRequestResponse, selectedRequestResponses)) {
+                model.importRequestPathAware(request);
+            }
+        });
+    }
+
+    private static void sendSelectionToTreepeaterManual(
+            TreepeaterModel model,
+            Component dialogParent,
+            Optional<MessageEditorHttpRequestResponse> messageEditorRequestResponse,
+            List<HttpRequestResponse> selectedRequestResponses) {
+        SwingUtilities.invokeLater(() ->
+                ManualImport.run(dialogParent, model, collectSelection(
+                        messageEditorRequestResponse, selectedRequestResponses)));
     }
 
     class CustomTreeModelListener implements TreeModelListener {

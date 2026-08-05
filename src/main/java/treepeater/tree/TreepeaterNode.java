@@ -48,8 +48,14 @@ public abstract class TreepeaterNode extends DefaultMutableTreeNode {
 
     public void setName(String name) {
         this.name = name;
+        super.setUserObject(name);
         this.listener.forEach(l -> l.onNameChange(name));
         Treepeater.saveState();
+    }
+
+    @Override
+    public String toString() {
+        return this.name;
     }
 
     public void select() {

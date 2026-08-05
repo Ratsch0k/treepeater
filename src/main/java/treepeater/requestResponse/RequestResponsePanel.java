@@ -485,6 +485,16 @@ public class RequestResponsePanel extends JPanel {
         return this.responseEditor != null ? this.responseEditor.getResponse() : null;
     }
 
+    /** Request editor backing this tab (used by the Inspector to read/apply the current selection). */
+    public HttpRequestEditor getRequestEditor() {
+        return this.requestEditor;
+    }
+
+    /** Response editor backing this tab (used by the Inspector to read the current selection). */
+    public HttpResponseEditor getResponseEditor() {
+        return this.responseEditor;
+    }
+
     /** Repeater tree node id for this tab (AI tools / labels). */
     public int getRequestNodeId() {
         return this.node.getId();

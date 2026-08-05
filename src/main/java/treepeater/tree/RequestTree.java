@@ -56,7 +56,11 @@ public class RequestTree extends JTree {
     }
 
     public RequestTree() {
-        this.setDragEnabled(true);
+        // setDragEnabled(true) throws HeadlessException without a display; drag-and-drop is
+        // meaningless headless (e.g. under unit tests), so only enable it when a display exists.
+        if (!java.awt.GraphicsEnvironment.isHeadless()) {
+            this.setDragEnabled(true);
+        }
         this.setDropMode(DropMode.ON_OR_INSERT);
         this.getSelectionModel().setSelectionMode(
                 TreeSelectionModel.SINGLE_TREE_SELECTION);

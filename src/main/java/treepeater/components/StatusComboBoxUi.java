@@ -1,4 +1,4 @@
-package treepeater.tree;
+package treepeater.components;
 
 import static com.formdev.flatlaf.util.UIScale.scale;
 
@@ -9,21 +9,25 @@ import java.awt.Insets;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
+import javax.swing.plaf.ComboBoxUI;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import com.formdev.flatlaf.ui.FlatComboBoxUI;
 
 /**
- * Installs a {@link ComboBoxUI} that skips painting a solid value-area background so a tree row
- * strip shows through. Uses a subclass of the LAF's ComboBoxUI, which in Burp Suite is {@link FlatComboBoxUI}.
+ * Installs a compact {@link ComboBoxUI} for status pickers in tree rows and dialogs. The value
+ * area is painted without its own background fill so the parent background shows through, and the
+ * drop-down arrow button is narrowed so the combo stays small when only an icon is displayed.
+ *
+ * <p>In Burp Suite the LAF implementation is {@link FlatComboBoxUI}.
  */
-public final class TreeRowComboBoxUi {
+public final class StatusComboBoxUi {
 
-    private TreeRowComboBoxUi() {
+    private StatusComboBoxUi() {
     }
 
     /**
-     * Applies the tree-row combo UI. Call after {@link JComboBox#updateUI()} when the LAF/theme
+     * Applies the custom combo UI. Call after {@link JComboBox#updateUI()} when the LAF/theme
      * changes so Burp does not leave the default combo box UI installed.
      */
     public static void install(JComboBox<?> box) {
@@ -33,8 +37,8 @@ public final class TreeRowComboBoxUi {
     }
 
     /**
-     * FlatLaf paints the combo background in {@link #update}; delegate to {@link #paint} only so
-     * the value is drawn without the rounded fill.
+     * FlatLaf paints the combo background in {@code update}; for non-editable boxes we delegate to
+     * {@code paint} only so the value is drawn without the rounded fill.
      */
     private static final class FlatImpl extends FlatComboBoxUI {
 

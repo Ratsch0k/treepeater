@@ -11,12 +11,10 @@ import javax.swing.BorderFactory;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
-import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
 import javax.swing.JTree;
-import javax.swing.ListCellRenderer;
 import javax.swing.SwingUtilities;
 import javax.swing.tree.TreePath;
 import javax.swing.UIManager;
@@ -24,9 +22,11 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
 import treepeater.Treepeater;
+import treepeater.components.StatusComboBoxUi;
 import treepeater.icons.CloseIcon;
 import treepeater.requestResponse.Status;
-import treepeater.requestResponse.StatusComboBoxRenderer;
+import treepeater.components.StatusComboBox;
+import treepeater.components.StatusComboBoxRenderer;
 
 
 public class CustomTreeCell extends JPanel implements DocumentListener {
@@ -46,7 +46,7 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
 
         StatusComboBox box = new StatusComboBox();
         box.setRenderer(new StatusComboBoxRenderer());
-        TreeRowComboBoxUi.install(box);
+        StatusComboBoxUi.install(box);
         box.setEnabled(true);
         box.addActionListener(e -> {
             Status selected = (Status) box.getSelectedItem();
@@ -240,23 +240,6 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
     public void focusNameFieldForEditing() {
         this.field.requestFocusInWindow();
         this.field.selectAll();
-    }
-
-    /**
-     * Re-applies {@link TreeRowComboBoxUi} after {@code super.updateUI()} whenever Burp's theme
-     * changes; otherwise the LAF replaces our UI and the value area paints incorrectly (often fully
-     * transparent).
-     */
-    private static final class StatusComboBox extends JComboBox<Status> {
-        @Override
-        public void updateUI() {
-            super.updateUI();
-            TreeRowComboBoxUi.install(this);
-            ListCellRenderer<? super Status> r = getRenderer();
-            if (r instanceof JComponent) {
-                SwingUtilities.updateComponentTreeUI((JComponent) r);
-            }
-        }
     }
 }
 

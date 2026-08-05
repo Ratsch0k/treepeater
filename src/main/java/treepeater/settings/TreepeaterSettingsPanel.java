@@ -21,9 +21,11 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.ButtonGroup;
+import javax.swing.DefaultComboBoxModel;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
 import javax.swing.JRadioButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -43,6 +45,9 @@ import javax.swing.UIManager;
 import burp.api.montoya.ui.settings.SettingsPanelWithData;
 import treepeater.Treepeater;
 import treepeater.ai.ollama.OllamaProvider;
+import treepeater.components.StatusComboBox;
+import treepeater.components.StatusComboBoxRenderer;
+import treepeater.components.StatusComboBoxUi;
 import treepeater.importing.ImportOptions.DirectNameMode;
 import treepeater.requestResponse.Status;
 
@@ -213,6 +218,8 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         outer.setLayout(new BoxLayout(outer, BoxLayout.Y_AXIS));
         outer.setAlignmentX(Component.LEFT_ALIGNMENT);
 
+        outer.add(this.createDefaultImportStatusPanel());
+        outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
         outer.add(this.createDirectImportNamingPanel());
         outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
         outer.add(this.createSubsectionHeader("Path-aware import"));
@@ -261,6 +268,81 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         outer.add(Box.createVerticalStrut(INNER_SECTION_GAP));
         outer.add(this.createDynamicSegmentPanel());
         return outer;
+    }
+
+    private JComponent createDefaultImportStatusPanel() {
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        panel.add(this.createSubsectionHeader("Default import status"));
+
+        JTextArea explanation = new JTextArea(
+                "Status applied to requests sent to Treepeater (direct, path-aware, and the initial "
+                        + "choice in manual import).");
+        explanation.setEditable(false);
+        explanation.setFocusable(false);
+        explanation.setLineWrap(true);
+        explanation.setWrapStyleWord(true);
+        explanation.setOpaque(false);
+        explanation.setBorder(null);
+        explanation.setFont(UIManager.getFont("Label.font"));
+        explanation.setForeground(UIManager.getColor("Label.foreground"));
+        explanation.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JComboBox<Status> statusCombo = new StatusComboBox();
+        statusCombo.setRenderer(new StatusComboBoxRenderer(true));
+        StatusComboBoxUi.install(statusCombo);
+        statusCombo.setAlignmentX(Component.LEFT_ALIGNMENT);
+        int comboHeight = statusCombo.getPreferredSize().height;
+        Dimension comboSize = new Dimension(160, comboHeight);
+        statusCombo.setPreferredSize(comboSize);
+        statusCombo.setMaximumSize(comboSize);
+
+        final boolean[] refreshing = {false};
+        Runnable refreshCombo = () -> {
+            refreshing[0] = true;
+            try {
+                StatusRegistry registry = Treepeater.getStatusRegistry();
+                List<Status> statuses = registry.getAll();
+                statusCombo.setModel(new DefaultComboBoxModel<>(statuses.toArray(new Status[0])));
+
+                String preferredId = this.settings.getImportDefaultStatusId();
+                Status selected = registry.getById(preferredId);
+                if (selected == null) {
+                    selected = StatusRegistry.getDefault();
+                    this.settings.setImportDefaultStatusId(selected.getId());
+                }
+                statusCombo.setSelectedItem(selected);
+            } finally {
+                refreshing[0] = false;
+            }
+        };
+        refreshCombo.run();
+
+        statusCombo.addActionListener(e -> {
+            if (refreshing[0]) {
+                return;
+            }
+            Status selected = (Status) statusCombo.getSelectedItem();
+            if (selected != null) {
+                this.settings.setImportDefaultStatusId(selected.getId());
+            }
+        });
+
+        Treepeater.getStatusRegistry().addChangeListener(refreshCombo);
+
+        JPanel comboRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        comboRow.setOpaque(false);
+        comboRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        comboRow.add(new JLabel("Status:"));
+        comboRow.add(statusCombo);
+
+        panel.add(Box.createVerticalStrut(4));
+        panel.add(explanation);
+        panel.add(Box.createVerticalStrut(INNER_SECTION_GAP));
+        panel.add(comboRow);
+        return panel;
     }
 
     private JComponent createDirectImportNamingPanel() {

@@ -682,7 +682,15 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         allowExecuteCheck.setOpaque(false);
         allowExecuteCheck.setSelected(this.settings.isApiAllowExecute());
 
-        JLabel endpointsLabel = new JLabel(apiEndpointsText(this.settings.getApiPort()));
+        JTextArea endpointsLabel = new JTextArea(apiEndpointsText(this.settings.getApiPort()));
+        endpointsLabel.setEditable(false);
+        endpointsLabel.setFocusable(false);
+        endpointsLabel.setLineWrap(true);
+        endpointsLabel.setWrapStyleWord(true);
+        endpointsLabel.setOpaque(false);
+        endpointsLabel.setBorder(null);
+        endpointsLabel.setFont(UIManager.getFont("Label.font"));
+        endpointsLabel.setForeground(UIManager.getColor("Label.foreground"));
         endpointsLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
 
         Runnable updateEnabledState = () -> {
@@ -739,13 +747,12 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         return panel;
     }
 
-    /** HTML so the label wraps; the width hint is required because JLabel does not wrap on its own. */
     private static String apiEndpointsText(int port) {
-        return "<html><body style='width: 520px'>The server listens on 127.0.0.1 only and never accepts "
-                + "connections from other hosts. Every request must carry the bearer token above in an "
-                + "<code>Authorization: Bearer &lt;token&gt;</code> header. The MCP endpoint is "
-                + "<code>http://127.0.0.1:" + port + "/mcp</code> and the REST API is at "
-                + "<code>http://127.0.0.1:" + port + "/api/v1</code>.</body></html>";
+        return "The server listens on 127.0.0.1 only and never accepts connections from other hosts. "
+                + "Every request must carry the bearer token above in an "
+                + "Authorization: Bearer <token> header. The MCP endpoint is "
+                + "http://127.0.0.1:" + port + "/mcp and the REST API is at "
+                + "http://127.0.0.1:" + port + "/api/v1.";
     }
 
     private int addPersistedTextRow(

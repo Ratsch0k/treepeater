@@ -13,7 +13,7 @@ Each request panel keeps a full history of everything you have sent, and you can
 Treepeater closely mirrors the Repeater UI to minimize the learning curve.
 If you are already familiar with Repeater, you should be productive in Treepeater almost immediately.
 
-Almost every action has a configurable keyboard shortcut — sending requests, navigating history, switching tabs, renaming nodes, changing statuses, and more.
+Almost every action has a configurable keyboard shortcut, like sending requests, navigating history, switching tabs, renaming nodes, changing statuses, and more.
 Treepeater aims to eventually support a fully keyboard-driven workflow, though there is still work to do in that area.
 
 ## Features
@@ -47,6 +47,88 @@ Split the workspace into multiple panes so you can work on several requests side
 Pick any two tree nodes and diff their requests and responses side by side. Changes are highlighted with character counts, making it easy to spot subtle differences between payloads or server behavior.
 
 ![Compare view](./images/diff-view.png)
+
+### Importing requests
+
+To import requests into Treepeater, use keyboard shortcuts or the context menu. There are three imports modes: ***direct**, **path-aware**, and **manual**.
+
+#### Path-aware import
+
+**Send to Treepeater (path-aware)** builds a folder hierarchy from the request URL path and places the request as a leaf node. Existing folders are reused, so importing many requests from the same API gradually fills in the tree without duplicate folders.
+
+For a request to `GET /api/users/42`, path-aware import creates (or reuses) an `api` folder, then a `users` folder underneath, and adds a leaf named `42`. Importing `GET /api/users/99` lands in the same folder chain.
+
+Two leaf modes are available in **Settings > Import**:
+
+- **Direct**: the leaf is named after the last path segment and sits next to any deeper nesting folder for the same segment. For example, `GET /first/third` creates a leaf `third` under `first`, while `GET /first/third/test` adds a `third` folder (for deeper paths) with a `test` leaf inside it.
+- **Method folders**: the leaf is placed under a per-method folder such as `[GET]` or `[POST]`, using a configurable base leaf name (default `base`).
+
+Optional refinements, also configured under **Settings > Import**:
+
+- **Lenient folder grouping**: when strict path matching finds no existing folder chain, Treepeater can attach requests under folders that include extra leading grouping segments. If you already have `ServiceA/users` and import `/users/1`, the request goes under `ServiceA/users` instead of creating a new top-level `users` folder. The algorithm enforces some constraints on this to avoid mismatching. For example, only a certain number of leading folders are allowed (default: 2) and the existing path must match a specific percentage of the importing path (default: 60%). These values can be configured in the settings.
+- **Dynamic path segment normalization**: recognizable dynamic segments (numeric IDs, UUIDs, OData keys) are rewritten into placeholders such as `:id` or `:uuid` before building folders, so `/users/2/status` and `/users/7/status` share a `users/:id/status` structure. The original URL on the leaf is always preserved.
+
+Given these settings, path-aware import maps URL paths to a tree like this:
+
+**Direct leaf mode**: leaf named after the last path segment:
+
+```
+GET /api/users/42
+GET /api/users/99
+GET /api/users/third/info
+
+api/
+└── users/
+    ├── 42
+    ├── 99
+    └── third/
+        └── info       
+```
+
+**Method folders**: leaf under `[METHOD]` with base name `base`:
+
+```
+GET /first
+POST /first/test
+
+first/
+├── [GET]/
+│   └── base      <- GET /first
+└── test/
+    └── [POST]/
+        └── base   <- POST /first/test
+```
+
+**Dynamic path segment normalization**: enabled, numeric IDs collapse to `:id`:
+
+```
+GET /users/2/status
+GET /users/7/status
+
+users/
+└── :id/
+    └── status     <- both requests share this folder chain
+```
+
+Path-aware import uses your global import settings and can be triggered via a configurable hotkey.
+
+#### Manual import
+
+**Send to Treepeater (manual)** opens a dialog where you choose exactly where and how each request is placed. Use it when you want control over the destination folder, need a one-off naming override, or are importing a batch of requests into the same place.
+
+The dialog shows:
+
+- A **folder tree** to pick the destination folder (required).
+- The **request** being imported (method and URL), with batch progress when multiple requests are selected.
+- A **status** to apply to the imported request.
+- An **import mode** toggle between **Direct** and **Path-aware**:
+  - **Direct**: adds a single leaf under the chosen folder. Name it by URL, path, sequential ID, or a manual name you type.
+  - **Path-aware**: builds folders from the URL path under the chosen folder, with the same leaf-mode, lenient-grouping, and dynamic-segment options as global path-aware import, but scoped to your selected anchor folder.
+- **Apply to all**: when importing multiple requests, reuse the current folder and options for the rest of the batch without showing the dialog again.
+
+Manual import is also available via a configurable hotkey.
+
+![Manual import dialog](./images/import-manual-dialog.png)
 
 
 ## How To Install

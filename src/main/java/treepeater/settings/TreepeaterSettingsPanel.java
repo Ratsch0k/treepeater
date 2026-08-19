@@ -752,7 +752,7 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
                 + "Every request must carry the bearer token above in an "
                 + "Authorization: Bearer <token> header. The MCP endpoint is "
                 + "http://127.0.0.1:" + port + "/mcp and the REST API is at "
-                + "http://127.0.0.1:" + port + "/api/v1.";
+                + "http://127.0.0.1:" + port + "/api.";
     }
 
     private int addPersistedTextRow(

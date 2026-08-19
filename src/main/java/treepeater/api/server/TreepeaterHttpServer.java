@@ -31,7 +31,7 @@ import treepeater.api.TreepeaterToolRegistry;
 import treepeater.settings.TreepeaterSettings;
 
 /**
- * Loopback-only HTTP front for the shared tool registry, exposing the REST API under {@code /api/v1} and
+ * Loopback-only HTTP front for the shared tool registry, exposing the REST API under {@code /api} and
  * the MCP endpoint under {@code /mcp}.
  *
  * <p>This is the only class aware of Jetty. It owns the connector, the shared gate (origin check and
@@ -44,7 +44,7 @@ import treepeater.settings.TreepeaterSettings;
  */
 public final class TreepeaterHttpServer {
 
-    private static final String REST_PREFIX = "/api/v1";
+    private static final String REST_PREFIX = "/api";
     private static final String MCP_PATH = "/mcp";
 
     /** Upper bound on a request body, so a rogue client cannot exhaust the extension's heap. */
@@ -127,7 +127,7 @@ public final class TreepeaterHttpServer {
 
             this.server = created;
             this.connector = newConnector;
-            logOutput("Treepeater API listening on http://127.0.0.1:" + this.port() + " (/api/v1, /mcp)");
+            logOutput("Treepeater API listening on http://127.0.0.1:" + this.port() + " (/api, /mcp)");
             return true;
         } catch (Exception e) {
             stopQuietly(created);
@@ -272,7 +272,7 @@ public final class TreepeaterHttpServer {
         }
     }
 
-    /** Path without a trailing slash, so {@code /api/v1/health/} resolves like {@code /health}. */
+    /** Path without a trailing slash, so {@code /api/health/} resolves like {@code /health}. */
     private static String normalizePath(String path) {
         if (path == null) {
             return "";

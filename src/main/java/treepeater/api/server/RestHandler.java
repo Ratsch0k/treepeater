@@ -16,7 +16,7 @@ import treepeater.api.TreepeaterTool;
 import treepeater.api.TreepeaterToolRegistry;
 
 /**
- * Plain REST surface under {@code /api/v1} for clients that do not speak MCP: server metadata, the tool
+ * Plain REST surface under {@code /api} for clients that do not speak MCP: server metadata, the tool
  * catalogue, tool invocation, and the read-only tree endpoints.
  *
  * <p>Holds no HTTP library type; the caller supplies an {@link ApiRequest} and receives an
@@ -24,7 +24,7 @@ import treepeater.api.TreepeaterToolRegistry;
  */
 public final class RestHandler {
 
-    private static final String CONTEXT = "/api/v1";
+    private static final String CONTEXT = "/api";
 
     private final TreepeaterToolRegistry registry;
     private final TreepeaterService service;
@@ -140,7 +140,7 @@ public final class RestHandler {
         return ApiResponse.error(405, "method not allowed");
     }
 
-    /** Path below the {@code /api/v1} context. */
+    /** Path below the {@code /api} context. */
     private static String relativePath(String path) {
         return path.startsWith(CONTEXT) ? path.substring(CONTEXT.length()) : path;
     }

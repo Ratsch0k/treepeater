@@ -116,7 +116,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
         this.server.restart();
 
         assertTrue(this.server.isRunning());
-        assertEquals(200, get("/api/v1/health").statusCode());
+        assertEquals(200, get("/api/health").statusCode());
     }
 
     @Test
@@ -137,7 +137,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
     @Test
     void requestsWithoutATokenAreRejected() throws Exception {
         HttpResponse<String> response =
-                send(HttpRequest.newBuilder(URI.create(this.base + "/api/v1/health")).GET().build());
+                send(HttpRequest.newBuilder(URI.create(this.base + "/api/health")).GET().build());
 
         assertEquals(401, response.statusCode());
         assertEquals("unauthorized", json(response).get("error").asText());
@@ -146,7 +146,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
     @Test
     void requestsWithTheWrongTokenAreRejected() throws Exception {
         HttpResponse<String> response =
-                send(HttpRequest.newBuilder(URI.create(this.base + "/api/v1/health"))
+                send(HttpRequest.newBuilder(URI.create(this.base + "/api/health"))
                         .header("Authorization", "Bearer not-the-token")
                         .GET()
                         .build());
@@ -157,7 +157,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
     @Test
     void theBearerPrefixIsMatchedCaseInsensitively() throws Exception {
         HttpResponse<String> response =
-                send(HttpRequest.newBuilder(URI.create(this.base + "/api/v1/health"))
+                send(HttpRequest.newBuilder(URI.create(this.base + "/api/health"))
                         .header("Authorization", "bearer " + this.token)
                         .GET()
                         .build());
@@ -181,7 +181,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
     @Test
     void aCrossSiteOriginIsRefused() throws Exception {
         HttpResponse<String> response =
-                send(authed("/api/v1/health").header("Origin", "https://evil.example.com").GET().build());
+                send(authed("/api/health").header("Origin", "https://evil.example.com").GET().build());
 
         assertEquals(403, response.statusCode());
         assertEquals("forbidden origin", json(response).get("error").asText());
@@ -190,7 +190,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
     @Test
     void aLoopbackOriginIsAccepted() throws Exception {
         HttpResponse<String> response =
-                send(authed("/api/v1/health")
+                send(authed("/api/health")
                         .header("Origin", "http://localhost:3000")
                         .GET()
                         .build());
@@ -202,7 +202,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
     void theOriginCheckRunsBeforeAuthentication() throws Exception {
         // A cross-site page must be turned away whether or not it guessed a token.
         HttpResponse<String> response =
-                send(HttpRequest.newBuilder(URI.create(this.base + "/api/v1/health"))
+                send(HttpRequest.newBuilder(URI.create(this.base + "/api/health"))
                         .header("Origin", "https://evil.example.com")
                         .GET()
                         .build());
@@ -214,7 +214,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
 
     @Test
     void healthDescribesTheServer() throws Exception {
-        JsonNode body = json(get("/api/v1/health"));
+        JsonNode body = json(get("/api/health"));
 
         assertEquals("Treepeater", body.get("name").asText());
         assertEquals("v1", body.get("api_version").asText());
@@ -225,7 +225,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
 
     @Test
     void theToolCatalogueCarriesSchemasAndActionLevels() throws Exception {
-        JsonNode tools = json(get("/api/v1/tools")).get("tools");
+        JsonNode tools = json(get("/api/tools")).get("tools");
 
         boolean sawCreateFolder = false;
         for (JsonNode tool : tools) {
@@ -240,7 +240,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
 
     @Test
     void aToolCanBeInvokedOverRest() throws Exception {
-        HttpResponse<String> response = post("/api/v1/tools/create_folder", "{\"name\":\"API\"}");
+        HttpResponse<String> response = post("/api/tools/create_folder", "{\"name\":\"API\"}");
 
         assertEquals(200, response.statusCode());
         assertEquals("API", json(response).get("name").asText());
@@ -250,7 +250,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
     @Test
     void aFailingToolCallAnswersWith400() throws Exception {
         HttpResponse<String> response =
-                post("/api/v1/tools/" + RenameNodeTool.NAME, "{\"node_id\":987654,\"name\":\"x\"}");
+                post("/api/tools/" + RenameNodeTool.NAME, "{\"node_id\":987654,\"name\":\"x\"}");
 
         assertEquals(400, response.statusCode());
         assertTrue(json(response).get("error").asText().contains("no node with id"));
@@ -258,7 +258,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
 
     @Test
     void anUnknownToolAnswersWith404() throws Exception {
-        HttpResponse<String> response = post("/api/v1/tools/no_such_tool", "{}");
+        HttpResponse<String> response = post("/api/tools/no_such_tool", "{}");
 
         assertEquals(404, response.statusCode());
     }
@@ -267,7 +267,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
     void aToolDeniedByPolicyIsReported() throws Exception {
         this.settings.setApiAllowWrite(false);
 
-        HttpResponse<String> response = post("/api/v1/tools/create_folder", "{\"name\":\"API\"}");
+        HttpResponse<String> response = post("/api/tools/create_folder", "{\"name\":\"API\"}");
 
         assertEquals(400, response.statusCode());
         assertTrue(json(response).get("error").asText().contains("not permitted"));
@@ -275,49 +275,49 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
 
     @Test
     void theTreeAndStatusEndpointsRead() throws Exception {
-        post("/api/v1/tools/create_folder", "{\"name\":\"API\"}");
+        post("/api/tools/create_folder", "{\"name\":\"API\"}");
 
-        JsonNode tree = json(get("/api/v1/tree"));
+        JsonNode tree = json(get("/api/tree"));
         assertEquals(2, tree.get("total_nodes").asInt());
         assertEquals("API", tree.get("tree").get("children").get(0).get("name").asText());
 
         int id = tree.get("tree").get("children").get(0).get("id").asInt();
-        assertEquals("API", json(get("/api/v1/tree/nodes/" + id)).get("name").asText());
+        assertEquals("API", json(get("/api/tree/nodes/" + id)).get("name").asText());
 
-        assertTrue(json(get("/api/v1/statuses")).get("statuses").size() > 0);
+        assertTrue(json(get("/api/statuses")).get("statuses").size() > 0);
     }
 
     @Test
     void treeQueryParametersAreHonoured() throws Exception {
-        post("/api/v1/tools/create_folder", "{\"name\":\"API\"}");
+        post("/api/tools/create_folder", "{\"name\":\"API\"}");
 
-        JsonNode limited = json(get("/api/v1/tree?max_depth=1&include_requests=false"));
+        JsonNode limited = json(get("/api/tree?max_depth=1&include_requests=false"));
 
         assertEquals(1, limited.get("max_depth").asInt());
     }
 
     @Test
     void anUnparseableQueryParameterIsRejected() throws Exception {
-        HttpResponse<String> response = get("/api/v1/tree?max_depth=lots");
+        HttpResponse<String> response = get("/api/tree?max_depth=lots");
 
         assertEquals(400, response.statusCode());
     }
 
     @Test
     void anUnknownPathIs404AndAWrongMethodIs405() throws Exception {
-        assertEquals(404, get("/api/v1/nope").statusCode());
-        assertEquals(405, post("/api/v1/health", "{}").statusCode());
+        assertEquals(404, get("/api/nope").statusCode());
+        assertEquals(405, post("/api/health", "{}").statusCode());
     }
 
     @Test
     void aTrailingSlashResolvesToTheSameRoute() throws Exception {
-        assertEquals(200, get("/api/v1/health/").statusCode());
+        assertEquals(200, get("/api/health/").statusCode());
     }
 
     @Test
     void preflightIsAnsweredWithoutABody() throws Exception {
         HttpResponse<String> response =
-                send(HttpRequest.newBuilder(URI.create(this.base + "/api/v1/health"))
+                send(HttpRequest.newBuilder(URI.create(this.base + "/api/health"))
                         .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
                         .build());
 

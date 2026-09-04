@@ -29,9 +29,9 @@ public final class OpenAiProvider implements LlmProvider {
 
     public OpenAiProvider() {
         this.models = List.of(
+                build(ChatModel.GPT_5_5.asString(), "GPT-5.5"),
                 build(ChatModel.GPT_5_4.asString(), "GPT-5.4"),
-                build(ChatModel.GPT_5_4_MINI.asString(), "GPT-5.4 mini"),
-                build(ChatModel.GPT_5_3_CHAT_LATEST.asString(), "GPT-5.3"));
+                build(ChatModel.GPT_5_4_MINI.asString(), "GPT-5.4 mini"));
     }
 
     private LlmModelDefinition build(String modelId, String displayName) {

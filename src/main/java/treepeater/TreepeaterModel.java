@@ -546,7 +546,6 @@ public class TreepeaterModel implements TreepeaterNodeListener {
     /** Matches a candidate against the target, or returns {@code null} if it does not match. */
     private static FolderMatch matchCandidate(
             FolderCandidate candidate, List<String> target, LenientFolderGrouping lenientGrouping) {
-        Treepeater.api.logging().logToOutput("Matching candidate: " + candidate.path() + " against target: " + target.toString());
         List<String> path = candidate.path();
         if (path.isEmpty()) {
             return null;
@@ -564,38 +563,32 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         double matchThreshold = lenientGrouping.matchThreshold();
         int mustMatch = (int) Math.ceil(target.size() * matchThreshold);
         if (path.size() >= mustMatch && path.size() - maxSkip <= target.size() && path.size() > maxSkip) {
-            Treepeater.api.logging().logToOutput("Starting lenient folder grouping");
+
             // Lenient folder grouping: the folder path contains a prefix of the target after
             // skipping up to maxSkip leading organizational segments. The matched suffix must cover
             // at least matchThreshold of the target path.
-    
+
             // Determine at which point the target path begins in the candidate path.
             int lenientMatchIndex = -1;
-    
+
             for (int i = 1; i <= maxSkip; i++) {
                 List<String> pathSubList = path.subList(i, path.size());
                 if (pathSubList.isEmpty()) {
                     continue;
                 }
                 if (isPrefix(pathSubList, target)) {
-                    Treepeater.api.logging().logToOutput("Found lenient-folder match at skip index: " + i);
-                    Treepeater.api.logging().logToOutput("Path sublist: " + pathSubList.toString() + " is prefix of target: " + target.toString());
                     lenientMatchIndex = i;
                     break;
                 }
             }
-    
+
             if (lenientMatchIndex != -1) {
-                Treepeater.api.logging().logToOutput("Identify if lenient-folder match covers at least "+ mustMatch + " segments of the target");
                 List<String> lenientMatchList = path.subList(lenientMatchIndex, path.size());
                 List<String> mustMatchList = target.subList(0, mustMatch);
-    
+
                 if (isPrefix(mustMatchList, lenientMatchList)) {
-                    Treepeater.api.logging().logToOutput("Candidate matches lenient folder grouping threshold");
                     return new FolderMatch(candidate.folder(), path.size() - lenientMatchIndex, lenientMatchIndex, candidate.order());
                 }
-
-                Treepeater.api.logging().logToOutput("Candidate does not match lenient folder grouping threshold");
             }
         }
 

@@ -18,7 +18,7 @@ dependencies {
     implementation("com.formdev:flatlaf-extras:3.7.1")
     implementation("io.github.ollama4j:ollama4j:1.1.6")
     implementation("com.anthropic:anthropic-java:2.27.0")
-    implementation("com.openai:openai-java:4.32.0")
+    implementation("com.openai:openai-java:4.52.0")
     implementation("org.commonmark:commonmark:0.28.0")
     implementation("org.commonmark:commonmark-ext-gfm-tables:0.28.0")
     implementation("org.commonmark:commonmark-ext-gfm-strikethrough:0.28.0")

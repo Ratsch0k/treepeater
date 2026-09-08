@@ -112,7 +112,7 @@ import treepeater.ai.AgentTabMention;
 import treepeater.ai.TreepeaterTabQueryMatcher;
 import treepeater.ai.AgentToolContext;
 import treepeater.ai.CoalescingChatStreamOutbound;
-import treepeater.api.tools.http.support.HttpTargetSupport;
+import treepeater.api.tools.http.HttpToolLabels;
 import treepeater.api.tools.http.support.RequestPreview;
 import treepeater.api.tools.HumanToolUsage;
 import treepeater.api.tools.ToolHumanUsage;
@@ -976,7 +976,7 @@ public final class AIAgentChatPanel extends JPanel {
         int hist = tooling.currentHistoryIndexForToolStatus();
         int uiNode =
                 tooling.agentBridge() != null
-                        ? HttpTargetSupport.uiSelectedRequestNodeIdForToolCard(tooling.agentBridge())
+                        ? HttpToolLabels.uiSelectedRequestNodeIdForToolCard(tooling.agentBridge())
                         : Integer.MIN_VALUE;
         HumanToolUsage label = ToolHumanUsage.forTool(tc.name(), tc.argumentsJson(), hist, uiNode);
         ChatStreamMessage.ToolApprovalRequest req =

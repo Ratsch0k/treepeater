@@ -9,6 +9,6 @@ public final class RequestPreview {
 
     public static HttpRequest tryPreviewRequestMutation(
             String toolName, String argumentsJson, HttpRequest current) {
-        return HttpTargetSupport.tryPreviewRequestMutation(toolName, argumentsJson, current);
+        return HttpEditorService.tryPreviewRequestMutation(toolName, argumentsJson, current);
     }
 }

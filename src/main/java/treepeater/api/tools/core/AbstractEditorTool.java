@@ -6,7 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 import treepeater.ai.AgentToolContext;
 import treepeater.ai.TreepeaterTabAgentBridge;
-import treepeater.api.Json;
+import treepeater.api.tools.http.HttpToolLabels;
 
 /** Base for HTTP/editor tools that resolve a repeater tab via {@link TreepeaterTabAgentBridge}. */
 public abstract class AbstractEditorTool implements TreepeaterToolSpec {
@@ -29,11 +29,17 @@ public abstract class AbstractEditorTool implements TreepeaterToolSpec {
         return ctx;
     }
 
+    /** Numeric-only, {@code >= 1}; matches the {@code request_node_id} contract declared in each tool's schema. */
     protected static OptionalInt parseRequestNodeId(JsonNode args) {
-        if (args == null) {
+        if (args == null || !args.isObject()) {
             return OptionalInt.empty();
         }
-        return Json.integer(args, "request_node_id", "requestNodeId");
+        JsonNode n = HttpToolLabels.firstArg(args, "request_node_id", "requestNodeId");
+        if (n == null || !n.isNumber()) {
+            return OptionalInt.empty();
+        }
+        int v = n.intValue();
+        return v < 1 ? OptionalInt.empty() : OptionalInt.of(v);
     }
 
     protected String capResult(String result) {

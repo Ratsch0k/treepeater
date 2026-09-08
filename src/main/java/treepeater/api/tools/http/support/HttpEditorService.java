@@ -15,8 +15,6 @@ import java.util.Locale;
 import java.util.OptionalInt;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -56,509 +54,39 @@ import burp.api.montoya.http.message.responses.HttpResponse;
 import treepeater.Utilities;
 import treepeater.TreepeaterModel.SiblingCopyPlacement;
 import treepeater.ai.AgentToolContext;
-import treepeater.ai.ChatToolInvokeContext;
-import treepeater.ai.NestedToolInvoker;
-import treepeater.ai.TreepeaterTabAgentBridge;
 import treepeater.ai.SearchTabRow;
-import treepeater.api.tools.HumanToolUsage;
-import treepeater.api.tools.ToolHumanUsage;
-import treepeater.api.tools.core.ToolInvocation;
-import treepeater.api.tools.core.ToolResults;
+import treepeater.ai.TreepeaterTabAgentBridge;
 import treepeater.api.tools.http.ApplyHttpRequestSemanticChangesTool;
-import treepeater.api.tools.http.BatchHttpTargetToolsTool;
-import treepeater.api.tools.http.CopyTreepeaterNodeTool;
-import treepeater.api.tools.http.GetCurrentHttpTargetTool;
 import treepeater.api.tools.http.PatchHttpRequestBodyLinesTool;
 import treepeater.api.tools.http.ReadHttpMessageTool;
 import treepeater.api.tools.http.ReplaceInHttpRequestBodyTool;
 import treepeater.api.tools.http.SearchHttpMessageTool;
 import treepeater.api.tools.http.SearchTabsTool;
-import treepeater.api.tools.http.SendCurrentHttpRequestTool;
 import treepeater.api.tools.http.SetHttpRequestBodyTool;
 
 /**
- * Shared HTTP/editor tool logic (read, search, mutate, semantic ops, tab listing).
+ * Business logic behind the HTTP/editor tools (read, search, mutate, semantic ops, tab listing, send). Each
+ * public method here backs exactly one tool's {@code invoke()}; the tool classes themselves only resolve the
+ * {@link AgentToolContext}/{@link TreepeaterTabAgentBridge} and own their schema, description, and human label.
  */
-public final class HttpTargetSupport {
+public final class HttpEditorService {
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final Logger TIMING = Logger.getLogger("treepeater.api.tools.http.support.HttpTargetSupport.commitLiveRequest");
 
-    /** Max URL characters per row in {@link SearchTabsTool} results before truncation. */
-    public static final int MAX_TAB_LIST_URL_CHARS = 512;
+    private HttpEditorService() {}
 
-    private static final int DEFAULT_READ_CHUNK_BYTES = 4_096;
-    private static final int MAX_BODY_CHUNK_BYTES = 65_536;
 
-    private static final int DEFAULT_SEARCH_MAX_MATCHES = 10;
-    private static final int MAX_SEARCH_MAX_MATCHES = 100;
-    private static final int DEFAULT_SEARCH_CONTEXT_BYTES = 64;
-    private static final int MAX_SEARCH_CONTEXT_BYTES = 512;
-    private static final int MAX_SEARCH_PATTERN_CHARS = 1_024;
-    private static final int MAX_SCAN_BYTES = 1_048_576;
-
-    /**
-     * Upper bound on the JSON string returned to the model for any single tool call. Sized to
-     * comfortably accommodate one {@link #MAX_BODY_CHUNK_BYTES}-sized body chunk after base64
-     * inflation (~88k chars) plus JSON overhead. When a tool returns more, the payload is replaced
-     * with a small error object pointing the model at the paginated alternatives.
-     */
-    private static final int MAX_TOOL_RESULT_CHARS = 96_000;
-
-    private static final int DEFAULT_TAB_PAGE_SIZE = 10;
-    private static final int MAX_TAB_PAGE_SIZE = 50;
-
-    private static final int MAX_BATCH_HTTP_TARGET_TOOLS = 24;
-
-    private static final String REQ_NODE_ID_PROP =
-            "\"request_node_id\":{\"type\":\"integer\",\"minimum\":1,\"description\":\"Tab id from search_tabs; omit=UI tab.\"}";
-
-    private static final String OPTIONAL_TAB_PARAMS_SCHEMA =
-            "{\"type\":\"object\",\"properties\":{" + REQ_NODE_ID_PROP + "},\"additionalProperties\":false}";
-
-    private static final String READ_MESSAGE_SCHEMA =
-            "{\"type\":\"object\",\"properties\":{"
-                    + REQ_NODE_ID_PROP
-                    + ",\"side\":{\"type\":\"string\",\"enum\":[\"request\",\"response\"]},\"history_index\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"0-based; omit=current\"},\"offset\":{\"type\":\"integer\",\"minimum\":0,\"default\":0},\"max_bytes\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":65536,\"default\":4096}},\"required\":[\"side\"],\"additionalProperties\":false}";
-
-    private static final String SEARCH_MESSAGE_SCHEMA =
-            "{\"type\":\"object\",\"properties\":{"
-                    + REQ_NODE_ID_PROP
-                    + ",\"side\":{\"type\":\"string\",\"enum\":[\"request\",\"response\"]},\"pattern\":{\"type\":\"string\",\"description\":\"Java Pattern; (?i)(?m)(?s)\"},\"history_index\":{\"type\":\"integer\",\"minimum\":0,\"description\":\"0-based; omit=current\"},\"scope\":{\"type\":\"string\",\"enum\":[\"headers\",\"body\",\"all\"],\"default\":\"all\"},\"max_matches\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100,\"default\":10},\"context_bytes\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":512,\"default\":64}},\"required\":[\"side\",\"pattern\"],\"additionalProperties\":false}";
-
-    private static final String SEARCH_TABS_SCHEMA =
-            "{\"type\":\"object\",\"properties\":{\"offset\":{\"type\":\"integer\",\"minimum\":0,\"default\":0},\"page_size\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":"
-                    + MAX_TAB_PAGE_SIZE
-                    + ",\"default\":"
-                    + DEFAULT_TAB_PAGE_SIZE
-                    + "},\"query\":{\"type\":\"string\",\"description\":\"Filter method/URL or title; CI\"}},\"additionalProperties\":false}";
-
-    private static final String COPY_TREEPEATER_NODE_SCHEMA =
-            "{\"type\":\"object\",\"properties\":{\"request_node_id\":{\"type\":\"integer\",\"minimum\":1,"
-                    + "\"description\":\"Request tree node id to copy (from search_tabs or a prior copy).\"},"
-                    + "\"name\":{\"type\":\"string\",\"description\":\"Name for the new node/tab.\"},"
-                    + "\"placement\":{\"type\":\"string\",\"enum\":[\"after\",\"top\",\"bottom\"],\"default\":\"after\","
-                    + "\"description\":\"Sibling position under the source parent: after=immediately after source, "
-                    + "top=first child, bottom=last child.\"}},"
-                    + "\"required\":[\"request_node_id\",\"name\"],\"additionalProperties\":false}";
-
-    private static final int MAX_SUBSTRING_REPLACEMENTS = 100_000;
-
-    private static final String REPLACE_BODY_SCHEMA =
-            "{\"type\":\"object\",\"properties\":{"
-                    + REQ_NODE_ID_PROP
-                    + ",\"old_text\":{\"type\":\"string\"},\"new_text\":{\"type\":\"string\"},\"max_replacements\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":%d,\"default\":1},\"replace_all\":{\"type\":\"boolean\",\"default\":false}},\"required\":[\"old_text\",\"new_text\"],\"additionalProperties\":false}"
-                    .formatted(MAX_SUBSTRING_REPLACEMENTS);
-
-    private static final String PATCH_LINES_SCHEMA =
-            "{\"type\":\"object\",\"properties\":{"
-                    + REQ_NODE_ID_PROP
-                    + ",\"start_line\":{\"type\":\"integer\",\"minimum\":1},\"end_line\":{\"type\":\"integer\",\"minimum\":1},\"content\":{\"type\":\"string\",\"description\":\"New lines; \\\\R linebreaks\"}},\"required\":[\"start_line\",\"end_line\",\"content\"],\"additionalProperties\":false}";
-
-    private static final String SET_BODY_SCHEMA =
-            "{\"type\":\"object\",\"properties\":{"
-                    + REQ_NODE_ID_PROP
-                    + ",\"body_utf8\":{\"type\":\"string\"},\"body_base64\":{\"type\":\"string\"}},\"additionalProperties\":false}";
-
-    private static final int MAX_SEMANTIC_OPERATIONS = 32;
-
-    private static final String SEMANTIC_ITEMS_ALLOF =
-            "["
-                    + "{\"if\":{\"properties\":{\"type\":{\"const\":\"header\"},\"action\":{\"const\":\"set\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"key\",\"value\"]}}"
-                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"header\"},\"action\":{\"const\":\"remove\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"key\"]}}"
-                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"cookie\"},\"action\":{\"const\":\"set\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"key\",\"value\"]}}"
-                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"cookie\"},\"action\":{\"const\":\"remove\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"key\"]}}"
-                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"json\"},\"action\":{\"const\":\"set\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"path\",\"value\"]}}"
-                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"json\"},\"action\":{\"const\":\"remove\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"path\"]}}"
-                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"xml\"},\"action\":{\"const\":\"set\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"path\",\"value\"]}}"
-                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"xml\"},\"action\":{\"const\":\"remove\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"path\"]}}"
-                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"method\"},\"action\":{\"const\":\"set\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"value\"],\"properties\":{\"value\":{\"type\":\"string\"}}}}"
-                    + ",{\"if\":{\"properties\":{\"type\":{\"const\":\"url\"},\"action\":{\"const\":\"set\"}},\"required\":[\"type\",\"action\"]},\"then\":{\"required\":[\"value\"],\"properties\":{\"value\":{\"type\":\"string\"}}}}"
-                    + "]";
-
-    private static final String SEMANTIC_OPERATION_ITEM_SCHEMA =
-            "{\"type\":\"object\",\"required\":[\"type\",\"action\"],"
-                    + "\"properties\":{"
-                    + "\"type\":{\"type\":\"string\",\"enum\":[\"header\",\"cookie\",\"json\",\"xml\",\"method\",\"url\"]},"
-                    + "\"action\":{\"type\":\"string\",\"enum\":[\"set\",\"remove\"]},"
-                    + "\"key\":{\"type\":\"string\",\"description\":\"Header/cookie; empty for method|url set\"},"
-                    + "\"path\":{\"type\":\"string\",\"description\":\"JSON Pointer (json) or XPath (xml)\"},"
-                    + "\"value\":{}"
-                    + "},"
-                    + "\"allOf\":"
-                    + SEMANTIC_ITEMS_ALLOF
-                    + ",\"additionalProperties\":false}";
-
-    private static final String APPLY_SEMANTIC_CHANGES_SCHEMA =
-            "{\"type\":\"object\",\"required\":[\"operations\"],\"properties\":{"
-                    + REQ_NODE_ID_PROP
-                    + ",\"operations\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":"
-                    + MAX_SEMANTIC_OPERATIONS
-                    + ",\"items\":"
-                    + SEMANTIC_OPERATION_ITEM_SCHEMA
-                    + "}},\"additionalProperties\":false}";
-
-    private static final String BATCH_HTTP_TARGET_TOOLS_SCHEMA =
-            "{\"type\":\"object\",\"required\":[\"tools\"],\"properties\":{\"tools\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":"
-                    + MAX_BATCH_HTTP_TARGET_TOOLS
-                    + ",\"items\":{\"type\":\"object\",\"required\":[\"tool_name\"],\"properties\":{\"tool_name\":{\"type\":\"string\",\"minLength\":1},\"arguments\":{\"type\":\"object\"}},\"additionalProperties\":false}}},\"additionalProperties\":false}";
-
-    private HttpTargetSupport() {}
-
-    /** Dispatches one HTTP tool via {@link ToolInvocation}. */
-    public static String invokeTool(ToolInvocation inv, String toolName) {
-        TreepeaterTabAgentBridge bridge = inv.runtime().bridge();
-        if (bridge == null) {
-            return errorJson("no bridge");
-        }
-        return execute(
-                new ChatToolInvokeContext(toolName, inv.argumentsJson(), inv.nestedInvoker()), bridge);
-    }
-
-    public static String optionalTabParamsSchema() {
-        return OPTIONAL_TAB_PARAMS_SCHEMA;
-    }
-
-    public static String readMessageSchema() {
-        return READ_MESSAGE_SCHEMA;
-    }
-
-    public static String searchMessageSchema() {
-        return SEARCH_MESSAGE_SCHEMA;
-    }
-
-    public static String searchTabsSchema() {
-        return SEARCH_TABS_SCHEMA;
-    }
-
-    public static String copyTreepeaterNodeSchema() {
-        return COPY_TREEPEATER_NODE_SCHEMA;
-    }
-
-    public static String replaceBodySchema() {
-        return REPLACE_BODY_SCHEMA;
-    }
-
-    public static String patchLinesSchema() {
-        return PATCH_LINES_SCHEMA;
-    }
-
-    public static String setBodySchema() {
-        return SET_BODY_SCHEMA;
-    }
-
-    public static String applySemanticChangesSchema() {
-        return APPLY_SEMANTIC_CHANGES_SCHEMA;
-    }
-
-    public static String batchHttpTargetToolsSchema() {
-        return BATCH_HTTP_TARGET_TOOLS_SCHEMA;
-    }
-
-    public static int defaultTabPageSize() {
-        return DEFAULT_TAB_PAGE_SIZE;
-    }
-
-    public static int maxTabPageSize() {
-        return MAX_TAB_PAGE_SIZE;
-    }
-
-    public static int maxBatchHttpTargetTools() {
-        return MAX_BATCH_HTTP_TARGET_TOOLS;
-    }
-
-    /**
-     * Dispatches built-in tools; resolves {@link AgentToolContext} per optional {@code request_node_id} on the bridge.
-     */
-    public static String execute(String toolName, String argumentsJson, TreepeaterTabAgentBridge bridge) {
-        return execute(new ChatToolInvokeContext(toolName, argumentsJson, null), bridge);
-    }
-
-    /**
-     * Same as {@link #execute(String, String, TreepeaterTabAgentBridge)} with nested-tool support for {@link BatchHttpTargetToolsTool}.
-     */
-    public static String execute(ChatToolInvokeContext invokeCtx, TreepeaterTabAgentBridge bridge) {
-        if (bridge == null) {
-            return errorJson("no bridge");
-        }
-        String toolName = invokeCtx.toolName();
-        String argumentsJson = invokeCtx.argumentsJson();
-        NestedToolInvoker nested = invokeCtx.invokeChildWithApproval();
-        JsonNode args;
+    public static String currentTarget(AgentToolContext ctx) {
         try {
-            args = parseArgs(argumentsJson);
+            ObjectNode n = (ObjectNode) JSON.readTree(ctx.target().toJson());
+            n.put("request_node_id", ctx.requestNodeId());
+            n.set("history", buildHistoryStateObject(ctx));
+            return write(n);
         } catch (Exception e) {
-            return errorJson("invalid tool arguments JSON");
-        }
-        if (SearchTabsTool.NAME.equals(toolName)) {
-            try {
-                return capResult(searchTabs(bridge, args));
-            } catch (Exception e) {
-                return errorJson(e.getMessage() != null ? e.getMessage() : "tool error");
-            }
-        }
-        if (BatchHttpTargetToolsTool.NAME.equals(toolName)) {
-            try {
-                return capResult(batchHttpTargetTools(args, bridge, nested));
-            } catch (Exception e) {
-                return errorJson(e.getMessage() != null ? e.getMessage() : "tool error");
-            }
-        }
-        if (CopyTreepeaterNodeTool.NAME.equals(toolName)) {
-            try {
-                return capResult(copyTreepeaterNode(bridge, args));
-            } catch (Exception e) {
-                return errorJson(e.getMessage() != null ? e.getMessage() : "tool error");
-            }
-        }
-        OptionalInt nodeId = parseRequestNodeId(args);
-        AgentToolContext ctx = bridge.contextForAgent(nodeId);
-        if (ctx == null) {
-            return errorJson("no target context");
-        }
-        String result;
-        try {
-            result = switch (toolName) {
-                case GetCurrentHttpTargetTool.NAME -> targetWithHistoryJson(ctx);
-                case ReadHttpMessageTool.NAME -> readMessage(ctx, args);
-                case SearchHttpMessageTool.NAME -> searchMessage(ctx, args);
-                case ReplaceInHttpRequestBodyTool.NAME -> replaceInHttpRequestBody(ctx, args);
-                case PatchHttpRequestBodyLinesTool.NAME -> patchHttpRequestBodyLines(ctx, args);
-                case SetHttpRequestBodyTool.NAME -> setHttpRequestBody(ctx, args);
-                case ApplyHttpRequestSemanticChangesTool.NAME -> applyHttpRequestSemanticChanges(ctx, args);
-                case SendCurrentHttpRequestTool.NAME -> sendCurrentHttpRequest(ctx);
-                default -> "{\"error\":\"unknown tool: " + escapeJson(toolName) + "\"}";
-            };
-        } catch (Exception e) {
-            return errorJson(e.getMessage() != null ? e.getMessage() : "tool error");
-        }
-        return capResult(result);
-    }
-
-    private static String batchHttpTargetTools(JsonNode args, TreepeaterTabAgentBridge bridge, NestedToolInvoker nested)
-            throws Exception {
-        JsonNode toolsNode = args.get("tools");
-        if (toolsNode == null || !toolsNode.isArray()) {
-            return errorJson("tools array required");
-        }
-        int n = toolsNode.size();
-        if (n == 0 || n > MAX_BATCH_HTTP_TARGET_TOOLS) {
-            return errorJson("tools must have 1.." + MAX_BATCH_HTTP_TARGET_TOOLS + " entries");
-        }
-        ArrayNode out = JSON.createArrayNode();
-        for (int i = 0; i < n; i++) {
-            JsonNode item = toolsNode.get(i);
-            ObjectNode row = JSON.createObjectNode();
-            row.put("index", i);
-            if (item == null || !item.isObject()) {
-                row.put("error", "step must be an object");
-                out.add(row);
-                continue;
-            }
-            JsonNode nameNode = argFirst(item, "tool_name", "toolName", "name");
-            String innerName =
-                    nameNode != null && nameNode.isTextual() ? nameNode.asText().trim() : "";
-            row.put("tool_name", innerName);
-            if (innerName.isEmpty()) {
-                row.put("error", "tool_name required");
-                out.add(row);
-                continue;
-            }
-            JsonNode argObj = argFirst(item, "arguments", "tool_arguments", "toolArguments");
-            if (argObj == null || argObj.isNull()) {
-                argObj = JSON.createObjectNode();
-            } else if (!argObj.isObject()) {
-                row.put("error", "arguments must be a JSON object");
-                out.add(row);
-                continue;
-            }
-            String innerArgs = JSON.writeValueAsString(argObj);
-            String innerResult;
-            try {
-                innerResult =
-                        nested != null
-                                ? nested.invoke(innerName, innerArgs)
-                                : execute(innerName, innerArgs, bridge);
-            } catch (Exception e) {
-                row.put("error", e.getMessage() != null ? e.getMessage() : "tool error");
-                out.add(row);
-                continue;
-            }
-            row.set("result", parseToolResultJson(innerResult));
-            out.add(row);
-        }
-        ObjectNode wrap = JSON.createObjectNode();
-        wrap.set("results", out);
-        return JSON.writeValueAsString(wrap);
-    }
-
-    private static JsonNode parseToolResultJson(String raw) {
-        if (raw == null) {
-            return JSON.nullNode();
-        }
-        try {
-            return JSON.readTree(raw);
-        } catch (Exception e) {
-            ObjectNode o = JSON.createObjectNode();
-            o.put("raw_text", raw);
-            return o;
+            return ctx.target().toJson();
         }
     }
 
-    /**
-     * Same as {@link #execute(String, String, TreepeaterTabAgentBridge)} with a fixed context (tests; {@link SearchTabsTool} unsupported).
-     */
-    public static String execute(String toolName, String argumentsJson, AgentToolContext ctx) {
-        return execute(toolName, argumentsJson, TreepeaterTabAgentBridge.singleTab(ctx));
-    }
-
-    /**
-     * History index for tool transcript labels when the tool targets a specific tab via {@code request_node_id}.
-     */
-    public static int viewerHistoryIndexForToolCard(String toolName, String argumentsJson, TreepeaterTabAgentBridge bridge) {
-        if (bridge == null
-                || SearchTabsTool.NAME.equals(toolName)
-                || BatchHttpTargetToolsTool.NAME.equals(toolName)
-                || CopyTreepeaterNodeTool.NAME.equals(toolName)) {
-            return Integer.MIN_VALUE;
-        }
-        try {
-            JsonNode args = parseArgs(argumentsJson);
-            AgentToolContext ctx = bridge.contextForAgent(parseRequestNodeId(args));
-            return ctx != null ? ctx.currentHistoryIndex() : Integer.MIN_VALUE;
-        } catch (Exception e) {
-            return Integer.MIN_VALUE;
-        }
-    }
-
-    /** UI-selected tab id for {@link #humanToolUsage(String, String, int, int)}; {@link Integer#MIN_VALUE} if unknown. */
-    public static int uiSelectedRequestNodeIdForToolCard(TreepeaterTabAgentBridge bridge) {
-        return bridge != null ? bridge.uiSelectedRequestNodeIdForToolCard() : Integer.MIN_VALUE;
-    }
-
-    private static OptionalInt parseRequestNodeId(JsonNode args) {
-        if (args == null) {
-            return OptionalInt.empty();
-        }
-        JsonNode n = argFirst(args, "request_node_id", "requestNodeId");
-        if (n == null || n.isNull() || !n.isNumber()) {
-            return OptionalInt.empty();
-        }
-        int v = n.intValue();
-        if (v < 1) {
-            return OptionalInt.empty();
-        }
-        return OptionalInt.of(v);
-    }
-
-    private static String searchTabs(TreepeaterTabAgentBridge bridge, JsonNode args) {
-        int offset = 0;
-        JsonNode offN = argFirst(args, "offset");
-        if (offN != null && offN.isNumber()) {
-            offset = offN.intValue();
-        }
-        if (offset < 0) {
-            offset = 0;
-        }
-        int pageSize = DEFAULT_TAB_PAGE_SIZE;
-        JsonNode psN = argFirst(args, "page_size", "pageSize");
-        if (psN != null && psN.isNumber()) {
-            pageSize = psN.intValue();
-        }
-        if (pageSize < 1) {
-            pageSize = DEFAULT_TAB_PAGE_SIZE;
-        }
-        pageSize = Math.min(pageSize, MAX_TAB_PAGE_SIZE);
-        String query = argTextAny(args, "query", "q", "search");
-        if (query.isEmpty()) {
-            query = null;
-        }
-        return bridge.searchTabs(offset, pageSize, query);
-    }
-
-    private static String copyTreepeaterNode(TreepeaterTabAgentBridge bridge, JsonNode args) {
-        OptionalInt sourceId = parseRequestNodeId(args);
-        if (sourceId.isEmpty()) {
-            return errorJson("request_node_id required");
-        }
-        String name = argTextAny(args, "name");
-        if (name.isEmpty()) {
-            return errorJson("name required");
-        }
-        SiblingCopyPlacement placement = parseCopySiblingPlacement(args);
-        if (placement == null) {
-            return errorJson("placement must be after, top, or bottom");
-        }
-        return bridge.copyTreepeaterNode(sourceId.getAsInt(), name, placement);
-    }
-
-    private static SiblingCopyPlacement parseCopySiblingPlacement(JsonNode args) {
-        String raw = argTextAny(args, "placement");
-        if (raw.isEmpty()) {
-            return SiblingCopyPlacement.AFTER_SOURCE;
-        }
-        return switch (raw.toLowerCase(Locale.ROOT)) {
-            case "after" -> SiblingCopyPlacement.AFTER_SOURCE;
-            case "top" -> SiblingCopyPlacement.PARENT_TOP;
-            case "bottom" -> SiblingCopyPlacement.PARENT_BOTTOM;
-            default -> null;
-        };
-    }
-
-    /** JSON body for {@link TreepeaterTabAgentBridge#copyTreepeaterNode(int, String)}. */
-    public static String formatCopyTreepeaterNodeResponse(int requestNodeId, String name) {
-        ObjectNode root = JSON.createObjectNode();
-        root.put("request_node_id", requestNodeId);
-        root.put("name", name != null ? name : "");
-        return write(root);
-    }
-
-    /** JSON body for {@link TreepeaterTabAgentBridge#searchTabs(int, int, String)}. */
-    public static String formatSearchTabsResponse(
-            int total, int offset, int pageSize, boolean hasMore, List<SearchTabRow> rows) {
-        ObjectNode root = JSON.createObjectNode();
-        root.put("total", total);
-        root.put("offset", offset);
-        root.put("page_size", pageSize);
-        root.put("has_more", hasMore);
-        if (hasMore) {
-            root.put("next_offset", offset + rows.size());
-        }
-        ArrayNode arr = root.putArray("tabs");
-        for (SearchTabRow r : rows) {
-            arr.add(searchTabRowToObject(r));
-        }
-        return write(root);
-    }
-
-    private static ObjectNode searchTabRowToObject(SearchTabRow r) {
-        ObjectNode o = JSON.createObjectNode();
-        o.put("request_node_id", r.requestNodeId());
-        o.put("title", r.title() != null ? r.title() : "");
-        o.put("selected", r.selected());
-        o.put("method", r.method() != null ? r.method() : "");
-        o.put("url", r.url() != null ? r.url() : "");
-        o.put("url_truncated", r.urlTruncated());
-        return o;
-    }
-
-    /**
-     * Returns an oversized tool result unchanged when within budget; otherwise replaces it with a
-     * small structured error pointing the model at paginated alternatives. This backstops every tool
-     * uniformly so an unexpectedly large payload can never explode the next round's input-token
-     * count. A max-sized ReadHttpMessageTool.NAME chunk is sized to stay under this cap.
-     */
-    private static String capResult(String result) {
-        return ToolResults.capResult(result);
-    }
-
-    private static JsonNode parseArgs(String argumentsJson) throws JsonProcessingException {
-        if (argumentsJson == null || argumentsJson.isBlank()) {
-            return JSON.createObjectNode();
-        }
-        return JSON.readTree(argumentsJson);
-    }
-
-    /** Nested under {@code history} in {@link #GetCurrentHttpTargetTool.NAME}. */
+    /** Nested under {@code history} in {@link #currentTarget}. */
     private static ObjectNode buildHistoryStateObject(AgentToolContext ctx) {
         ObjectNode n = JSON.createObjectNode();
         int size = ctx.historySize();
@@ -577,18 +105,8 @@ public final class HttpTargetSupport {
         return n;
     }
 
-    private static String targetWithHistoryJson(AgentToolContext ctx) {
-        try {
-            ObjectNode n = (ObjectNode) JSON.readTree(ctx.target().toJson());
-            n.put("request_node_id", ctx.requestNodeId());
-            n.set("history", buildHistoryStateObject(ctx));
-            return write(n);
-        } catch (Exception e) {
-            return ctx.target().toJson();
-        }
-    }
 
-    private static String readMessage(AgentToolContext ctx, JsonNode args) {
+    public static String readMessage(AgentToolContext ctx, JsonNode args) {
         String side = resolveSide(args);
         int idx = resolveHistoryIndexOptional(ctx, args);
         int offset = readOffsetArg(args);
@@ -600,7 +118,7 @@ public final class HttpTargetSupport {
             offset = total;
         }
         int len = Math.min(maxBytes, total - offset);
-        byte[] chunk = len <= 0 ? new byte[0] : java.util.Arrays.copyOfRange(full, offset, offset + len);
+        byte[] chunk = len <= 0 ? new byte[0] : Arrays.copyOfRange(full, offset, offset + len);
 
         ObjectNode out = JSON.createObjectNode();
         out.put("history_index", idx);
@@ -623,14 +141,23 @@ public final class HttpTargetSupport {
         return write(out);
     }
 
-    private static String searchMessage(AgentToolContext ctx, JsonNode args) {
+    private static int readMaxBytesForReadMessage(JsonNode args) {
+        JsonNode v = argFirst(args, "max_bytes", "maxBytes", "limit", "chunk_size", "chunkSize");
+        if (v == null) {
+            return ReadHttpMessageTool.DEFAULT_CHUNK_BYTES;
+        }
+        return Math.min(ReadHttpMessageTool.MAX_CHUNK_BYTES, Math.max(1, jsonToInt(v)));
+    }
+
+
+    public static String searchMessage(AgentToolContext ctx, JsonNode args) {
         JsonNode patNode = argFirst(args, "pattern", "regex", "re");
         if (patNode == null || patNode.isNull()) {
             return errorJson("missing pattern");
         }
         String patternStr = patNode.isTextual() ? patNode.asText() : patNode.toString();
-        if (patternStr.length() > MAX_SEARCH_PATTERN_CHARS) {
-            return errorJson("pattern too long (max " + MAX_SEARCH_PATTERN_CHARS + " characters)");
+        if (patternStr.length() > SearchHttpMessageTool.MAX_PATTERN_CHARS) {
+            return errorJson("pattern too long (max " + SearchHttpMessageTool.MAX_PATTERN_CHARS + " characters)");
         }
         final Pattern pattern;
         try {
@@ -662,13 +189,13 @@ public final class HttpTargetSupport {
         int regionLen = rEnd - rStart;
         boolean limited = false;
         int scanEnd = rEnd;
-        if (regionLen > MAX_SCAN_BYTES) {
-            scanEnd = rStart + MAX_SCAN_BYTES;
+        if (regionLen > SearchHttpMessageTool.MAX_SCAN_BYTES) {
+            scanEnd = rStart + SearchHttpMessageTool.MAX_SCAN_BYTES;
             limited = true;
         }
         int scanLen = scanEnd - rStart;
         String searchSpace =
-                new String(java.util.Arrays.copyOfRange(full, rStart, rStart + scanLen), StandardCharsets.ISO_8859_1);
+                new String(Arrays.copyOfRange(full, rStart, rStart + scanLen), StandardCharsets.ISO_8859_1);
         Matcher counter = pattern.matcher(searchSpace);
         int totalInScan = 0;
         while (counter.find()) {
@@ -692,7 +219,7 @@ public final class HttpTargetSupport {
                     } else {
                         int gStart = rStart + m.start(g);
                         int gEnd = rStart + m.end(g);
-                        byte[] gSlice = java.util.Arrays.copyOfRange(full, gStart, gEnd);
+                        byte[] gSlice = Arrays.copyOfRange(full, gStart, gEnd);
                         String gUtf = Utilities.decodeUtf8Strict(gSlice);
                         if (gUtf != null) {
                             groups.add(gUtf);
@@ -713,7 +240,7 @@ public final class HttpTargetSupport {
         range.add(rStart);
         range.add(scanEnd);
         if (limited) {
-            out.put("scan_limited_bytes", MAX_SCAN_BYTES);
+            out.put("scan_limited_bytes", SearchHttpMessageTool.MAX_SCAN_BYTES);
         }
         out.set("matches", arr);
         out.put("match_count", arr.size());
@@ -748,7 +275,7 @@ public final class HttpTargetSupport {
             n.put(utf8Key, "");
             return;
         }
-        byte[] slice = java.util.Arrays.copyOfRange(data, start, end);
+        byte[] slice = Arrays.copyOfRange(data, start, end);
         String utf8 = Utilities.decodeUtf8Strict(slice);
         if (utf8 != null) {
             n.put(utf8Key, utf8);
@@ -786,26 +313,19 @@ public final class HttpTargetSupport {
     private static int readMaxMatchesArg(JsonNode args) {
         JsonNode v = argFirst(args, "max_matches", "maxMatches", "limit");
         if (v == null) {
-            return DEFAULT_SEARCH_MAX_MATCHES;
+            return SearchHttpMessageTool.DEFAULT_MAX_MATCHES;
         }
-        return Math.min(MAX_SEARCH_MAX_MATCHES, Math.max(1, jsonToInt(v)));
+        return Math.min(SearchHttpMessageTool.MAX_MAX_MATCHES, Math.max(1, jsonToInt(v)));
     }
 
     private static int readContextBytesArg(JsonNode args) {
         JsonNode v = argFirst(args, "context_bytes", "contextBytes", "context");
         if (v == null) {
-            return DEFAULT_SEARCH_CONTEXT_BYTES;
+            return SearchHttpMessageTool.DEFAULT_CONTEXT_BYTES;
         }
-        return Math.min(MAX_SEARCH_CONTEXT_BYTES, Math.max(0, jsonToInt(v)));
+        return Math.min(SearchHttpMessageTool.MAX_CONTEXT_BYTES, Math.max(0, jsonToInt(v)));
     }
 
-    private static int readMaxBytesForReadMessage(JsonNode args) {
-        JsonNode v = argFirst(args, "max_bytes", "maxBytes", "limit", "chunk_size", "chunkSize");
-        if (v == null) {
-            return DEFAULT_READ_CHUNK_BYTES;
-        }
-        return Math.min(MAX_BODY_CHUNK_BYTES, Math.max(1, jsonToInt(v)));
-    }
 
     /**
      * First byte of the message body, i.e. index after the first {@code \r\n\r\n}. If missing, the whole range is
@@ -871,19 +391,10 @@ public final class HttpTargetSupport {
             throw new IllegalArgumentException("request body updates unavailable");
         }
         long t0 = System.nanoTime();
-        if (TIMING.isLoggable(Level.FINE)) {
-            TIMING.fine("commitLiveRequest: begin invokeAndWait (worker thread)");
-        }
+
         try {
             SwingUtilities.invokeAndWait(
-                    () -> {
-                        if (TIMING.isLoggable(Level.FINE)) {
-                            long waitMs = (System.nanoTime() - t0) / 1_000_000L;
-                            TIMING.fine(
-                                    "commitLiveRequest: EDT runnable started after " + waitMs + "ms (queue wait)");
-                        }
-                        applier.accept(updated);
-                    });
+                    () -> applier.accept(updated));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("interrupted while applying request");
@@ -897,15 +408,12 @@ public final class HttpTargetSupport {
             }
             throw new IllegalStateException(c != null ? c.getMessage() : "request update failed");
         }
-        if (TIMING.isLoggable(Level.FINE)) {
-            long totalMs = (System.nanoTime() - t0) / 1_000_000L;
-            TIMING.fine("commitLiveRequest: invokeAndWait returned after " + totalMs + "ms total (incl. apply on EDT)");
-        }
     }
 
     private static HttpRequest withBodyBytes(HttpRequest req, byte[] body) {
         return req.withBody(ByteArray.byteArray(body));
     }
+
 
     private record HttpBodyAndReplaceStats(
             HttpRequest request, int bytesBefore, int bytesAfter, int replacements) {}
@@ -931,7 +439,7 @@ public final class HttpTargetSupport {
             if (maxRep < 1) {
                 maxRep = 1;
             }
-            if (maxRep > MAX_SUBSTRING_REPLACEMENTS) {
+            if (maxRep > ReplaceInHttpRequestBodyTool.MAX_REPLACEMENTS) {
                 throw new IllegalArgumentException("max_replacements too large");
             }
         }
@@ -985,7 +493,7 @@ public final class HttpTargetSupport {
         return new HttpBodyAndReplaceStats(withBodyBytes(req, outBytes), before, outBytes.length, replCount);
     }
 
-    private static String replaceInHttpRequestBody(AgentToolContext ctx, JsonNode args) {
+    public static String replaceInHttpRequestBody(AgentToolContext ctx, JsonNode args) {
         HttpRequest req = requireCurrentRequest(ctx);
         try {
             HttpBodyAndReplaceStats s = replaceInHttpRequestBodyOnRequest(req, args);
@@ -1018,6 +526,7 @@ public final class HttpTargetSupport {
         }
         return count;
     }
+
 
     private record PatchedBody(
             HttpRequest request, int linesTotalBefore, int lineSpan, int linesPatchedIn, int beforeBytes, int afterBytes) {}
@@ -1063,7 +572,7 @@ public final class HttpTargetSupport {
                 withBodyBytes(req, outBytes), n, endLine - startLine + 1, contentLines.size(), before, outBytes.length);
     }
 
-    private static String patchHttpRequestBodyLines(AgentToolContext ctx, JsonNode args) {
+    public static String patchHttpRequestBodyLines(AgentToolContext ctx, JsonNode args) {
         HttpRequest req = requireCurrentRequest(ctx);
         try {
             PatchedBody p = patchHttpRequestBodyLinesOnRequest(req, args);
@@ -1093,6 +602,7 @@ public final class HttpTargetSupport {
         }
         return i;
     }
+
 
     private static byte[] newBodyBytesForSetRequest(JsonNode args) {
         JsonNode utf8Node = argFirst(args, "body_utf8", "bodyUtf8", "bodyUTF8");
@@ -1136,7 +646,7 @@ public final class HttpTargetSupport {
         return withBodyBytes(req, newBodyBytesForSetRequest(args));
     }
 
-    private static String setHttpRequestBody(AgentToolContext ctx, JsonNode args) {
+    public static String setHttpRequestBody(AgentToolContext ctx, JsonNode args) {
         HttpRequest req = requireCurrentRequest(ctx);
         try {
             int before = bytesFromByteArray(() -> req.body()).length;
@@ -1155,6 +665,7 @@ public final class HttpTargetSupport {
             return errorJson(e.getMessage());
         }
     }
+
 
     /**
      * Rebuilds the {@code Cookie} header: removes any pair whose name matches case-insensitively, then adds {@code
@@ -1228,7 +739,7 @@ public final class HttpTargetSupport {
 
     private record SemanticApplyResult(HttpRequest request, String errorResultJson) {}
 
-    private static SemanticApplyResult applyHttpRequestSemanticChangesToRequest0(HttpRequest start, JsonNode args) {
+    private static SemanticApplyResult applySemanticChangesToRequest0(HttpRequest start, JsonNode args) {
         HttpRequest[] current = {start};
         JsonNode opsNode = args.get("operations");
         if (opsNode == null || !opsNode.isArray()) {
@@ -1246,11 +757,11 @@ public final class HttpTargetSupport {
                             "operations must not be empty",
                             "Include at least one operation object in \"operations\" (see \"example\")."));
         }
-        if (n > MAX_SEMANTIC_OPERATIONS) {
+        if (n > ApplyHttpRequestSemanticChangesTool.MAX_OPERATIONS) {
             return new SemanticApplyResult(
                     null,
                     semanticOperationsShapeError(
-                            "at most " + MAX_SEMANTIC_OPERATIONS + " operations per call",
+                            "at most " + ApplyHttpRequestSemanticChangesTool.MAX_OPERATIONS + " operations per call",
                             "Split work into multiple apply_http_request_semantic_changes calls."));
         }
         for (int i = 0; i < n; i++) {
@@ -1285,9 +796,9 @@ public final class HttpTargetSupport {
         return write(n);
     }
 
-    private static String applyHttpRequestSemanticChanges(AgentToolContext ctx, JsonNode args) {
+    public static String applyHttpRequestSemanticChanges(AgentToolContext ctx, JsonNode args) {
         SemanticApplyResult r =
-                applyHttpRequestSemanticChangesToRequest0(requireCurrentRequest(ctx), args);
+                applySemanticChangesToRequest0(requireCurrentRequest(ctx), args);
         if (r.errorResultJson() != null) {
             return r.errorResultJson();
         }
@@ -1751,8 +1262,9 @@ public final class HttpTargetSupport {
         return out.toByteArray();
     }
 
+
     /** Tool result intentionally contains only {@code status_code} (no body or headers). */
-    private static String sendCurrentHttpRequest(AgentToolContext ctx) throws Exception {
+    public static String sendCurrentHttpRequest(AgentToolContext ctx) throws Exception {
         Callable<Integer> sender = ctx.sendCurrentHttpRequest();
         if (sender == null) {
             return errorJson("send is unavailable in this context");
@@ -1761,6 +1273,115 @@ public final class HttpTargetSupport {
         ObjectNode o = JSON.createObjectNode();
         o.put("status_code", code);
         return write(o);
+    }
+
+
+    public static String searchTabs(TreepeaterTabAgentBridge bridge, JsonNode args) {
+        int offset = 0;
+        JsonNode offN = argFirst(args, "offset");
+        if (offN != null && offN.isNumber()) {
+            offset = offN.intValue();
+        }
+        if (offset < 0) {
+            offset = 0;
+        }
+        int pageSize = SearchTabsTool.DEFAULT_PAGE_SIZE;
+        JsonNode psN = argFirst(args, "page_size", "pageSize");
+        if (psN != null && psN.isNumber()) {
+            pageSize = psN.intValue();
+        }
+        if (pageSize < 1) {
+            pageSize = SearchTabsTool.DEFAULT_PAGE_SIZE;
+        }
+        pageSize = Math.min(pageSize, SearchTabsTool.MAX_PAGE_SIZE);
+        String query = argTextAny(args, "query", "q", "search");
+        if (query.isEmpty()) {
+            query = null;
+        }
+        return bridge.searchTabs(offset, pageSize, query);
+    }
+
+    /** JSON body for {@link TreepeaterTabAgentBridge#searchTabs(int, int, String)}. */
+    public static String formatSearchTabsResponse(
+            int total, int offset, int pageSize, boolean hasMore, List<SearchTabRow> rows) {
+        ObjectNode root = JSON.createObjectNode();
+        root.put("total", total);
+        root.put("offset", offset);
+        root.put("page_size", pageSize);
+        root.put("has_more", hasMore);
+        if (hasMore) {
+            root.put("next_offset", offset + rows.size());
+        }
+        ArrayNode arr = root.putArray("tabs");
+        for (SearchTabRow r : rows) {
+            arr.add(searchTabRowToObject(r));
+        }
+        return write(root);
+    }
+
+    private static ObjectNode searchTabRowToObject(SearchTabRow r) {
+        ObjectNode o = JSON.createObjectNode();
+        o.put("request_node_id", r.requestNodeId());
+        o.put("title", r.title() != null ? r.title() : "");
+        o.put("selected", r.selected());
+        o.put("method", r.method() != null ? r.method() : "");
+        o.put("url", r.url() != null ? r.url() : "");
+        o.put("url_truncated", r.urlTruncated());
+        return o;
+    }
+
+
+    public static String copyTreepeaterNode(TreepeaterTabAgentBridge bridge, JsonNode args) {
+        OptionalInt sourceId = parseRequestNodeId(args);
+        if (sourceId.isEmpty()) {
+            return errorJson("request_node_id required");
+        }
+        String name = argTextAny(args, "name");
+        if (name.isEmpty()) {
+            return errorJson("name required");
+        }
+        SiblingCopyPlacement placement = parseCopySiblingPlacement(args);
+        if (placement == null) {
+            return errorJson("placement must be after, top, or bottom");
+        }
+        return bridge.copyTreepeaterNode(sourceId.getAsInt(), name, placement);
+    }
+
+    private static SiblingCopyPlacement parseCopySiblingPlacement(JsonNode args) {
+        String raw = argTextAny(args, "placement");
+        if (raw.isEmpty()) {
+            return SiblingCopyPlacement.AFTER_SOURCE;
+        }
+        return switch (raw.toLowerCase(Locale.ROOT)) {
+            case "after" -> SiblingCopyPlacement.AFTER_SOURCE;
+            case "top" -> SiblingCopyPlacement.PARENT_TOP;
+            case "bottom" -> SiblingCopyPlacement.PARENT_BOTTOM;
+            default -> null;
+        };
+    }
+
+    /** JSON body for {@link TreepeaterTabAgentBridge#copyTreepeaterNode(int, String)}. */
+    public static String formatCopyTreepeaterNodeResponse(int requestNodeId, String name) {
+        ObjectNode root = JSON.createObjectNode();
+        root.put("request_node_id", requestNodeId);
+        root.put("name", name != null ? name : "");
+        return write(root);
+    }
+
+
+    public static OptionalInt parseRequestNodeId(JsonNode args) {
+        if (args == null) {
+            return OptionalInt.empty();
+        }
+        JsonNode n = argFirst(args, "request_node_id", "requestNodeId");
+        if (n == null || n.isNull() || !n.isNumber()) {
+            return OptionalInt.empty();
+        }
+        int v = n.intValue();
+        if (v < 1) {
+            return OptionalInt.empty();
+        }
+        return OptionalInt.of(v);
     }
 
     private static List<HttpHeader> safeHeaders(java.util.function.Supplier<List<HttpHeader>> supplier) {
@@ -1895,6 +1516,15 @@ public final class HttpTargetSupport {
         return 0;
     }
 
+    private static String argTextAny(JsonNode args, String... keys) {
+        JsonNode v = argFirst(args, keys);
+        if (v == null) {
+            return "";
+        }
+        String s = v.isTextual() ? v.asText().trim() : v.asText();
+        return s != null ? s.trim() : "";
+    }
+
     private static String safeString(java.util.function.Supplier<String> supplier, String onFailure) {
         try {
             String s = supplier.get();
@@ -1922,131 +1552,6 @@ public final class HttpTargetSupport {
         }
     }
 
-    /** JSON tool result when the user declines to run a tool. */
-    public static String permissionDeniedResult() {
-        return ToolResults.permissionDenied();
-    }
-
-    private static final int MAX_SEMANTIC_HUMAN_DETAIL_CHARS = 12_000;
-
-    /** One line per operation for agent tool cards ({@link #humanToolUsage}). */
-    private static String formatSemanticOperationsHumanDetail(JsonNode args) {
-        JsonNode arr = args.get("operations");
-        if (arr == null || !arr.isArray()) {
-            return "(no operations array)";
-        }
-        if (arr.isEmpty()) {
-            return "(empty operations)";
-        }
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < arr.size(); i++) {
-            if (i > 0) {
-                sb.append('\n');
-            }
-            sb.append(i + 1).append(". ");
-            JsonNode raw = arr.get(i);
-            if (raw == null || !raw.isObject()) {
-                sb.append("(not an object)");
-            } else {
-                sb.append(formatOneSemanticOperationHumanLine((ObjectNode) raw));
-            }
-            if (sb.length() >= MAX_SEMANTIC_HUMAN_DETAIL_CHARS) {
-                sb.append("\n… (truncated)");
-                break;
-            }
-        }
-        return sb.toString();
-    }
-
-    private static String formatOneSemanticOperationHumanLine(ObjectNode op) {
-        String type = opStringLower(op, "type");
-        String action = opStringLower(op, "action");
-        if (type.isEmpty()) {
-            type = "?";
-        }
-        if (action.isEmpty()) {
-            action = "?";
-        }
-        String key = opTextTrimmed(op, "key");
-        String path = opTextTrimmed(op, "path");
-        boolean hasValue = op.has("value");
-        JsonNode val = op.get("value");
-
-        return switch (type) {
-            case "header" ->
-                    "remove".equals(action)
-                            ? ("Remove header " + (key.isEmpty() ? "(unnamed)" : truncateForStatus(key, 120)))
-                            : ("Set header "
-                                    + (key.isEmpty() ? "(unnamed)" : truncateForStatus(key, 80))
-                                    + " = "
-                                    + semanticValueHumanSnippet(val, hasValue));
-            case "cookie" ->
-                    "remove".equals(action)
-                            ? ("Remove cookie " + (key.isEmpty() ? "(unnamed)" : truncateForStatus(key, 120)))
-                            : ("Set cookie "
-                                    + (key.isEmpty() ? "(unnamed)" : truncateForStatus(key, 80))
-                                    + " = "
-                                    + semanticValueHumanSnippet(val, hasValue));
-            case "json" ->
-                    "remove".equals(action)
-                            ? ("JSON remove " + (path.isEmpty() ? "(no path)" : truncateForStatus(path, 200)))
-                            : ("JSON set "
-                                    + (path.isEmpty() ? "(no path)" : truncateForStatus(path, 200))
-                                    + " → "
-                                    + semanticValueHumanSnippet(val, hasValue));
-            case "xml" ->
-                    "remove".equals(action)
-                            ? ("XML remove " + (path.isEmpty() ? "(no path)" : truncateForStatus(path, 200)))
-                            : ("XML set "
-                                    + (path.isEmpty() ? "(no path)" : truncateForStatus(path, 200))
-                                    + " → "
-                                    + semanticValueHumanSnippet(val, hasValue));
-            case "method" ->
-                    "Set method "
-                            + (hasValue && val != null && val.isTextual()
-                                    ? truncateForStatus(val.asText().trim(), 64)
-                                    : semanticValueHumanSnippet(val, hasValue));
-            case "url" ->
-                    "Set URL "
-                            + (hasValue && val != null && val.isTextual()
-                                    ? truncateForStatus(val.asText().trim(), 220)
-                                    : semanticValueHumanSnippet(val, hasValue));
-            default -> {
-                StringBuilder b = new StringBuilder();
-                b.append(type).append(' ').append(action);
-                if (!key.isEmpty()) {
-                    b.append(" · key ").append(truncateForStatus(key, 80));
-                }
-                if (!path.isEmpty()) {
-                    b.append(" · path ").append(truncateForStatus(path, 120));
-                }
-                if (hasValue) {
-                    b.append(" → ").append(semanticValueHumanSnippet(val, true));
-                }
-                yield truncateForStatus(b.toString(), 300);
-            }
-        };
-    }
-
-    private static String semanticValueHumanSnippet(JsonNode val, boolean hasValue) {
-        if (!hasValue) {
-            return "(value omitted)";
-        }
-        if (val == null || val.isNull()) {
-            return "null";
-        }
-        if (val.isTextual()) {
-            return quotedSnippet(val.asText(), 100);
-        }
-        if (val.isNumber() || val.isBoolean()) {
-            return val.asText();
-        }
-        try {
-            return singleLinePreview(JSON.writeValueAsString(val), 160);
-        } catch (JsonProcessingException e) {
-            return singleLinePreview(val.toString(), 160);
-        }
-    }
 
     /**
      * Preview-only mutation: same in-memory result as the corresponding tool, without updating the Repeater editor.
@@ -2064,7 +1569,7 @@ public final class HttpTargetSupport {
                 case PatchHttpRequestBodyLinesTool.NAME -> patchHttpRequestBodyLinesOnRequest(current, args).request();
                 case SetHttpRequestBodyTool.NAME -> setHttpRequestBodyOnRequest(current, args);
                 case ApplyHttpRequestSemanticChangesTool.NAME -> {
-                    SemanticApplyResult s = applyHttpRequestSemanticChangesToRequest0(current, args);
+                    SemanticApplyResult s = applySemanticChangesToRequest0(current, args);
                     yield s.errorResultJson() != null ? null : s.request();
                 }
                 default -> null;
@@ -2074,257 +1579,10 @@ public final class HttpTargetSupport {
         }
     }
 
-    /**
-     * Title and optional detail for the tool transcript card. Mutations that change the in-editor request include a
-     * non-empty {@link HumanToolUsage#detail} describing the change, except for {@link #SetHttpRequestBodyTool.NAME} where
-     * the new body is omitted.
-     *
-     * @param viewerHistoryIndex the tab's current history index, or {@link Integer#MIN_VALUE} if unknown; when equal to
-     *     {@code history_index} in the tool args, the "· history #n" suffix is omitted.
-     */
-    public static HumanToolUsage humanToolUsage(String toolName, String argumentsJson, int viewerHistoryIndex) {
-        return humanToolUsage(toolName, argumentsJson, viewerHistoryIndex, Integer.MIN_VALUE);
-    }
-
-    /**
-     * @return label for an editor tool, or {@code null} when {@code toolName} is not handled here
-     */
-    public static HumanToolUsage humanToolUsage(
-            String toolName, String argumentsJson, int viewerHistoryIndex, int uiSelectedRequestNodeId) {
-        JsonNode args;
-        try {
-            args = parseArgs(argumentsJson);
-        } catch (Exception e) {
-            args = JSON.createObjectNode();
+    private static JsonNode parseArgs(String argumentsJson) throws JsonProcessingException {
+        if (argumentsJson == null || argumentsJson.isBlank()) {
+            return JSON.createObjectNode();
         }
-        JsonNode sideNode = argFirst(args, "side", "Side", "http_side", "httpSide");
-        String sideNorm =
-                sideNode != null && sideNode.isTextual()
-                        ? normalizeSideLiteral(sideNode.asText())
-                        : "";
-        String sideLabel =
-                "response".equals(sideNorm)
-                        ? "Response"
-                        : "request".equals(sideNorm) ? "Request" : "";
-        String hist = formatHistoryIndexArg(args, viewerHistoryIndex);
-        String nodeSuf = formatRequestNodeIdSuffix(args, uiSelectedRequestNodeId);
-        return switch (toolName) {
-            case GetCurrentHttpTargetTool.NAME ->
-                    new HumanToolUsage("Getting current repeater target and send history" + nodeSuf, "");
-            case ReadHttpMessageTool.NAME -> {
-                String head =
-                        sideLabel.isEmpty()
-                                ? "Reading HTTP message"
-                                : "Reading " + sideLabel.toLowerCase();
-                StringBuilder b = new StringBuilder(head);
-                if (!hist.isEmpty()) {
-                    b.append(hist);
-                }
-                int offset = readOffsetArg(args);
-                int maxBytes = readMaxBytesForReadMessage(args);
-                b.append(" · offset ").append(offset).append(", max ").append(maxBytes).append(" B");
-                b.append(nodeSuf);
-                yield new HumanToolUsage(b.toString(), "");
-            }
-            case SearchHttpMessageTool.NAME -> {
-                String head =
-                        sideLabel.isEmpty()
-                                ? "Searching HTTP message"
-                                : "Searching " + sideLabel.toLowerCase();
-                StringBuilder b = new StringBuilder(head);
-                String sc = resolveSearchScope(args);
-                if (!"all".equals(sc)) {
-                    b.append(" (scope=").append(sc).append(")");
-                }
-                if (!hist.isEmpty()) {
-                    b.append(hist);
-                }
-                String pat = argTextAny(args, "pattern", "regex", "re");
-                String det = pat.isEmpty() ? "" : quotedSnippet(pat, 96);
-                b.append(nodeSuf);
-                yield new HumanToolUsage(b.toString(), det);
-            }
-            case ReplaceInHttpRequestBodyTool.NAME -> {
-                String oldT = argTextAny(args, "old_text", "oldText");
-                String newT = "";
-                JsonNode newNode = argFirst(args, "new_text", "newText");
-                if (newNode != null && !newNode.isNull()) {
-                    newT = newNode.asText();
-                }
-                boolean replaceAll = args.has("replace_all") && args.get("replace_all").asBoolean(false);
-                int maxRep = 1;
-                if (!replaceAll) {
-                    JsonNode m = argFirst(args, "max_replacements", "maxReplacements");
-                    if (m != null) {
-                        maxRep = jsonToInt(m);
-                    }
-                }
-                StringBuilder d = new StringBuilder();
-                d.append("Find ")
-                        .append(quotedSnippet(oldT, 72))
-                        .append(" → replace with ")
-                        .append(quotedSnippet(newT, 72));
-                if (replaceAll) {
-                    d.append(" · all occurrences");
-                } else if (maxRep > 1) {
-                    d.append(" · up to ").append(maxRep).append(" time(s)");
-                }
-                yield new HumanToolUsage("Replace text in request body" + nodeSuf, d.toString());
-            }
-            case PatchHttpRequestBodyLinesTool.NAME -> {
-                int sl = jsonToInt(argFirst(args, "start_line", "startLine"));
-                int el = jsonToInt(argFirst(args, "end_line", "endLine"));
-                JsonNode contentNode = argFirst(args, "content");
-                String content = contentNode != null && !contentNode.isNull() ? contentNode.asText() : "";
-                String preview = singleLinePreview(content, 200);
-                String det =
-                        "Lines " + sl + "–" + el
-                                + (preview.isEmpty() ? "" : " · new text: " + preview);
-                yield new HumanToolUsage("Patch request body line range" + nodeSuf, det);
-            }
-            case SetHttpRequestBodyTool.NAME -> new HumanToolUsage("Setting full request body" + nodeSuf, "");
-            case ApplyHttpRequestSemanticChangesTool.NAME ->
-                    new HumanToolUsage(
-                            "Apply semantic request changes" + nodeSuf, formatSemanticOperationsHumanDetail(args));
-            case SendCurrentHttpRequestTool.NAME ->
-                    new HumanToolUsage(
-                            "Send current HTTP request" + nodeSuf,
-                            "Sends the in-editor request and waits for the response (status only)");
-            case SearchTabsTool.NAME -> {
-                int off = 0;
-                JsonNode offN = argFirst(args, "offset");
-                if (offN != null && offN.isNumber()) {
-                    off = Math.max(0, offN.intValue());
-                }
-                int ps = DEFAULT_TAB_PAGE_SIZE;
-                JsonNode psN = argFirst(args, "page_size", "pageSize");
-                if (psN != null && psN.isNumber()) {
-                    ps = Math.min(MAX_TAB_PAGE_SIZE, Math.max(1, psN.intValue()));
-                }
-                String q = argTextAny(args, "query", "q", "search");
-                String det = q.isEmpty() ? "all tabs" : quotedSnippet(q, 80);
-                yield new HumanToolUsage("Search repeater tabs · offset " + off + ", page " + ps, det);
-            }
-            case CopyTreepeaterNodeTool.NAME -> {
-                JsonNode idN = argFirst(args, "request_node_id", "requestNodeId");
-                int srcId = idN != null && idN.isNumber() ? idN.intValue() : 0;
-                String newName = argTextAny(args, "name");
-                String placement = argTextAny(args, "placement");
-                StringBuilder det = new StringBuilder();
-                if (!newName.isEmpty()) {
-                    det.append(quotedSnippet(newName, 80));
-                }
-                if (!placement.isEmpty()) {
-                    if (!det.isEmpty()) {
-                        det.append(" · ");
-                    }
-                    det.append("placement ").append(placement);
-                }
-                yield new HumanToolUsage("Copy treepeater node · node id " + srcId, det.toString());
-            }
-            case BatchHttpTargetToolsTool.NAME -> {
-                JsonNode toolsNode = argFirst(args, "tools");
-                int steps =
-                        toolsNode != null && toolsNode.isArray() ? toolsNode.size() : 0;
-                yield new HumanToolUsage("Run batched tools · " + steps + " step(s)", "");
-            }
-            default -> null;
-        };
-    }
-
-    private static String quotedSnippet(String s, int maxTotal) {
-        if (s == null) {
-            s = "";
-        }
-        return "\"" + truncateForStatus(s, Math.max(8, maxTotal - 2)) + "\"";
-    }
-
-    private static String singleLinePreview(String s, int max) {
-        if (s == null || s.isEmpty()) {
-            return "";
-        }
-        String one = s.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ');
-        while (one.contains("  ")) {
-            one = one.replace("  ", " ");
-        }
-        return truncateForStatus(one.trim(), max);
-    }
-
-    /**
-     * When {@code request_node_id} is in args, appends {@code · node id n} unless it matches {@code uiSelectedId}.
-     * When args omit it, appends the UI-selected id if known. Mirrors {@link #formatHistoryIndexArg} for explicit args.
-     */
-    private static String formatRequestNodeIdSuffix(JsonNode args, int uiSelectedId) {
-        if (args == null) {
-            return "";
-        }
-        JsonNode n = argFirst(args, "request_node_id", "requestNodeId");
-        if (n != null && !n.isNull()) {
-            int id;
-            if (n.isNumber()) {
-                id = n.intValue();
-            } else if (n.isTextual()) {
-                try {
-                    id = Integer.parseInt(n.asText().trim());
-                } catch (NumberFormatException e) {
-                    return "";
-                }
-            } else {
-                return "";
-            }
-            if (id < 1) {
-                return "";
-            }
-            if (uiSelectedId != Integer.MIN_VALUE && id == uiSelectedId) {
-                return "";
-            }
-            return " · node id " + id;
-        }
-        if (uiSelectedId != Integer.MIN_VALUE) {
-            return " · node id " + uiSelectedId;
-        }
-        return "";
-    }
-
-    /**
-     * Omits the history suffix when the tool targets the same entry the user is viewing, or when the viewer index is
-     * unknown ({@link Integer#MIN_VALUE} — suffix is shown so the label stays explicit).
-     */
-    private static String formatHistoryIndexArg(JsonNode args, int viewerHistoryIndex) {
-        JsonNode v = argFirst(args, "history_index", "historyIndex", "index", "entry_index", "entryIndex");
-        if (v == null) {
-            return "";
-        }
-        int idx = jsonToInt(v);
-        if (viewerHistoryIndex != Integer.MIN_VALUE && idx == viewerHistoryIndex) {
-            return "";
-        }
-        return " · history #" + idx;
-    }
-
-    private static String argTextAny(JsonNode args, String... keys) {
-        JsonNode v = argFirst(args, keys);
-        if (v == null) {
-            return "";
-        }
-        String s = v.isTextual() ? v.asText().trim() : v.asText();
-        return s != null ? s.trim() : "";
-    }
-
-    private static String truncateForStatus(String s, int maxChars) {
-        if (s == null || s.isEmpty()) {
-            return "";
-        }
-        if (s.length() <= maxChars) {
-            return s;
-        }
-        return s.substring(0, maxChars - 1) + "…";
-    }
-
-    private static String escapeJson(String s) {
-        if (s == null) {
-            return "";
-        }
-        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+        return JSON.readTree(argumentsJson);
     }
 }

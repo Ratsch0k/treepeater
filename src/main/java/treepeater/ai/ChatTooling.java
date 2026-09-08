@@ -79,12 +79,11 @@ public record ChatTooling(
         String name = tc.name();
         int histForCard =
                 this.agentBridge != null
-                        ? treepeater.api.tools.http.support.HttpTargetSupport.viewerHistoryIndexForToolCard(
+                        ? treepeater.api.tools.http.HttpToolLabels.viewerHistoryIndexForToolCard(
                                 name, argsJson, this.agentBridge)
                         : currentHistoryIndexForToolStatus();
         int uiNodeForCard =
-                treepeater.api.tools.http.support.HttpTargetSupport.uiSelectedRequestNodeIdForToolCard(
-                        this.agentBridge);
+                treepeater.api.tools.http.HttpToolLabels.uiSelectedRequestNodeIdForToolCard(this.agentBridge);
         HumanToolUsage label = ToolHumanUsage.forTool(name, argsJson, histForCard, uiNodeForCard, this.toolRegistry);
         ToolRunPolicy policy = this.toolRunPolicy;
         AtomicInteger batchChildSlot = new AtomicInteger(0);

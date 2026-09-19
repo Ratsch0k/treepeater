@@ -1,4 +1,4 @@
-package treepeater.ai;
+package treepeater.api.tools;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -28,7 +28,36 @@ import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
 
 import treepeater.TreepeaterModel.SiblingCopyPlacement;
+import treepeater.ai.AgentMode;
+import treepeater.ai.AgentToolContext;
+import treepeater.ai.ChatToolDefinition;
+import treepeater.ai.ChatToolInvokeContext;
+import treepeater.ai.HttpTargetSnapshot;
+import treepeater.ai.TreepeaterTabAgentBridge;
+import treepeater.ai.SearchTabRow;
+import treepeater.ai.ToolActionLevel;
+import treepeater.api.TreepeaterToolRegistry;
+import treepeater.ai.AgentModeToolPolicy;
+import treepeater.api.tools.core.ToolLabelContext;
+import treepeater.api.tools.core.ToolResults;
+import treepeater.api.tools.http.ApplyHttpRequestSemanticChangesTool;
+import treepeater.api.tools.http.BatchHttpTargetToolsTool;
+import treepeater.api.tools.http.CopyTreepeaterNodeTool;
+import treepeater.api.tools.http.GetCurrentHttpTargetTool;
+import treepeater.api.tools.http.PatchHttpRequestBodyLinesTool;
+import treepeater.api.tools.http.ReadHttpMessageTool;
+import treepeater.api.tools.http.ReplaceInHttpRequestBodyTool;
+import treepeater.api.tools.http.SearchHttpMessageTool;
+import treepeater.api.tools.http.SearchTabsTool;
+import treepeater.api.tools.http.SendCurrentHttpRequestTool;
+import treepeater.api.tools.http.SetHttpRequestBodyTool;
+import treepeater.api.tools.http.support.RequestPreview;
+import treepeater.api.tools.http.support.TabListingFormatter;
 
+/**
+ * Behavior tests for the built-in HTTP/editor tools, dispatched the same way production callers do: through
+ * {@link TreepeaterToolRegistry}, bypassing only the approval policy layer (covered separately below).
+ */
 class HttpTargetToolsTest {
 
     private static final ObjectMapper JSON = new ObjectMapper();
@@ -36,7 +65,7 @@ class HttpTargetToolsTest {
     private MockedStatic<ByteArray> byteArrayMock;
     private MockedStatic<HttpService> httpServiceMock;
 
-    // ===== mock lifecycle =====
+
 
     @BeforeEach
     void setUpMocks() {
@@ -78,7 +107,29 @@ class HttpTargetToolsTest {
         httpServiceMock.close();
     }
 
-    // ===== builder helpers =====
+
+
+    private static String invoke(String toolName, String argsJson, AgentToolContext ctx) {
+        return invoke(toolName, argsJson, TreepeaterTabAgentBridge.singleTab(ctx));
+    }
+
+    private static String invoke(String toolName, String argsJson, TreepeaterTabAgentBridge bridge) {
+        return TreepeaterToolRegistry.createEditorOnly(bridge)
+                .executeForChat(new ChatToolInvokeContext(toolName, argsJson));
+    }
+
+    private static HumanToolUsage humanLabel(String toolName, String argsJson, int viewerHistoryIndex) {
+        return humanLabel(toolName, argsJson, viewerHistoryIndex, Integer.MIN_VALUE);
+    }
+
+    private static HumanToolUsage humanLabel(
+            String toolName, String argsJson, int viewerHistoryIndex, int uiSelectedRequestNodeId) {
+        TreepeaterToolRegistry registry = TreepeaterToolRegistry.createEditorOnly(null);
+        return registry.humanLabelFor(
+                toolName, argsJson, new ToolLabelContext(viewerHistoryIndex, uiSelectedRequestNodeId));
+    }
+
+
 
     private static HttpHeader hdr(String name, String value) {
         HttpHeader h = mock(HttpHeader.class);
@@ -204,86 +255,111 @@ class HttpTargetToolsTest {
         return JSON.readTree(json);
     }
 
-    // ===== toolActionLevel =====
+    private static byte[] bodyBytes(HttpRequest request) {
+        ByteArray ba = request.body();
+        return ba != null && ba.getBytes() != null ? ba.getBytes() : new byte[0];
+    }
+
+    private static String bodyUtf8(HttpRequest request) {
+        return new String(bodyBytes(request), StandardCharsets.UTF_8);
+    }
+
+    private static TreepeaterToolRegistry editorRegistry(AgentToolContext ctx) {
+        return TreepeaterToolRegistry.createEditorOnly(TreepeaterTabAgentBridge.singleTab(ctx));
+    }
+
+
 
     @Test
     void toolActionLevel_readOnlyTools() {
-        assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.GET_CURRENT_HTTP_TARGET));
-        assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.READ_HTTP_MESSAGE));
-        assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.SEARCH_HTTP_MESSAGE));
-        assertEquals(ToolActionLevel.READ_ONLY, HttpTargetTools.toolActionLevel(HttpTargetTools.BATCH_HTTP_TARGET_TOOLS));
+        assertEquals(ToolActionLevel.READ_ONLY, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null)).actionLevelFor(GetCurrentHttpTargetTool.NAME));
+        assertEquals(ToolActionLevel.READ_ONLY, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null)).actionLevelFor(ReadHttpMessageTool.NAME));
+        assertEquals(ToolActionLevel.READ_ONLY, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null)).actionLevelFor(SearchHttpMessageTool.NAME));
+        assertEquals(ToolActionLevel.READ_ONLY, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null)).actionLevelFor(BatchHttpTargetToolsTool.NAME));
     }
 
     @Test
     void toolActionLevel_writeTools() {
-        assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.REPLACE_IN_HTTP_REQUEST_BODY));
-        assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.PATCH_HTTP_REQUEST_BODY_LINES));
-        assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.SET_HTTP_REQUEST_BODY));
-        assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES));
-        assertEquals(ToolActionLevel.WRITE, HttpTargetTools.toolActionLevel(HttpTargetTools.COPY_TREEPEATER_NODE));
+        assertEquals(ToolActionLevel.WRITE, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null)).actionLevelFor(ReplaceInHttpRequestBodyTool.NAME));
+        assertEquals(ToolActionLevel.WRITE, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null)).actionLevelFor(PatchHttpRequestBodyLinesTool.NAME));
+        assertEquals(ToolActionLevel.WRITE, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null)).actionLevelFor(SetHttpRequestBodyTool.NAME));
+        assertEquals(ToolActionLevel.WRITE, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null)).actionLevelFor(ApplyHttpRequestSemanticChangesTool.NAME));
+        assertEquals(ToolActionLevel.WRITE, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null)).actionLevelFor(CopyTreepeaterNodeTool.NAME));
     }
 
     @Test
     void toolActionLevel_executeTools() {
-        assertEquals(ToolActionLevel.EXECUTE, HttpTargetTools.toolActionLevel(HttpTargetTools.SEND_CURRENT_HTTP_REQUEST));
+        assertEquals(ToolActionLevel.EXECUTE, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null)).actionLevelFor(SendCurrentHttpRequestTool.NAME));
     }
 
     @Test
     void toolActionLevel_nullAndUnknown() {
-        assertNull(HttpTargetTools.toolActionLevel(null));
-        assertNull(HttpTargetTools.toolActionLevel("unknown_tool_xyz"));
+        assertNull(editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null)).actionLevelFor(null));
+        assertNull(editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null)).actionLevelFor("unknown_tool_xyz"));
     }
 
-    // ===== requiresUserApprovalInAgentMode =====
+
 
     @Test
     void approval_askMode_readToolsNeedNoApproval() {
-        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.READ_HTTP_MESSAGE, AgentMode.ASK));
-        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SEARCH_HTTP_MESSAGE, AgentMode.ASK));
+        assertFalse(new AgentModeToolPolicy(AgentMode.ASK, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval(ReadHttpMessageTool.NAME));
+        assertFalse(new AgentModeToolPolicy(AgentMode.ASK, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval(SearchHttpMessageTool.NAME));
     }
 
     @Test
     void approval_askMode_writeAndExecuteNeedApproval() {
-        assertTrue(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SET_HTTP_REQUEST_BODY, AgentMode.ASK));
-        assertTrue(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SEND_CURRENT_HTTP_REQUEST, AgentMode.ASK));
+        assertTrue(new AgentModeToolPolicy(AgentMode.ASK, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval(SetHttpRequestBodyTool.NAME));
+        assertTrue(new AgentModeToolPolicy(AgentMode.ASK, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval(SendCurrentHttpRequestTool.NAME));
     }
 
     @Test
     void approval_helperMode_onlyExecuteNeedsApproval() {
-        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.GET_CURRENT_HTTP_TARGET, AgentMode.HELPER));
-        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SET_HTTP_REQUEST_BODY, AgentMode.HELPER));
-        assertTrue(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SEND_CURRENT_HTTP_REQUEST, AgentMode.HELPER));
+        assertFalse(new AgentModeToolPolicy(AgentMode.HELPER, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval(GetCurrentHttpTargetTool.NAME));
+        assertFalse(new AgentModeToolPolicy(AgentMode.HELPER, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval(SetHttpRequestBodyTool.NAME));
+        assertTrue(new AgentModeToolPolicy(AgentMode.HELPER, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval(SendCurrentHttpRequestTool.NAME));
     }
 
     @Test
     void approval_autonomousMode_nothingNeedsApproval() {
-        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SEARCH_HTTP_MESSAGE, AgentMode.AUTONOMOUS));
-        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SET_HTTP_REQUEST_BODY, AgentMode.AUTONOMOUS));
-        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SEND_CURRENT_HTTP_REQUEST, AgentMode.AUTONOMOUS));
+        assertFalse(new AgentModeToolPolicy(AgentMode.AUTONOMOUS, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval(SearchHttpMessageTool.NAME));
+        assertFalse(new AgentModeToolPolicy(AgentMode.AUTONOMOUS, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval(SetHttpRequestBodyTool.NAME));
+        assertFalse(new AgentModeToolPolicy(AgentMode.AUTONOMOUS, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval(SendCurrentHttpRequestTool.NAME));
     }
 
     @Test
     void approval_unknownTool_requiresApprovalExceptAutonomous() {
-        assertTrue(HttpTargetTools.requiresUserApprovalInAgentMode("no_such_tool", AgentMode.ASK));
-        assertTrue(HttpTargetTools.requiresUserApprovalInAgentMode("no_such_tool", AgentMode.HELPER));
-        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode("no_such_tool", AgentMode.AUTONOMOUS));
+        assertTrue(new AgentModeToolPolicy(AgentMode.ASK, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval("no_such_tool"));
+        assertTrue(new AgentModeToolPolicy(AgentMode.HELPER, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval("no_such_tool"));
+        assertFalse(new AgentModeToolPolicy(AgentMode.AUTONOMOUS, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval("no_such_tool"));
     }
 
     @Test
     void approval_nullMode_treatedAsAsk() {
-        assertFalse(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.GET_CURRENT_HTTP_TARGET, null));
-        assertTrue(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SET_HTTP_REQUEST_BODY, null));
-        assertTrue(HttpTargetTools.requiresUserApprovalInAgentMode(HttpTargetTools.SEND_CURRENT_HTTP_REQUEST, null));
+        assertFalse(new AgentModeToolPolicy(null, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval(GetCurrentHttpTargetTool.NAME));
+        assertTrue(new AgentModeToolPolicy(null, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval(SetHttpRequestBodyTool.NAME));
+        assertTrue(new AgentModeToolPolicy(null, editorRegistry(singleEntryCtx(req("GET", "https://example.com/", "/", List.of(), new byte[0]), null))).requiresApproval(SendCurrentHttpRequestTool.NAME));
     }
 
-    // ===== definitions =====
+
 
     @Test
-    void definitions_returnsAllBuiltInTools() {
-        assertEquals(11, HttpTargetTools.definitions().size());
-        assertTrue(
-                HttpTargetTools.definitions().stream()
-                        .anyMatch(d -> HttpTargetTools.COPY_TREEPEATER_NODE.equals(d.name())));
+    void register_exposesAllBuiltInTools() {
+        HttpRequest request = req("GET", "https://example.com/", "/", List.of(), new byte[0]);
+        TreepeaterToolRegistry registry = editorRegistry(singleEntryCtx(request, null));
+        assertEquals(11, registry.tools().size());
+        assertTrue(registry.find(CopyTreepeaterNodeTool.NAME) != null);
+    }
+
+    @Test
+    void register_allHaveNonEmptyNamesAndDescriptions() throws Exception {
+        HttpRequest request = req("GET", "https://example.com/", "/", List.of(), new byte[0]);
+        for (ChatToolDefinition def : editorRegistry(singleEntryCtx(request, null)).chatToolDefinitions()) {
+            assertFalse(def.name().isBlank(), "tool name should not be blank");
+            assertFalse(def.description().isBlank(), "description should not be blank for: " + def.name());
+            assertFalse(def.parametersJsonSchema().isBlank(), "schema should not be blank for: " + def.name());
+            JsonNode schema = JSON.readTree(def.parametersJsonSchema());
+            assertTrue(schema.isObject(), "schema must parse as JSON object for: " + def.name());
+        }
     }
 
     @Test
@@ -296,7 +372,7 @@ class HttpTargetToolsTest {
                         + "{\"tool_name\":\"read_http_message\",\"arguments\":{\"side\":\"request\",\"offset\":0,\"max_bytes\":64}}"
                         + "]}";
         JsonNode result =
-                parse(HttpTargetTools.execute(HttpTargetTools.BATCH_HTTP_TARGET_TOOLS, batch, ctx));
+                parse(invoke(BatchHttpTargetToolsTool.NAME, batch, ctx));
         JsonNode results = result.get("results");
         assertEquals(2, results.size());
         assertEquals("get_current_http_target", results.get(0).get("tool_name").asText());
@@ -312,12 +388,12 @@ class HttpTargetToolsTest {
         String batch =
                 "{\"tools\":[{\"tool_name\":\"not_a_real_tool\",\"arguments\":{}}]}";
         JsonNode result =
-                parse(HttpTargetTools.execute(HttpTargetTools.BATCH_HTTP_TARGET_TOOLS, batch, ctx));
+                parse(invoke(BatchHttpTargetToolsTool.NAME, batch, ctx));
         JsonNode row = result.get("results").get(0);
         assertTrue(row.get("result").get("error").asText().contains("unknown tool"));
     }
 
-    // ===== result cap =====
+
 
     @Test
     void execute_cappedWhenResultExceedsLimit() throws Exception {
@@ -329,8 +405,8 @@ class HttpTargetToolsTest {
         AgentToolContext ctx = singleEntryCtx(request, null);
 
         JsonNode result = parse(
-                HttpTargetTools.execute(
-                        HttpTargetTools.SEARCH_HTTP_MESSAGE,
+                invoke(
+                        SearchHttpMessageTool.NAME,
                         "{\"side\":\"request\",\"scope\":\"body\",\"pattern\":\"(A{200000})\"}", ctx));
 
         assertEquals("tool_result_too_large", result.get("error").asText());
@@ -340,23 +416,12 @@ class HttpTargetToolsTest {
         assertTrue(result.has("hint"), "cap response should point the model at paginated alternatives");
     }
 
-    @Test
-    void definitions_allHaveNonEmptyNamesAndDescriptions() throws Exception {
-        for (ChatToolDefinition def : HttpTargetTools.definitions()) {
-            assertFalse(def.name().isBlank(), "tool name should not be blank");
-            assertFalse(def.description().isBlank(), "description should not be blank for: " + def.name());
-            assertFalse(def.parametersJsonSchema().isBlank(), "schema should not be blank for: " + def.name());
-            JsonNode schema = JSON.readTree(def.parametersJsonSchema());
-            assertTrue(schema.isObject(), "schema must parse as JSON object for: " + def.name());
-        }
-    }
 
-    // ===== execute – error cases =====
 
     @Test
     void execute_nullContext_returnsError() throws Exception {
         JsonNode result =
-                parse(HttpTargetTools.execute(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{}", (AgentToolContext) null));
+                parse(invoke(GetCurrentHttpTargetTool.NAME, "{}", (AgentToolContext) null));
         assertTrue(result.has("error"), "expected error field");
     }
 
@@ -364,7 +429,7 @@ class HttpTargetToolsTest {
     void execute_invalidJsonArgs_returnsError() throws Exception {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null);
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "NOT{JSON", ctx));
+        JsonNode result = parse(invoke(GetCurrentHttpTargetTool.NAME, "NOT{JSON", ctx));
         assertTrue(result.has("error"));
     }
 
@@ -372,18 +437,18 @@ class HttpTargetToolsTest {
     void execute_unknownTool_returnsErrorWithToolName() throws Exception {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null);
-        JsonNode result = parse(HttpTargetTools.execute("no_such_tool", "{}", ctx));
+        JsonNode result = parse(invoke("no_such_tool", "{}", ctx));
         assertTrue(result.has("error"));
         assertTrue(result.get("error").asText().contains("no_such_tool"));
     }
 
-    // ===== get_current_http_target =====
+
 
     @Test
     void getCurrentHttpTarget_returnsTargetFieldsAndHistoryObject() throws Exception {
         HttpRequest request = req("GET", "https://example.com/path", "/path", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null);
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{}", ctx));
+        JsonNode result = parse(invoke(GetCurrentHttpTargetTool.NAME, "{}", ctx));
 
         assertEquals("https", result.get("scheme").asText());
         assertEquals("example.com", result.get("host").asText());
@@ -395,14 +460,14 @@ class HttpTargetToolsTest {
         assertEquals(42, result.get("request_node_id").asInt());
     }
 
-    // ===== read_http_message & search_http_message =====
+
 
     @Test
     void readHttpMessage_missingSide_returnsError() throws Exception {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         stubToByteArray(request, "GET /x HTTP/1.1\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
         AgentToolContext ctx = singleEntryCtx(request, null);
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.READ_HTTP_MESSAGE, "{}", ctx));
+        JsonNode result = parse(invoke(ReadHttpMessageTool.NAME, "{}", ctx));
         assertTrue(result.has("error"));
     }
 
@@ -417,8 +482,8 @@ class HttpTargetToolsTest {
         int hb = head.length();
 
         JsonNode start = parse(
-                HttpTargetTools.execute(
-                        HttpTargetTools.READ_HTTP_MESSAGE, "{\"side\":\"request\",\"max_bytes\":" + full.length + "}", ctx));
+                invoke(
+                        ReadHttpMessageTool.NAME, "{\"side\":\"request\",\"max_bytes\":" + full.length + "}", ctx));
         assertEquals("request", start.get("side").asText());
         assertEquals(full.length, start.get("total_bytes").asInt());
         assertEquals(hb, start.get("header_bytes").asInt());
@@ -426,8 +491,8 @@ class HttpTargetToolsTest {
         assertEquals(fullStr, start.get("text").asText());
 
         JsonNode body = parse(
-                HttpTargetTools.execute(
-                        HttpTargetTools.READ_HTTP_MESSAGE,
+                invoke(
+                        ReadHttpMessageTool.NAME,
                         "{\"side\":\"request\",\"offset\":" + hb + "}",
                         ctx));
         assertEquals("HELLO", body.get("text").asText());
@@ -442,7 +507,7 @@ class HttpTargetToolsTest {
         HttpRequest reqR = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         stubToByteArray(res, w);
         AgentToolContext ctx = singleEntryCtx(reqR, res);
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.READ_HTTP_MESSAGE, "{\"side\":\"res\"}", ctx));
+        JsonNode result = parse(invoke(ReadHttpMessageTool.NAME, "{\"side\":\"res\"}", ctx));
         assertFalse(result.has("error"));
         assertTrue(result.get("text").asText().startsWith("HTTP/1.1 200"));
     }
@@ -457,8 +522,8 @@ class HttpTargetToolsTest {
         stubToByteArray(request, full);
         AgentToolContext ctx = singleEntryCtx(request, null);
         JsonNode r = parse(
-                HttpTargetTools.execute(
-                        HttpTargetTools.READ_HTTP_MESSAGE,
+                invoke(
+                        ReadHttpMessageTool.NAME,
                         "{\"side\":\"request\",\"offset\":" + p.length() + ",\"max_bytes\":9999999999}",
                         ctx));
         assertEquals(p.length() + 2 * maxB, r.get("total_bytes").asInt());
@@ -478,8 +543,8 @@ class HttpTargetToolsTest {
         AgentToolContext ctx = singleEntryCtx(request, null);
         int hb = firstDoubleCrlfEnd(full);
         JsonNode r = parse(
-                HttpTargetTools.execute(
-                        HttpTargetTools.READ_HTTP_MESSAGE,
+                invoke(
+                        ReadHttpMessageTool.NAME,
                         "{\"side\":\"request\",\"offset\":" + hb + "}",
                         ctx));
         assertEquals("base64", r.get("encoding").asText());
@@ -503,8 +568,8 @@ class HttpTargetToolsTest {
         stubToByteArray(request, w);
         AgentToolContext ctx = singleEntryCtx(request, null);
         // JSON needs \\ before s so the pattern string contains the regex \\s (whitespace), not invalid JSON \\s
-        String raw = HttpTargetTools.execute(
-                HttpTargetTools.SEARCH_HTTP_MESSAGE,
+        String raw = invoke(
+                SearchHttpMessageTool.NAME,
                 "{\"side\":\"request\",\"pattern\":\"(?im)^Host:\\\\s*(.+)$\"}",
                 ctx);
         JsonNode r = parse(raw);
@@ -528,12 +593,12 @@ class HttpTargetToolsTest {
         stubToByteArray(request, w);
         AgentToolContext ctx = singleEntryCtx(request, null);
         JsonNode all = parse(
-                HttpTargetTools.execute(
-                        HttpTargetTools.SEARCH_HTTP_MESSAGE, "{\"side\":\"request\",\"pattern\":\"Host:\",\"scope\":\"all\"}", ctx));
+                invoke(
+                        SearchHttpMessageTool.NAME, "{\"side\":\"request\",\"pattern\":\"Host:\",\"scope\":\"all\"}", ctx));
         assertTrue(all.get("match_count").asInt() > 1);
         JsonNode hdr = parse(
-                HttpTargetTools.execute(
-                        HttpTargetTools.SEARCH_HTTP_MESSAGE, "{\"side\":\"request\",\"pattern\":\"Host:\",\"scope\":\"headers\"}", ctx));
+                invoke(
+                        SearchHttpMessageTool.NAME, "{\"side\":\"request\",\"pattern\":\"Host:\",\"scope\":\"headers\"}", ctx));
         assertEquals(1, hdr.get("match_count").asInt());
     }
 
@@ -546,8 +611,8 @@ class HttpTargetToolsTest {
         stubToByteArray(res, w);
         AgentToolContext ctx = singleEntryCtx(request, res);
         JsonNode r = parse(
-                HttpTargetTools.execute(
-                        HttpTargetTools.SEARCH_HTTP_MESSAGE,
+                invoke(
+                        SearchHttpMessageTool.NAME,
                         "{\"side\":\"response\",\"scope\":\"body\",\"pattern\":\"tok456\"}",
                         ctx));
         assertEquals(1, r.get("match_count").asInt());
@@ -561,8 +626,8 @@ class HttpTargetToolsTest {
         stubToByteArray(request, w);
         AgentToolContext ctx = singleEntryCtx(request, null);
         JsonNode r = parse(
-                HttpTargetTools.execute(
-                        HttpTargetTools.SEARCH_HTTP_MESSAGE,
+                invoke(
+                        SearchHttpMessageTool.NAME,
                         "{\"side\":\"request\",\"scope\":\"body\",\"pattern\":\"a\",\"max_matches\":2}",
                         ctx));
         assertEquals(2, r.get("match_count").asInt());
@@ -578,8 +643,8 @@ class HttpTargetToolsTest {
         stubToByteArray(request, w);
         AgentToolContext ctx = singleEntryCtx(request, null);
         JsonNode r = parse(
-                HttpTargetTools.execute(
-                        HttpTargetTools.SEARCH_HTTP_MESSAGE,
+                invoke(
+                        SearchHttpMessageTool.NAME,
                         "{\"side\":\"request\",\"scope\":\"body\",\"pattern\":\"ghij\",\"context_bytes\":3}",
                         ctx));
         String ctxBefore = r.get("matches").get(0).get("context_before").asText();
@@ -594,8 +659,8 @@ class HttpTargetToolsTest {
         stubToByteArray(request, "GET / HTTP/1.1\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1));
         AgentToolContext ctx = singleEntryCtx(request, null);
         JsonNode r = parse(
-                HttpTargetTools.execute(
-                        HttpTargetTools.SEARCH_HTTP_MESSAGE, "{\"side\":\"request\",\"pattern\":\"(\"}", ctx));
+                invoke(
+                        SearchHttpMessageTool.NAME, "{\"side\":\"request\",\"pattern\":\"(\"}", ctx));
         assertTrue(r.get("error").asText().contains("regex") || r.get("error").asText().contains("Unclosed"));
     }
 
@@ -606,7 +671,7 @@ class HttpTargetToolsTest {
         AgentToolContext ctx = singleEntryCtx(request, null);
         String p = "x".repeat(1025);
         String args = "{\"side\":\"request\",\"pattern\":" + JSON.writeValueAsString(p) + "}";
-        JsonNode r = parse(HttpTargetTools.execute(HttpTargetTools.SEARCH_HTTP_MESSAGE, args, ctx));
+        JsonNode r = parse(invoke(SearchHttpMessageTool.NAME, args, ctx));
         assertTrue(r.get("error").asText().toLowerCase().contains("pattern"));
     }
 
@@ -620,8 +685,8 @@ class HttpTargetToolsTest {
         AgentToolContext ctx = singleEntryCtx(request, null);
         long t0 = System.nanoTime();
         JsonNode r = parse(
-                HttpTargetTools.execute(
-                        HttpTargetTools.SEARCH_HTTP_MESSAGE, "{\"side\":\"request\",\"scope\":\"body\",\"pattern\":\"NOMATCH\"}", ctx));
+                invoke(
+                        SearchHttpMessageTool.NAME, "{\"side\":\"request\",\"scope\":\"body\",\"pattern\":\"NOMATCH\"}", ctx));
         long ms = (System.nanoTime() - t0) / 1_000_000L;
         assertTrue(ms < 10_000, "search should not hang, took " + ms + "ms");
         assertEquals(0, r.get("match_count").asInt());
@@ -640,12 +705,12 @@ class HttpTargetToolsTest {
         stubToByteArray(request, w);
         AgentToolContext ctx = singleEntryCtx(request, null);
         JsonNode r = parse(
-                HttpTargetTools.execute(
-                        HttpTargetTools.SEARCH_HTTP_MESSAGE, "{\"side\":\"request\",\"scope\":\"body\",\"pattern\":\".\"}", ctx));
+                invoke(
+                        SearchHttpMessageTool.NAME, "{\"side\":\"request\",\"scope\":\"body\",\"pattern\":\".\"}", ctx));
         assertTrue(r.get("matches").get(0).has("match_base64"));
     }
 
-    // ===== replace_in_http_request_body =====
+
 
     @Test
     void replaceInHttpRequestBody_singleReplacement() throws Exception {
@@ -654,7 +719,7 @@ class HttpTargetToolsTest {
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), body);
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.REPLACE_IN_HTTP_REQUEST_BODY,
+        JsonNode result = parse(invoke(ReplaceInHttpRequestBodyTool.NAME,
                 "{\"old_text\":\"hello\",\"new_text\":\"goodbye\"}", ctx));
 
         assertTrue(result.get("ok").asBoolean());
@@ -663,32 +728,37 @@ class HttpTargetToolsTest {
                 result.get("bytes_after").asInt());
         assertEquals(1, result.get("replacements").asInt());
         assertNotNull(applied.get(), "applyLiveRequest should have been called");
+        assertEquals("goodbye world", bodyUtf8(applied.get()));
     }
 
     @Test
     void replaceInHttpRequestBody_oldTextNotFound_returnsError() throws Exception {
         byte[] body = "hello world".getBytes(StandardCharsets.UTF_8);
+        AtomicReference<HttpRequest> applied = new AtomicReference<>();
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), body);
-        AgentToolContext ctx = singleEntryCtx(request, null);
+        AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.REPLACE_IN_HTTP_REQUEST_BODY,
+        JsonNode result = parse(invoke(ReplaceInHttpRequestBodyTool.NAME,
                 "{\"old_text\":\"notpresent\",\"new_text\":\"x\"}", ctx));
 
         assertTrue(result.has("error"));
         assertTrue(result.get("error").asText().contains("not found"));
+        assertNull(applied.get(), "request must not be committed when replacement fails");
     }
 
     @Test
     void replaceInHttpRequestBody_notUnique_returnsError() throws Exception {
         byte[] body = "aa bb aa".getBytes(StandardCharsets.UTF_8);
+        AtomicReference<HttpRequest> applied = new AtomicReference<>();
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), body);
-        AgentToolContext ctx = singleEntryCtx(request, null);
+        AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.REPLACE_IN_HTTP_REQUEST_BODY,
+        JsonNode result = parse(invoke(ReplaceInHttpRequestBodyTool.NAME,
                 "{\"old_text\":\"aa\",\"new_text\":\"cc\"}", ctx));
 
         assertTrue(result.has("error"));
         assertTrue(result.get("error").asText().contains("not unique"));
+        assertNull(applied.get(), "request must not be committed when replacement is ambiguous");
     }
 
     @Test
@@ -698,12 +768,13 @@ class HttpTargetToolsTest {
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), body);
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.REPLACE_IN_HTTP_REQUEST_BODY,
+        JsonNode result = parse(invoke(ReplaceInHttpRequestBodyTool.NAME,
                 "{\"old_text\":\"aa\",\"new_text\":\"zz\",\"replace_all\":true}", ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertEquals(3, result.get("replacements").asInt());
         assertNotNull(applied.get());
+        assertEquals("zz bb zz cc zz", bodyUtf8(applied.get()));
     }
 
     @Test
@@ -713,7 +784,7 @@ class HttpTargetToolsTest {
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), body);
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.REPLACE_IN_HTTP_REQUEST_BODY,
+        JsonNode result = parse(invoke(ReplaceInHttpRequestBodyTool.NAME,
                 "{\"old_text\":\"aa\",\"new_text\":\"zz\",\"max_replacements\":2}", ctx));
 
         assertTrue(result.get("ok").asBoolean());
@@ -726,7 +797,7 @@ class HttpTargetToolsTest {
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), body);
         AgentToolContext ctx = singleEntryCtx(request, null);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.REPLACE_IN_HTTP_REQUEST_BODY,
+        JsonNode result = parse(invoke(ReplaceInHttpRequestBodyTool.NAME,
                 "{\"old_text\":\"x\",\"new_text\":\"y\"}", ctx));
 
         assertTrue(result.has("error"));
@@ -739,15 +810,16 @@ class HttpTargetToolsTest {
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), body);
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.REPLACE_IN_HTTP_REQUEST_BODY,
+        JsonNode result = parse(invoke(ReplaceInHttpRequestBodyTool.NAME,
                 "{\"old_text\":\" this\",\"new_text\":\"\"}", ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertEquals(1, result.get("replacements").asInt());
         assertTrue(result.get("bytes_after").asInt() < result.get("bytes_before").asInt());
+        assertEquals("remove  text", bodyUtf8(applied.get()));
     }
 
-    // ===== patch_http_request_body_lines =====
+
 
     @Test
     void patchHttpRequestBodyLines_replacesMiddleLines() throws Exception {
@@ -756,7 +828,7 @@ class HttpTargetToolsTest {
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), body);
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.PATCH_HTTP_REQUEST_BODY_LINES,
+        JsonNode result = parse(invoke(PatchHttpRequestBodyLinesTool.NAME,
                 "{\"start_line\":2,\"end_line\":2,\"content\":\"replaced line\"}", ctx));
 
         assertTrue(result.get("ok").asBoolean());
@@ -764,6 +836,7 @@ class HttpTargetToolsTest {
         assertEquals(1, result.get("lines_replaced_span").asInt());
         assertEquals(1, result.get("lines_patched_in").asInt());
         assertNotNull(applied.get());
+        assertEquals("line1\nreplaced line\nline3", bodyUtf8(applied.get()));
     }
 
     @Test
@@ -773,12 +846,14 @@ class HttpTargetToolsTest {
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), body);
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.PATCH_HTTP_REQUEST_BODY_LINES,
+        JsonNode result = parse(invoke(PatchHttpRequestBodyLinesTool.NAME,
                 "{\"start_line\":2,\"end_line\":3,\"content\":\"x\\ny\\nz\"}", ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertEquals(2, result.get("lines_replaced_span").asInt());
         assertEquals(3, result.get("lines_patched_in").asInt());
+        assertNotNull(applied.get());
+        assertEquals("a\nx\ny\nz\nd", bodyUtf8(applied.get()));
     }
 
     @Test
@@ -787,7 +862,7 @@ class HttpTargetToolsTest {
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), body);
         AgentToolContext ctx = singleEntryCtx(request, null);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.PATCH_HTTP_REQUEST_BODY_LINES,
+        JsonNode result = parse(invoke(PatchHttpRequestBodyLinesTool.NAME,
                 "{\"start_line\":1,\"end_line\":5,\"content\":\"x\"}", ctx));
 
         assertTrue(result.has("error"));
@@ -800,13 +875,13 @@ class HttpTargetToolsTest {
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), body);
         AgentToolContext ctx = singleEntryCtx(request, null);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.PATCH_HTTP_REQUEST_BODY_LINES,
+        JsonNode result = parse(invoke(PatchHttpRequestBodyLinesTool.NAME,
                 "{\"start_line\":3,\"end_line\":1,\"content\":\"x\"}", ctx));
 
         assertTrue(result.has("error"));
     }
 
-    // ===== set_http_request_body =====
+
 
     @Test
     void setHttpRequestBody_utf8Text() throws Exception {
@@ -815,13 +890,14 @@ class HttpTargetToolsTest {
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), original);
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SET_HTTP_REQUEST_BODY,
+        JsonNode result = parse(invoke(SetHttpRequestBodyTool.NAME,
                 "{\"body_utf8\":\"new body\"}", ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertEquals(8, result.get("bytes_before").asInt());
         assertEquals(8, result.get("bytes_after").asInt());
         assertNotNull(applied.get());
+        assertEquals("new body", bodyUtf8(applied.get()));
     }
 
     @Test
@@ -833,13 +909,14 @@ class HttpTargetToolsTest {
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), original);
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SET_HTTP_REQUEST_BODY,
+        JsonNode result = parse(invoke(SetHttpRequestBodyTool.NAME,
                 "{\"body_base64\":\"" + encoded + "\"}", ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertEquals(0, result.get("bytes_before").asInt());
         assertEquals(5, result.get("bytes_after").asInt());
         assertNotNull(applied.get());
+        assertArrayEquals(newBody, bodyBytes(applied.get()));
     }
 
     @Test
@@ -849,11 +926,13 @@ class HttpTargetToolsTest {
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), original);
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SET_HTTP_REQUEST_BODY,
+        JsonNode result = parse(invoke(SetHttpRequestBodyTool.NAME,
                 "{\"body_utf8\":{\"key\":\"value\"}}", ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertTrue(result.get("bytes_after").asInt() > 0);
+        assertNotNull(applied.get());
+        assertEquals("{\"key\":\"value\"}", bodyUtf8(applied.get()));
     }
 
     @Test
@@ -861,7 +940,7 @@ class HttpTargetToolsTest {
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SET_HTTP_REQUEST_BODY,
+        JsonNode result = parse(invoke(SetHttpRequestBodyTool.NAME,
                 "{\"body_utf8\":\"text\",\"body_base64\":\"AA==\"}", ctx));
 
         assertTrue(result.has("error"));
@@ -872,26 +951,26 @@ class HttpTargetToolsTest {
         HttpRequest request = req("POST", "https://x.com/", "/", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SET_HTTP_REQUEST_BODY, "{}", ctx));
+        JsonNode result = parse(invoke(SetHttpRequestBodyTool.NAME, "{}", ctx));
 
         assertTrue(result.has("error"));
     }
 
-    // ===== apply_http_request_semantic_changes =====
+
 
     @Test
     void applySemantic_missingOperations_returnsStructuredHintAndExample() throws Exception {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null);
         JsonNode result =
-                parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, "{}", ctx));
+                parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, "{}", ctx));
 
         assertTrue(result.has("error"));
         assertEquals(-1, result.get("op_index").asInt());
         assertTrue(result.has("hint"));
         assertTrue(result.has("example"));
         assertEquals(
-                HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES_EXAMPLE_ARGS, result.get("example").asText());
+                ApplyHttpRequestSemanticChangesTool.EXAMPLE_ARGS, result.get("example").asText());
     }
 
     @Test
@@ -902,7 +981,7 @@ class HttpTargetToolsTest {
         String args =
                 "{\"operations\":[{\"type\":\"header\",\"action\":\"set\",\"key\":\"X-Custom\",\"value\":\"hello\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertEquals(1, result.get("operations_applied").asInt());
@@ -916,7 +995,7 @@ class HttpTargetToolsTest {
         AgentToolContext ctx = singleEntryCtx(request, null);
         String args = "{\"operations\":[{\"type\":\"header\",\"action\":\"set\",\"value\":\"hello\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
 
         assertTrue(result.has("error"));
         assertEquals(0, result.get("op_index").asInt());
@@ -930,7 +1009,7 @@ class HttpTargetToolsTest {
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
         String args = "{\"operations\":[{\"type\":\"header\",\"action\":\"remove\",\"key\":\"X-Remove-Me\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertNotNull(applied.get());
@@ -945,7 +1024,7 @@ class HttpTargetToolsTest {
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
         String args = "{\"operations\":[{\"type\":\"cookie\",\"action\":\"set\",\"key\":\"token\",\"value\":\"xyz\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertNotNull(applied.get());
@@ -960,7 +1039,7 @@ class HttpTargetToolsTest {
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
         String args = "{\"operations\":[{\"type\":\"cookie\",\"action\":\"remove\",\"key\":\"session\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertNotNull(applied.get());
@@ -974,7 +1053,7 @@ class HttpTargetToolsTest {
         String args =
                 "{\"operations\":[{\"type\":\"method\",\"action\":\"set\",\"key\":\"\",\"value\":\"POST\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertNotNull(applied.get());
@@ -989,7 +1068,7 @@ class HttpTargetToolsTest {
         String args = "{\"operations\":[{\"type\":\"url\",\"action\":\"set\",\"key\":\"\","
                 + "\"value\":\"https://new.com:8443/api/v1?q=test\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
 
         assertTrue(result.get("ok").asBoolean());
         assertNotNull(applied.get());
@@ -1004,7 +1083,7 @@ class HttpTargetToolsTest {
         String args =
                 "{\"operations\":[{\"type\":\"url\",\"action\":\"set\",\"key\":\"\",\"value\":\"http://example.com/path\"}]}";
 
-        parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
 
         httpServiceMock.verify(() -> HttpService.httpService("example.com", 80, false));
     }
@@ -1016,7 +1095,7 @@ class HttpTargetToolsTest {
         String args =
                 "{\"operations\":[{\"type\":\"url\",\"action\":\"set\",\"key\":\"\",\"value\":\"//example.com/path\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
 
         assertTrue(result.has("error"));
     }
@@ -1028,7 +1107,7 @@ class HttpTargetToolsTest {
         String args =
                 "{\"operations\":[{\"type\":\"url\",\"action\":\"set\",\"key\":\"\",\"value\":\"ftp://example.com/file\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
 
         assertTrue(result.has("error"));
     }
@@ -1040,7 +1119,7 @@ class HttpTargetToolsTest {
         String args =
                 "{\"operations\":[{\"type\":\"url\",\"action\":\"set\",\"key\":\"\",\"value\":\"https://\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
 
         assertTrue(result.has("error"));
     }
@@ -1058,7 +1137,7 @@ class HttpTargetToolsTest {
                 + "  {\"type\": \"method\", \"action\": \"set\", \"key\": \"\", \"value\": \"POST\"}"
                 + "]}";
 
-        String raw = HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx);
+        String raw = invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx);
         JsonNode result = parse(raw);
         assertFalse(result.has("error"), "unexpected error: " + raw);
 
@@ -1066,6 +1145,8 @@ class HttpTargetToolsTest {
         assertEquals(3, result.get("operations_applied").asInt());
         assertNotNull(applied.get());
         verify(request).withHeader("X-Test", "1");
+        assertTrue(bodyUtf8(applied.get()).contains("\"a\":null"), bodyUtf8(applied.get()));
+        assertTrue(bodyUtf8(applied.get()).contains("\"b\":2"), bodyUtf8(applied.get()));
     }
 
     @Test
@@ -1076,11 +1157,12 @@ class HttpTargetToolsTest {
         AgentToolContext ctx = singleEntryCtx(request, null, applied::set);
         String args = "{\"operations\":[{\"type\":\"json\",\"action\":\"remove\",\"path\":\"/a\"}]}";
 
-        String raw2 = HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx);
+        String raw2 = invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx);
         JsonNode result = parse(raw2);
         assertFalse(result.has("error"), "unexpected error: " + raw2);
         assertTrue(result.get("ok").asBoolean());
         assertNotNull(applied.get());
+        assertEquals("{\"b\":2}", bodyUtf8(applied.get()));
     }
 
     @Test
@@ -1089,7 +1171,7 @@ class HttpTargetToolsTest {
         AgentToolContext ctx = singleEntryCtx(request, null);
         String args = "{\"operations\":[{\"type\":\"json\",\"action\":\"set\",\"path\":\"/x\",\"value\":1}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
         assertTrue(result.has("error"));
         assertTrue(result.get("error").asText().toLowerCase().contains("not valid json")
                 || result.get("error").asText().toLowerCase().contains("not valid"), result.toString());
@@ -1103,7 +1185,7 @@ class HttpTargetToolsTest {
         AgentToolContext ctx = singleEntryCtx(request, null);
         String args = "{\"operations\":[{\"type\":\"xml\",\"action\":\"set\",\"path\":\"/a\",\"value\":\"v\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
         assertTrue(result.has("error"));
         assertTrue(result.get("error").asText().toLowerCase().contains("xml")
                 || result.get("error").asText().toLowerCase().contains("form"), result.toString());
@@ -1115,7 +1197,7 @@ class HttpTargetToolsTest {
         AgentToolContext ctx = singleEntryCtx(request, null);
         String args = "{\"operations\":[{\"type\":\"method\",\"action\":\"set\",\"key\":\"m\",\"value\":\"GET\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
         assertTrue(result.has("error"));
         assertTrue(result.get("error").asText().contains("key must be empty") || result.get("error").asText().contains("empty"));
     }
@@ -1126,7 +1208,7 @@ class HttpTargetToolsTest {
         AgentToolContext ctx = singleEntryCtx(request, null);
         String args = "{\"operations\":[{\"type\":\"method\",\"action\":\"remove\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
         assertTrue(result.has("error"));
     }
 
@@ -1136,7 +1218,7 @@ class HttpTargetToolsTest {
         AgentToolContext ctx = singleEntryCtx(request, null);
         String args = "{\"operations\":[{\"type\":\"header\",\"action\":\"remove\",\"key\":\"A\",\"value\":\"x\"}]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
         assertTrue(result.has("error"));
         assertTrue(result.get("error").asText().contains("omit") || result.get("error").asText().contains("value"));
     }
@@ -1155,25 +1237,31 @@ class HttpTargetToolsTest {
                 + "  {\"type\": \"json\", \"action\": \"set\", \"path\": \"/a\", \"value\": 1}"
                 + "]}";
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, args, ctx));
+        JsonNode result = parse(invoke(ApplyHttpRequestSemanticChangesTool.NAME, args, ctx));
         assertTrue(result.has("error"));
         assertEquals(0, applierCount.get());
     }
 
-    // ===== send_current_http_request =====
+
 
     @Test
     void sendCurrentHttpRequest_returnsStatusCode() throws Exception {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
-        Callable<Integer> sender = () -> 200;
+        AtomicReference<HttpRequest> sent = new AtomicReference<>();
+        Callable<Integer> sender =
+                () -> {
+                    sent.set(request);
+                    return 200;
+                };
         AgentToolContext ctx = new AgentToolContext(defaultTarget(), 42, 0,
                 List.of(new AgentToolContext.HistoryEntryInfo(0, "now", "GET x.com")),
                 idx -> request, idx -> null, req -> {}, sender);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SEND_CURRENT_HTTP_REQUEST, "{}", ctx));
+        JsonNode result = parse(invoke(SendCurrentHttpRequestTool.NAME, "{}", ctx));
 
         assertEquals(200, result.get("status_code").asInt());
         assertFalse(result.has("error"));
+        assertNotNull(sent.get(), "sender must actually run the live request");
     }
 
     @Test
@@ -1181,7 +1269,7 @@ class HttpTargetToolsTest {
         HttpRequest request = req("GET", "https://x.com/", "/", List.of(), new byte[0]);
         AgentToolContext ctx = singleEntryCtx(request, null);  // sender is null
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SEND_CURRENT_HTTP_REQUEST, "{}", ctx));
+        JsonNode result = parse(invoke(SendCurrentHttpRequestTool.NAME, "{}", ctx));
 
         assertTrue(result.has("error"));
     }
@@ -1194,24 +1282,24 @@ class HttpTargetToolsTest {
                 List.of(new AgentToolContext.HistoryEntryInfo(0, "now", "GET x.com")),
                 idx -> request, idx -> null, req -> {}, sender);
 
-        JsonNode result = parse(HttpTargetTools.execute(HttpTargetTools.SEND_CURRENT_HTTP_REQUEST, "{}", ctx));
+        JsonNode result = parse(invoke(SendCurrentHttpRequestTool.NAME, "{}", ctx));
 
         assertEquals(404, result.get("status_code").asInt());
     }
 
-    // ===== humanToolUsage =====
+
 
     @Test
     void humanToolUsage_getCurrentAndReadMessages() {
-        HttpTargetTools.HumanToolUsage t1 = HttpTargetTools.humanToolUsage(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{}", 0);
+        HumanToolUsage t1 = humanLabel(GetCurrentHttpTargetTool.NAME, "{}", 0);
         assertTrue(t1.detail().isEmpty());
         assertFalse(t1.title().isBlank());
-        HttpTargetTools.HumanToolUsage t2 =
-                HttpTargetTools.humanToolUsage(HttpTargetTools.READ_HTTP_MESSAGE, "{\"side\":\"request\"}", 0);
+        HumanToolUsage t2 =
+                humanLabel(ReadHttpMessageTool.NAME, "{\"side\":\"request\"}", 0);
         assertTrue(t2.title().contains("offset 0, max 4096"));
         assertTrue(t2.detail().isEmpty());
-        HttpTargetTools.HumanToolUsage t3 = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.SEARCH_HTTP_MESSAGE, "{\"side\":\"request\",\"pattern\":\"^Host:\"}", 0);
+        HumanToolUsage t3 = humanLabel(
+                SearchHttpMessageTool.NAME, "{\"side\":\"request\",\"pattern\":\"^Host:\"}", 0);
         assertTrue(t3.title().contains("Searching request"));
     }
 
@@ -1223,8 +1311,8 @@ class HttpTargetToolsTest {
                         + "{\"type\":\"method\",\"action\":\"set\",\"key\":\"\",\"value\":\"POST\"},"
                         + "{\"type\":\"json\",\"action\":\"remove\",\"path\":\"/a\"}"
                         + "]}";
-        HttpTargetTools.HumanToolUsage usage =
-                HttpTargetTools.humanToolUsage(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, json, 0);
+        HumanToolUsage usage =
+                humanLabel(ApplyHttpRequestSemanticChangesTool.NAME, json, 0);
 
         assertEquals("Apply semantic request changes", usage.title());
         String d = usage.detail();
@@ -1239,8 +1327,8 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_replaceBody_showsOldAndNewText() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.REPLACE_IN_HTTP_REQUEST_BODY,
+        HumanToolUsage usage = humanLabel(
+                ReplaceInHttpRequestBodyTool.NAME,
                 "{\"old_text\":\"foo\",\"new_text\":\"bar\"}", 0);
 
         assertEquals("Replace text in request body", usage.title());
@@ -1250,8 +1338,8 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_replaceBodyWithReplaceAll_showsAllOccurrencesNote() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.REPLACE_IN_HTTP_REQUEST_BODY,
+        HumanToolUsage usage = humanLabel(
+                ReplaceInHttpRequestBodyTool.NAME,
                 "{\"old_text\":\"x\",\"new_text\":\"y\",\"replace_all\":true}", 0);
 
         assertTrue(usage.detail().contains("all"));
@@ -1259,8 +1347,8 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_patchLines_showsLineRange() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.PATCH_HTTP_REQUEST_BODY_LINES,
+        HumanToolUsage usage = humanLabel(
+                PatchHttpRequestBodyLinesTool.NAME,
                 "{\"start_line\":3,\"end_line\":5,\"content\":\"new content\"}", 0);
 
         assertEquals("Patch request body line range", usage.title());
@@ -1271,10 +1359,10 @@ class HttpTargetToolsTest {
     @Test
     void humanToolUsage_historyIndexSuffix_omittedWhenSameAsViewer() {
         String args = "{\"side\":\"request\",\"history_index\":3}";
-        HttpTargetTools.HumanToolUsage withSuffix = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.READ_HTTP_MESSAGE, args, 0);
-        HttpTargetTools.HumanToolUsage withoutSuffix = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.READ_HTTP_MESSAGE, args, 3);
+        HumanToolUsage withSuffix = humanLabel(
+                ReadHttpMessageTool.NAME, args, 0);
+        HumanToolUsage withoutSuffix = humanLabel(
+                ReadHttpMessageTool.NAME, args, 3);
 
         assertTrue(withSuffix.title().contains("#3"),
                 "should include history index when different from viewer: " + withSuffix.title());
@@ -1284,8 +1372,8 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_sendRequest_hasTitleAndDetail() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.SEND_CURRENT_HTTP_REQUEST, "{}", 0);
+        HumanToolUsage usage = humanLabel(
+                SendCurrentHttpRequestTool.NAME, "{}", 0);
 
         assertFalse(usage.title().isBlank());
         assertFalse(usage.detail().isBlank());
@@ -1293,37 +1381,43 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_setBody_noDetailToAvoidDuplicatingLargeBody() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage(
-                HttpTargetTools.SET_HTTP_REQUEST_BODY, "{\"body_utf8\":\"large body content\"}", 0);
+        HumanToolUsage usage = humanLabel(
+                SetHttpRequestBodyTool.NAME, "{\"body_utf8\":\"large body content\"}", 0);
 
         assertFalse(usage.title().isBlank());
         assertTrue(usage.detail().isEmpty(), "set_http_request_body detail should be empty");
     }
 
     @Test
-    void humanToolUsage_unknownTool_returnsDefaultTitle() {
-        HttpTargetTools.HumanToolUsage usage = HttpTargetTools.humanToolUsage("no_such_tool", "{}", 0);
-        assertFalse(usage.title().isBlank());
+    void humanToolUsage_unknownTool_returnsRegistryDefault() {
+        HumanToolUsage usage = humanLabel("no_such_tool", "{}", 0);
+        assertEquals("Working…", usage.title());
+    }
+
+    @Test
+    void humanToolUsage_unknownTool_returnsDefaultTitleFromDispatcher() {
+        HumanToolUsage usage = ToolHumanUsage.forTool("no_such_tool", "{}", 0);
+        assertEquals("Working…", usage.title());
     }
 
     @Test
     void humanToolUsage_invalidArgs_doesNotThrow() {
         assertDoesNotThrow(() ->
-                HttpTargetTools.humanToolUsage(HttpTargetTools.APPLY_HTTP_REQUEST_SEMANTIC_CHANGES, "INVALID{JSON", 0));
+                humanLabel(ApplyHttpRequestSemanticChangesTool.NAME, "INVALID{JSON", 0));
     }
 
     @Test
     void humanToolUsage_nodeSuffix_whenUiSelected_appendsId() {
-        HttpTargetTools.HumanToolUsage u =
-                HttpTargetTools.humanToolUsage(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{}", 0, 99);
+        HumanToolUsage u =
+                humanLabel(GetCurrentHttpTargetTool.NAME, "{}", 0, 99);
         assertTrue(u.title().contains("node id 99"), u.title());
     }
 
     @Test
     void humanToolUsage_nodeSuffix_omittedWhenRequestNodeIdMatchesUi() {
-        HttpTargetTools.HumanToolUsage u =
-                HttpTargetTools.humanToolUsage(
-                        HttpTargetTools.READ_HTTP_MESSAGE,
+        HumanToolUsage u =
+                humanLabel(
+                        ReadHttpMessageTool.NAME,
                         "{\"side\":\"request\",\"request_node_id\":12}",
                         0,
                         12);
@@ -1332,17 +1426,17 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_nodeSuffix_whenNoArg_usesUiSelectedId() {
-        HttpTargetTools.HumanToolUsage u =
-                HttpTargetTools.humanToolUsage(
-                        HttpTargetTools.READ_HTTP_MESSAGE, "{\"side\":\"request\"}", 0, 12);
+        HumanToolUsage u =
+                humanLabel(
+                        ReadHttpMessageTool.NAME, "{\"side\":\"request\"}", 0, 12);
         assertTrue(u.title().contains("node id 12"), u.title());
     }
 
     @Test
     void humanToolUsage_nodeSuffix_showsExplicitWhenDifferentFromUi() {
-        HttpTargetTools.HumanToolUsage u =
-                HttpTargetTools.humanToolUsage(
-                        HttpTargetTools.READ_HTTP_MESSAGE,
+        HumanToolUsage u =
+                humanLabel(
+                        ReadHttpMessageTool.NAME,
                         "{\"side\":\"request\",\"request_node_id\":99}",
                         0,
                         12);
@@ -1351,20 +1445,20 @@ class HttpTargetToolsTest {
 
     @Test
     void humanToolUsage_searchTabs_hasNoNodeSuffix() {
-        HttpTargetTools.HumanToolUsage u =
-                HttpTargetTools.humanToolUsage(HttpTargetTools.SEARCH_TABS, "{}", 0, 12);
+        HumanToolUsage u =
+                humanLabel(SearchTabsTool.NAME, "{}", 0, 12);
         assertFalse(u.title().contains("node id"), u.title());
     }
 
-    // ===== tryPreviewRequestMutation (in-memory, no editor commit) =====
+
 
     @Test
     void tryPreview_replace_changesBody() {
         byte[] body = "a foo c".getBytes(StandardCharsets.UTF_8);
         HttpRequest request = req("GET", "https://a/x", "/x", null, body);
         HttpRequest out =
-                HttpTargetTools.tryPreviewRequestMutation(
-                        HttpTargetTools.REPLACE_IN_HTTP_REQUEST_BODY,
+                RequestPreview.tryPreviewRequestMutation(
+                        ReplaceInHttpRequestBodyTool.NAME,
                         "{\"old_text\":\"foo\",\"new_text\":\"bar\"}",
                         request);
         assertNotNull(out);
@@ -1377,14 +1471,14 @@ class HttpTargetToolsTest {
     @Test
     void tryPreview_readTool_returnsNull() {
         assertNull(
-                HttpTargetTools.tryPreviewRequestMutation(
-                        HttpTargetTools.READ_HTTP_MESSAGE, "{\"side\":\"request\"}", req("GET", "https://a/x", "/x", null, new byte[0])));
+                RequestPreview.tryPreviewRequestMutation(
+                        ReadHttpMessageTool.NAME, "{\"side\":\"request\"}", req("GET", "https://a/x", "/x", null, new byte[0])));
     }
 
     @Test
     void search_tabs_invokesBridge() throws Exception {
-        RepeaterTabAgentBridge bridge =
-                new RepeaterTabAgentBridge() {
+        TreepeaterTabAgentBridge bridge =
+                new TreepeaterTabAgentBridge() {
                     @Override
                     public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
                         return null;
@@ -1395,7 +1489,7 @@ class HttpTargetToolsTest {
                         assertEquals(0, offset);
                         assertEquals(5, pageSize);
                         assertEquals("q1", queryOrNull);
-                        return HttpTargetTools.formatSearchTabsResponse(
+                        return TabListingFormatter.formatSearchTabsResponse(
                                 2,
                                 0,
                                 5,
@@ -1405,8 +1499,8 @@ class HttpTargetToolsTest {
                 };
         JsonNode r =
                 parse(
-                        HttpTargetTools.execute(
-                                HttpTargetTools.SEARCH_TABS, "{\"offset\":0,\"page_size\":5,\"query\":\"q1\"}", bridge));
+                        invoke(
+                                SearchTabsTool.NAME, "{\"offset\":0,\"page_size\":5,\"query\":\"q1\"}", bridge));
         assertEquals(2, r.get("total").asInt());
         assertTrue(r.get("has_more").asBoolean());
         assertEquals(1, r.get("next_offset").asInt());
@@ -1415,8 +1509,8 @@ class HttpTargetToolsTest {
 
     @Test
     void copy_treepeater_node_invokesBridge() throws Exception {
-        RepeaterTabAgentBridge bridge =
-                new RepeaterTabAgentBridge() {
+        TreepeaterTabAgentBridge bridge =
+                new TreepeaterTabAgentBridge() {
                     @Override
                     public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
                         return null;
@@ -1433,13 +1527,13 @@ class HttpTargetToolsTest {
                         assertEquals(5, sourceRequestNodeId);
                         assertEquals("Variant A", name);
                         assertEquals(SiblingCopyPlacement.AFTER_SOURCE, placement);
-                        return HttpTargetTools.formatCopyTreepeaterNodeResponse(42, name);
+                        return TabListingFormatter.formatCopyTreepeaterNodeResponse(42, name);
                     }
                 };
         JsonNode r =
                 parse(
-                        HttpTargetTools.execute(
-                                HttpTargetTools.COPY_TREEPEATER_NODE,
+                        invoke(
+                                CopyTreepeaterNodeTool.NAME,
                                 "{\"request_node_id\":5,\"name\":\"Variant A\"}",
                                 bridge));
         assertEquals(42, r.get("request_node_id").asInt());
@@ -1448,8 +1542,8 @@ class HttpTargetToolsTest {
 
     @Test
     void copy_treepeater_node_requiresRequestNodeId() throws Exception {
-        RepeaterTabAgentBridge bridge =
-                new RepeaterTabAgentBridge() {
+        TreepeaterTabAgentBridge bridge =
+                new TreepeaterTabAgentBridge() {
                     @Override
                     public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
                         return null;
@@ -1462,15 +1556,15 @@ class HttpTargetToolsTest {
                 };
         JsonNode r =
                 parse(
-                        HttpTargetTools.execute(
-                                HttpTargetTools.COPY_TREEPEATER_NODE, "{\"name\":\"x\"}", bridge));
+                        invoke(
+                                CopyTreepeaterNodeTool.NAME, "{\"name\":\"x\"}", bridge));
         assertEquals("request_node_id required", r.get("error").asText());
     }
 
     @Test
     void copy_treepeater_node_requiresName() throws Exception {
-        RepeaterTabAgentBridge bridge =
-                new RepeaterTabAgentBridge() {
+        TreepeaterTabAgentBridge bridge =
+                new TreepeaterTabAgentBridge() {
                     @Override
                     public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
                         return null;
@@ -1483,15 +1577,15 @@ class HttpTargetToolsTest {
                 };
         JsonNode r =
                 parse(
-                        HttpTargetTools.execute(
-                                HttpTargetTools.COPY_TREEPEATER_NODE, "{\"request_node_id\":5}", bridge));
+                        invoke(
+                                CopyTreepeaterNodeTool.NAME, "{\"request_node_id\":5}", bridge));
         assertEquals("name required", r.get("error").asText());
     }
 
     @Test
     void copy_treepeater_node_blankNameRejected() throws Exception {
-        RepeaterTabAgentBridge bridge =
-                new RepeaterTabAgentBridge() {
+        TreepeaterTabAgentBridge bridge =
+                new TreepeaterTabAgentBridge() {
                     @Override
                     public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
                         return null;
@@ -1504,8 +1598,8 @@ class HttpTargetToolsTest {
                 };
         JsonNode r =
                 parse(
-                        HttpTargetTools.execute(
-                                HttpTargetTools.COPY_TREEPEATER_NODE,
+                        invoke(
+                                CopyTreepeaterNodeTool.NAME,
                                 "{\"request_node_id\":5,\"name\":\"   \"}",
                                 bridge));
         assertEquals("name required", r.get("error").asText());
@@ -1513,8 +1607,8 @@ class HttpTargetToolsTest {
 
     @Test
     void copy_treepeater_node_forwardsPlacement() throws Exception {
-        RepeaterTabAgentBridge bridge =
-                new RepeaterTabAgentBridge() {
+        TreepeaterTabAgentBridge bridge =
+                new TreepeaterTabAgentBridge() {
                     @Override
                     public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
                         return null;
@@ -1529,13 +1623,13 @@ class HttpTargetToolsTest {
                     public String copyTreepeaterNode(
                             int sourceRequestNodeId, String name, SiblingCopyPlacement placement) {
                         assertEquals(SiblingCopyPlacement.PARENT_BOTTOM, placement);
-                        return HttpTargetTools.formatCopyTreepeaterNodeResponse(99, name);
+                        return TabListingFormatter.formatCopyTreepeaterNodeResponse(99, name);
                     }
                 };
         JsonNode r =
                 parse(
-                        HttpTargetTools.execute(
-                                HttpTargetTools.COPY_TREEPEATER_NODE,
+                        invoke(
+                                CopyTreepeaterNodeTool.NAME,
                                 "{\"request_node_id\":5,\"name\":\"x\",\"placement\":\"bottom\"}",
                                 bridge));
         assertEquals(99, r.get("request_node_id").asInt());
@@ -1543,8 +1637,8 @@ class HttpTargetToolsTest {
 
     @Test
     void copy_treepeater_node_rejectsInvalidPlacement() throws Exception {
-        RepeaterTabAgentBridge bridge =
-                new RepeaterTabAgentBridge() {
+        TreepeaterTabAgentBridge bridge =
+                new TreepeaterTabAgentBridge() {
                     @Override
                     public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
                         return null;
@@ -1557,8 +1651,8 @@ class HttpTargetToolsTest {
                 };
         JsonNode r =
                 parse(
-                        HttpTargetTools.execute(
-                                HttpTargetTools.COPY_TREEPEATER_NODE,
+                        invoke(
+                                CopyTreepeaterNodeTool.NAME,
                                 "{\"request_node_id\":5,\"name\":\"x\",\"placement\":\"middle\"}",
                                 bridge));
         assertEquals("placement must be after, top, or bottom", r.get("error").asText());
@@ -1586,8 +1680,8 @@ class HttpTargetToolsTest {
                         idx -> null,
                         r -> {},
                         null);
-        RepeaterTabAgentBridge bridge =
-                new RepeaterTabAgentBridge() {
+        TreepeaterTabAgentBridge bridge =
+                new TreepeaterTabAgentBridge() {
                     @Override
                     public AgentToolContext contextForAgent(OptionalInt requestNodeId) {
                         if (requestNodeId.isPresent() && requestNodeId.getAsInt() == 2) {
@@ -1602,13 +1696,13 @@ class HttpTargetToolsTest {
                     }
                 };
         JsonNode g2 =
-                parse(HttpTargetTools.execute(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{\"request_node_id\":2}", bridge));
+                parse(invoke(GetCurrentHttpTargetTool.NAME, "{\"request_node_id\":2}", bridge));
         assertEquals("POST", g2.get("method").asText());
-        JsonNode gD = parse(HttpTargetTools.execute(HttpTargetTools.GET_CURRENT_HTTP_TARGET, "{}", bridge));
+        JsonNode gD = parse(invoke(GetCurrentHttpTargetTool.NAME, "{}", bridge));
         assertEquals("GET", gD.get("method").asText());
     }
 
-    // ===== diagnostic =====
+
 
     @Test
     void diagnostic_byteArrayStaticMockIsActive() {
@@ -1617,11 +1711,11 @@ class HttpTargetToolsTest {
         assertNotNull(result, "ByteArray.byteArray() should return a mock, not null");
     }
 
-    // ===== permissionDeniedResult =====
+
 
     @Test
     void permissionDeniedResult_returnsErrorJson() throws Exception {
-        JsonNode result = parse(HttpTargetTools.permissionDeniedResult());
+        JsonNode result = parse(ToolResults.permissionDenied());
         assertTrue(result.has("error"));
         assertEquals("permission denied", result.get("error").asText());
     }

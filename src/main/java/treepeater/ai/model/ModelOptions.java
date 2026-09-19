@@ -9,14 +9,15 @@ public final class ModelOptions {
 
     /**
      * Reasoning / output effort level. Anthropic providers expose {@code LOW..MAX}, OpenAI exposes
-     * {@code MINIMAL..HIGH}; both clip out-of-range values when building the SDK request.
+     * per-model ranges from {@code MINIMAL} up through {@code XHIGH}/{@code MAX}; both clip
+     * out-of-range values when building the SDK request.
      */
     public static final EnumOption<EffortLevel> EFFORT =
             new EnumOption<>("effort", "Effort", EffortLevel.class, EffortLevel::label);
 
     /**
      * Whether the model should run with extended thinking / chain-of-thought output enabled.
-     * Currently used by Anthropic 4.6+ models.
+     * Currently used by Anthropic models that support adaptive or fixed-budget thinking.
      */
     public static final BooleanOption EXTENDED_THINKING =
             new BooleanOption("extendedThinking", "Extended thinking");

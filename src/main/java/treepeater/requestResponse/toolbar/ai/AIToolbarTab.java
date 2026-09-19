@@ -29,13 +29,12 @@ import treepeater.ai.AgentMode;
 import treepeater.ai.AgentModeToolPolicy;
 import treepeater.ai.AgentTabMention;
 import treepeater.ai.AgentToolContext;
-import treepeater.ai.ChatToolExecutor;
 import treepeater.ai.ChatTooling;
-import treepeater.ai.HttpTargetTools;
-import treepeater.ai.RepeaterTabAgentBridge;
+import treepeater.ai.TreepeaterTabAgentBridge;
 import treepeater.ai.StreamingChatClient;
 import treepeater.ai.model.LlmModelDefinition;
 import treepeater.ai.model.LlmModelOptionValues;
+import treepeater.api.TreepeaterToolRegistry;
 import treepeater.components.StyledButton;
 import treepeater.icons.WandIcon;
 import treepeater.requestResponse.toolbar.ToolbarIconButton;
@@ -51,10 +50,10 @@ public class AIToolbarTab implements AIChatHost {
     private int nextChatTabIndex = 1;
 
     private final TreepeaterModel model;
-    private final RepeaterTabAgentBridge agentBridge;
+    private final TreepeaterTabAgentBridge agentBridge;
     private boolean blockTabPersist;
 
-    public AIToolbarTab(TreepeaterModel model, RepeaterTabAgentBridge agentBridge) {
+    public AIToolbarTab(TreepeaterModel model, TreepeaterTabAgentBridge agentBridge) {
         this.model = model;
         this.button = new ToolbarIconButton(new WandIcon());
         this.content = new JPanel(new BorderLayout());
@@ -96,23 +95,31 @@ public class AIToolbarTab implements AIChatHost {
         return model.provider().createClient(model, values != null ? values : model.defaults());
     }
 
-    /** Built-in HTTP target tools; approval depends on {@link AgentMode}. */
+    /**
+     * Tools from the shared registry, so the chat sees the tree, import and status tools alongside the
+     * built-in editor tools; approval depends on {@link AgentMode}. Falls back to editor-only tools when
+     * the full registry has not been built yet.
+     */
     @Override
     public ChatTooling chatTooling(AgentMode mode) {
         if (this.agentBridge == null) {
             return ChatTooling.none();
         }
         AgentMode m = mode != null ? mode : AgentMode.ASK;
-        ChatToolExecutor exec = ctx -> HttpTargetTools.execute(ctx, this.agentBridge);
+        TreepeaterToolRegistry registry = Treepeater.getToolRegistry();
+        if (registry == null) {
+            registry = TreepeaterToolRegistry.createEditorOnly(this.agentBridge);
+        }
         return new ChatTooling(
-                HttpTargetTools.definitions(),
-                exec,
+                registry.chatToolDefinitions(),
+                registry::executeForChat,
                 () -> {
                     AgentToolContext c = this.agentBridge.contextForAgent(OptionalInt.empty());
                     return c != null ? c.currentHistoryIndex() : Integer.MIN_VALUE;
                 },
-                new AgentModeToolPolicy(m),
-                this.agentBridge);
+                new AgentModeToolPolicy(m, registry),
+                this.agentBridge,
+                registry);
     }
 
     @Override

@@ -13,7 +13,7 @@ import javax.swing.JButton;
 import javax.swing.JPanel;
 import javax.swing.UIManager;
 
-import treepeater.ai.RepeaterTabAgentBridge;
+import treepeater.ai.TreepeaterTabAgentBridge;
 import treepeater.Treepeater;
 import treepeater.TreepeaterModel;
 import treepeater.Utilities;
@@ -42,7 +42,7 @@ public class RequestResponseToolbar extends JPanel {
 
     private final List<RequestResponseToolbarListener> toolbarListeners = new CopyOnWriteArrayList<>();
 
-    public RequestResponseToolbar(TreepeaterModel model, RepeaterTabAgentBridge agentBridge) {
+    public RequestResponseToolbar(TreepeaterModel model, TreepeaterTabAgentBridge agentBridge) {
         super(new BorderLayout());
         setBorder(
                 BorderFactory.createCompoundBorder(

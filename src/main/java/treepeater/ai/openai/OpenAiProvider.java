@@ -16,31 +16,53 @@ import treepeater.ai.model.ModelOptions;
 import treepeater.settings.TreepeaterSettings;
 
 /**
- * Azure OpenAI / Foundry provider. Declares GPT-5.4 / GPT-5.4 mini / GPT-5.3 with {@code MINIMAL..HIGH}
- * effort range; this is the only place that touches the OpenAI SDK enums.
+ * Azure OpenAI / Foundry provider. Declares GPT-6 Astra, the GPT-5.6 family, and the previous
+ * GPT-5.5 / GPT-5.4 generation with per-model effort ranges; this is the only place that touches
+ * the OpenAI SDK enums.
  */
 public final class OpenAiProvider implements LlmProvider {
     public static final String ID = "openai";
 
-    private static final List<EffortLevel> OPENAI_EFFORT_RANGE =
-            List.of(EffortLevel.MINIMAL, EffortLevel.LOW, EffortLevel.MEDIUM, EffortLevel.HIGH);
+    private static final List<EffortLevel> ASTRA_EFFORT_RANGE =
+            List.of(EffortLevel.LOW, EffortLevel.MEDIUM, EffortLevel.HIGH, EffortLevel.XHIGH, EffortLevel.MAX);
+
+    private static final List<EffortLevel> GPT56_EFFORT_RANGE =
+            List.of(
+                    EffortLevel.MINIMAL,
+                    EffortLevel.LOW,
+                    EffortLevel.MEDIUM,
+                    EffortLevel.HIGH,
+                    EffortLevel.XHIGH,
+                    EffortLevel.MAX);
+
+    private static final List<EffortLevel> GPT55_EFFORT_RANGE =
+            List.of(
+                    EffortLevel.MINIMAL,
+                    EffortLevel.LOW,
+                    EffortLevel.MEDIUM,
+                    EffortLevel.HIGH,
+                    EffortLevel.XHIGH);
 
     private final List<LlmModelDefinition> models;
 
     public OpenAiProvider() {
         this.models = List.of(
-                build(ChatModel.GPT_5_5.asString(), "GPT-5.5"),
-                build(ChatModel.GPT_5_4.asString(), "GPT-5.4"),
-                build(ChatModel.GPT_5_4_MINI.asString(), "GPT-5.4 mini"));
+                build(ChatModel.of("gpt-6-astra").asString(), "GPT-6 Astra", ASTRA_EFFORT_RANGE),
+                build(ChatModel.GPT_5_6_SOL.asString(), "GPT-5.6 Sol", GPT56_EFFORT_RANGE),
+                build(ChatModel.GPT_5_6_TERRA.asString(), "GPT-5.6 Terra", GPT56_EFFORT_RANGE),
+                build(ChatModel.GPT_5_6_LUNA.asString(), "GPT-5.6 Luna", GPT56_EFFORT_RANGE),
+                build(ChatModel.GPT_5_5.asString(), "GPT-5.5", GPT55_EFFORT_RANGE),
+                build(ChatModel.GPT_5_4.asString(), "GPT-5.4", GPT55_EFFORT_RANGE),
+                build(ChatModel.GPT_5_4_MINI.asString(), "GPT-5.4 mini", GPT55_EFFORT_RANGE));
     }
 
-    private LlmModelDefinition build(String modelId, String displayName) {
+    private LlmModelDefinition build(String modelId, String displayName, List<EffortLevel> effortRange) {
         return new LlmModelDefinition(
                 this,
                 modelId,
                 displayName,
                 List.of(ModelOptions.EFFORT),
-                Map.of(ModelOptions.EFFORT, OPENAI_EFFORT_RANGE),
+                Map.of(ModelOptions.EFFORT, effortRange),
                 LlmModelOptionValues.of(ModelOptions.EFFORT, EffortLevel.MEDIUM));
     }
 
@@ -94,13 +116,19 @@ public final class OpenAiProvider implements LlmProvider {
                 new OpenAiClientConfig(endpoint, apiKey, model.modelId(), mapEffort(effort)));
     }
 
-    /** OpenAI supports {@code MINIMAL..HIGH}; {@link EffortLevel#MAX} is clipped to {@code HIGH}. */
+    /**
+     * Maps generic effort to the Responses-API {@link ReasoningEffort}. {@link EffortLevel#MINIMAL}
+     * is sent as {@code none} (GPT-5.5+ document {@code none}, not {@code minimal}).
+     */
     static ReasoningEffort mapEffort(EffortLevel level) {
         return switch (level) {
-            case MINIMAL -> ReasoningEffort.MINIMAL;
+            case MINIMAL -> ReasoningEffort.NONE;
             case LOW -> ReasoningEffort.LOW;
             case MEDIUM -> ReasoningEffort.MEDIUM;
-            case HIGH, MAX -> ReasoningEffort.HIGH;
+            case HIGH -> ReasoningEffort.HIGH;
+            case XHIGH -> ReasoningEffort.XHIGH;
+            case MAX -> ReasoningEffort.MAX;
         };
     }
+
 }

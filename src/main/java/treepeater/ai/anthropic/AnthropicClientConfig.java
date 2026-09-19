@@ -11,8 +11,8 @@ import com.anthropic.models.messages.OutputConfig;
  *
  * <p>The provider is responsible for selecting {@link ThinkingMode} appropriately for each model
  * id; the streaming client just switches on it. Models that do not support output effort (for
- * example Haiku 4.5) use an empty {@link #outputEffort()} so the client omits {@code output_config}
- * from the request.
+ * example Haiku 4.5, which uses {@link ThinkingMode#FIXED_BUDGET}) use an empty
+ * {@link #outputEffort()} so the client omits {@code output_config} from the request.
  */
 public record AnthropicClientConfig(
         String apiKey,

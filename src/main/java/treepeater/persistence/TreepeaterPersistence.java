@@ -828,7 +828,8 @@ public class TreepeaterPersistence {
             return;
         }
         // Both legacy enums (OpenAiReasoningEffort and AnthropicOutputEffort) used names that
-        // line up with the new EffortLevel constants (MINIMAL / LOW / MEDIUM / HIGH / MAX).
+        // line up with EffortLevel constants (MINIMAL / LOW / MEDIUM / HIGH / MAX). Unknown
+        // names including older-only values are ignored.
         try {
             EffortLevel level = EffortLevel.valueOf(s);
             out.put(ModelOptions.EFFORT.id(), level.name());

@@ -70,7 +70,7 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
         }
     }
 
-    // ------------------------------------------------------------------ helpers
+    
 
     private HttpRequest.Builder authed(String path) {
         return HttpRequest.newBuilder(URI.create(this.base + path))
@@ -92,8 +92,6 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
     private static JsonNode json(HttpResponse<String> response) throws Exception {
         return MAPPER.readTree(response.body());
     }
-
-    // ----------------------------------------------------------------- lifecycle
 
     @Test
     void theServerBindsAndReportsItsPort() {
@@ -131,8 +129,6 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
             assertFalse(blocked.isRunning());
         }
     }
-
-    // -------------------------------------------------------------------- auth
 
     @Test
     void requestsWithoutATokenAreRejected() throws Exception {
@@ -176,7 +172,6 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
         assertEquals(401, response.statusCode());
     }
 
-    // ------------------------------------------------------------------ origin
 
     @Test
     void aCrossSiteOriginIsRefused() throws Exception {
@@ -210,7 +205,6 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
         assertEquals(403, response.statusCode());
     }
 
-    // -------------------------------------------------------------- rest routes
 
     @Test
     void healthDescribesTheServer() throws Exception {
@@ -324,7 +318,6 @@ class TreepeaterHttpServerTest extends ImportTestSupport {
         assertEquals(204, response.statusCode());
     }
 
-    // --------------------------------------------------------------------- mcp
 
     @Test
     void theMcpEndpointServesToolsList() throws Exception {

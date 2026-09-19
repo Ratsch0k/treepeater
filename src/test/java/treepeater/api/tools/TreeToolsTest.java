@@ -83,7 +83,6 @@ class TreeToolsTest extends ImportTestSupport {
 
     private static final String CREATE = CreateFolderTool.NAME;
 
-    // ------------------------------------------------------------------ folders
 
     @Test
     void createFolderAtTheRootReturnsTheNewNode() throws Exception {
@@ -131,7 +130,6 @@ class TreeToolsTest extends ImportTestSupport {
         assertEquals("API/v2", child.get("path").asText());
     }
 
-    // -------------------------------------------------------------------- names
 
     @Test
     void renameNodeChangesTheDisplayName() throws Exception {
@@ -159,7 +157,6 @@ class TreeToolsTest extends ImportTestSupport {
         assertTrue(error(RenameNodeTool.NAME, "{\"name\":\"x\"}").contains("node_id required"));
     }
 
-    // ----------------------------------------------------------------- statuses
 
     @Test
     void setNodeStatusAppliesAKnownStatus() throws Exception {
@@ -184,7 +181,6 @@ class TreeToolsTest extends ImportTestSupport {
         assertTrue(message.contains(ListStatusesTool.NAME), message);
     }
 
-    // -------------------------------------------------------------------- notes
 
     @Test
     void notesRoundTripOnARequestNode() throws Exception {
@@ -206,7 +202,6 @@ class TreeToolsTest extends ImportTestSupport {
                 .contains("has no notes"));
     }
 
-    // -------------------------------------------------------------------- moves
 
     @Test
     void moveNodeReparentsUnderTheDestination() throws Exception {
@@ -273,7 +268,6 @@ class TreeToolsTest extends ImportTestSupport {
                 .contains("root cannot be deleted"));
     }
 
-    // ------------------------------------------------------------------ deletes
 
     @Test
     void deleteNodeRemovesTheWholeSubtreeAndReportsTheCount() throws Exception {
@@ -289,7 +283,7 @@ class TreeToolsTest extends ImportTestSupport {
         assertNull(nodeById(this.model, outer));
     }
 
-    // ----------------------------------------------------------------- browsing
+    //  browsing
 
     @Test
     void listTreeReturnsTheNestedStructureWithATotal() throws Exception {
@@ -370,7 +364,6 @@ class TreeToolsTest extends ImportTestSupport {
         assertTrue(error(ListTreeTool.NAME, "not json").contains("must be a JSON object"));
     }
 
-    // ------------------------------------------------------------------ policy
 
     @Test
     void readOnlyPolicyPermitsBrowsingButBlocksMutations() throws Exception {

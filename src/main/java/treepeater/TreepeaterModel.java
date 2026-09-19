@@ -275,8 +275,14 @@ public class TreepeaterModel implements TreepeaterNodeListener {
                 ? String.valueOf(this.requestCount)
                 : resolveDirectLeafName(request, nameMode, "");
 
+        Status status = ImportOptions.fromSettings().resolveStatus();
         RequestTreeNode node = new RequestTreeNode(
-                this.requestCount, leafName, request, requestResponse.response());
+                this.requestCount,
+                status,
+                leafName,
+                request,
+                requestResponse.response(),
+                new RequestHistory());
 
         node.addListener(this);
 
@@ -563,7 +569,6 @@ public class TreepeaterModel implements TreepeaterNodeListener {
         double matchThreshold = lenientGrouping.matchThreshold();
         int mustMatch = (int) Math.ceil(target.size() * matchThreshold);
         if (path.size() >= mustMatch && path.size() - maxSkip <= target.size() && path.size() > maxSkip) {
-
             // Lenient folder grouping: the folder path contains a prefix of the target after
             // skipping up to maxSkip leading organizational segments. The matched suffix must cover
             // at least matchThreshold of the target path.

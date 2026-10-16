@@ -523,9 +523,10 @@ public class RequestResponsePanel extends JPanel {
 
     /**
      * EDT. Applies host/target and optionally syncs {@code Content-Length} to the body, returning the request that
-     * will actually be sent and stored on the node. The request editor document is left untouched so the user's
-     * undo history is preserved across sends; the content-length/target adjustments live only on the outgoing
-     * snapshot.
+     * will actually be sent and stored on the node. The previous response is cleared (editor, node, persisted
+     * state), showing an empty response pane while a request is in flight. The
+     * request editor document is left untouched so the user's undo history is preserved across sends; the
+     * content-length/target adjustments live only on the outgoing snapshot.
      */
     private HttpRequest prepareAndCommitRequestForSend() {
         HttpRequest r = this.requestEditor.getRequest();
@@ -534,6 +535,7 @@ public class RequestResponsePanel extends JPanel {
             r = RequestContentLength.syncContentLengthToBody(r);
         }
         this.node.setRequest(r);
+        this.setResponse(null);
         return r;
     }
 

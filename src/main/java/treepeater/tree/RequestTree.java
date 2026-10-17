@@ -232,18 +232,46 @@ public class RequestTree extends JTree {
         }
 
         JMenuItem newFolder = new JMenuItem("New Folder");
-        newFolder.addActionListener(ev -> {
-            if (this.createFolderHandler != null) {
-                FolderTreeNode folder = this.createFolderHandler.createFolder(target);
-                if (folder != null) {
-                    TreePath parentPath = new TreePath(((TreepeaterNode) folder.getParent()).getPath());
-                    this.expandPath(parentPath);
-                    this.startProgrammaticEditForNode(folder, ProgrammaticEdit.RENAME);
-                }
-            }
-        });
+        newFolder.addActionListener(ev -> this.createFolderAndRename(target));
         menu.add(newFolder);
         menu.show(this, e.getX(), e.getY());
+    }
+
+    /**
+     * Creates a folder under {@code target} (the root when {@code null}) and starts renaming it.
+     * Shared by the tree's right-click menu, the empty-state hint and the toolbar button.
+     *
+     * @return the created folder, or {@code null} when no create-folder handler is installed
+     */
+    public FolderTreeNode createFolderAndRename(TreepeaterNode target) {
+        if (this.createFolderHandler == null) {
+            return null;
+        }
+        FolderTreeNode folder = this.createFolderHandler.createFolder(target);
+        if (folder == null) {
+            return null;
+        }
+        TreePath parentPath = new TreePath(((TreepeaterNode) folder.getParent()).getPath());
+        this.expandPath(parentPath);
+        this.startProgrammaticEditForNode(folder, ProgrammaticEdit.RENAME);
+        return folder;
+    }
+
+    /** @return {@code true} when the tree contains at least one request leaf. */
+    public boolean hasRequestNodes() {
+        return containsRequestNode(this.root);
+    }
+
+    private static boolean containsRequestNode(TreepeaterNode node) {
+        if (node instanceof RequestTreeNode) {
+            return true;
+        }
+        for (int i = 0; i < node.getChildCount(); i++) {
+            if (containsRequestNode((TreepeaterNode) node.getChildAt(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

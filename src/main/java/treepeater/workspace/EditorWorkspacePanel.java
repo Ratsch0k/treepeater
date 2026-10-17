@@ -60,6 +60,7 @@ public class EditorWorkspacePanel extends JPanel implements EditorWorkspaceInter
                         EditorWorkspacePanel.this.applyPendingSplitProportions();
                     }
                 });
+        WorkspaceFocus.installMouseTracking(this, this::onPanelFocused);
         this.rebuildStructure();
         this.updateEmptyState();
     }

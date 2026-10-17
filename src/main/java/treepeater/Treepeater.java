@@ -18,6 +18,7 @@ import treepeater.requestResponse.Status;
 import treepeater.settings.StatusRegistry;
 import treepeater.settings.TreepeaterSettings;
 import treepeater.settings.TreepeaterSettingsPanel;
+import treepeater.workspace.WorkspaceFocus;
 
 import javax.swing.*;
 import javax.swing.event.TreeModelEvent;
@@ -90,6 +91,7 @@ public class Treepeater implements BurpExtension {
             if (Treepeater.apiServer != null) {
                 Treepeater.apiServer.stop();
             }
+            WorkspaceFocus.uninstallMouseTracking();
             Treepeater.persistence.saveStatusRegistry(Treepeater.statusRegistry);
             Treepeater.persistence.saveModel(Treepeater.model);
         });

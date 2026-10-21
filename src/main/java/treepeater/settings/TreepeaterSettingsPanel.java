@@ -28,13 +28,13 @@ import javax.swing.DefaultListModel;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
-import javax.swing.JRadioButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
+import javax.swing.JRadioButton;
 import javax.swing.JSeparator;
 import javax.swing.JSpinner;
 import javax.swing.JTextArea;
@@ -45,7 +45,9 @@ import javax.swing.SpinnerNumberModel;
 import javax.swing.UIManager;
 
 import burp.api.montoya.ui.settings.SettingsPanelWithData;
+import treepeater.RepeaterNotice;
 import treepeater.Treepeater;
+import treepeater.TreepeaterVersion;
 import treepeater.ai.ollama.OllamaProvider;
 import treepeater.components.StatusComboBox;
 import treepeater.components.StatusComboBoxRenderer;
@@ -111,6 +113,14 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
 
         this.root.add(new JSeparator(JSeparator.HORIZONTAL));
 
+        this.root.add(this.createTitledSection(
+            "Project notice",
+            "Adds a Repeater tab informing users without Treepeater that this project uses Treepeater.",
+            this.createProjectNoticePanel()
+        ));
+
+        this.root.add(new JSeparator(JSeparator.HORIZONTAL));
+
         JPanel llmPanel = this.createTitledSection(
             "LLMs",
             "Configure connection details for Ollama, Anthropic, and Azure OpenAI / Microsoft Foundry. "
@@ -129,6 +139,32 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
             this.createApiSettingsPanel()
         );
         this.root.add(apiPanel);
+    }
+
+    private JComponent createProjectNoticePanel() {
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        row.setOpaque(false);
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JButton createButton = new JButton("Create Repeater notice tab");
+        createButton.addActionListener(e -> {
+            try {
+                RepeaterNotice.createNoticeInRepeaterTab(TreepeaterVersion.get());
+                JOptionPane.showMessageDialog(
+                    this.root,
+                    "The notice tab was added to Repeater.",
+                    "Project notice",
+                    JOptionPane.INFORMATION_MESSAGE);
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(
+                    this.root,
+                    "Could not create the notice tab: " + ex.getMessage(),
+                    "Project notice",
+                    JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        row.add(createButton);
+        return row;
     }
 
     private JPanel createTitledSection(String title, String description, JComponent content) {
@@ -185,7 +221,7 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         row = this.addHotkeySetting(root,row, "Previous request tab hotkey:", this.settings::getTabPreviousHotkey, this.settings::setTabPreviousHotkey);
         row = this.addHotkeySetting(root,row, "Next request tab hotkey:", this.settings::getTabNextHotkey, this.settings::setTabNextHotkey);
         this.addHotkeySetting(root,row, "Focus request tree hotkey:", this.settings::getFocusTreeHotkey, this.settings::setFocusTreeHotkey);
-    
+
         return root;
     }
 

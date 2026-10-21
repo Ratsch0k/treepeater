@@ -2,6 +2,8 @@ plugins {
     id("java")
 }
 
+version = "1.6.0"
+
 repositories {
     mavenCentral()
 }
@@ -49,7 +51,15 @@ tasks.withType<JavaCompile>().configureEach {
     options.encoding = "UTF-8"
 }
 
+tasks.named<ProcessResources>("processResources") {
+    inputs.property("version", project.version)
+    filesMatching("treepeater.properties") {
+        expand("version" to project.version)
+    }
+}
+
 tasks.named<Jar>("jar") {
+    archiveFileName.set("Treepeater.jar")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     from(configurations.runtimeClasspath.get().filter { it.isDirectory })
     from(configurations.runtimeClasspath.get().filterNot { it.isDirectory }.map { zipTree(it) })

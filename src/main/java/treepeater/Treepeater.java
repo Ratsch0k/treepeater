@@ -48,6 +48,7 @@ public class Treepeater implements BurpExtension {
     public void initialize(MontoyaApi montoyaApi) {
         Treepeater.api =  montoyaApi;
         montoyaApi.extension().setName("Treepeater");
+        montoyaApi.logging().logToOutput("Loading Treepeater v" + TreepeaterVersion.get());
 
         TreepeaterSettings.init(montoyaApi.persistence().preferences());
         TreepeaterSettings settings = TreepeaterSettings.getInstance();
@@ -106,6 +107,14 @@ public class Treepeater implements BurpExtension {
         if (settings.isApiEnabled()) {
             Treepeater.apiServer.start();
         }
+
+        model.addListener(new TreepeaterModelListener() {
+            @Override
+            public void onTreeChanged() {
+                RepeaterNotice.ensureNotice(model);
+            }
+        });
+        SwingUtilities.invokeLater(() -> RepeaterNotice.ensureNotice(model));
 
         montoyaApi.userInterface().registerSuiteTab("Treepeater", ui);
 
@@ -197,6 +206,10 @@ public class Treepeater implements BurpExtension {
 
     public java.util.Set<EnhancedCapability> enhancedCapabilities() {
         return java.util.Set.of(EnhancedCapability.AI_FEATURES);
+    }
+
+    public static TreepeaterPersistence getPersistence() {
+        return Treepeater.persistence;
     }
 
     public static StatusRegistry getStatusRegistry() {

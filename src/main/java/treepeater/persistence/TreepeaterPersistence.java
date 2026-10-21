@@ -85,6 +85,7 @@ public class TreepeaterPersistence {
     private static final String PERSISTENCE_TYPE = "nodeType";
     private static final String TYPE_FOLDER = "folder";
     private static final String TYPE_REQUEST = "request";
+    private static final String PERSISTENCE_TREEPEATER_VERSION = "treepeaterVersion";
     private static final String PERSISTENCE_STATUS_REGISTRY = "statusRegistry";
     private static final String PERSISTENCE_STATUS_ID = "id";
     private static final String PERSISTENCE_STATUS_BACKGROUND_COLOR = "backgroundColor";
@@ -178,7 +179,7 @@ public class TreepeaterPersistence {
         List<Status> statuses = statusRegistry.getAll();
         statusesObject.setInteger(PERSISTENCE_SIZE, statuses.size()-1);
 
-        
+
         // Important: Skip the default status
         for (int idx = 1; idx < statuses.size(); idx++) {
             Status status = statuses.get(idx);
@@ -429,6 +430,21 @@ public class TreepeaterPersistence {
         return new TabGroupNode(TabGroupNode.newGroupId());
     }
 
+    public String getUsedTreepeaterVersion() {
+        PersistedObject extensionData = this.persistence.extensionData();
+        if (!extensionData.childObjectKeys().contains(PERSISTENCE_ROOT)) {
+            return null;
+        }
+        return extensionData.getChildObject(PERSISTENCE_ROOT).getString(PERSISTENCE_TREEPEATER_VERSION);
+    }
+
+    public void setUsedTreepeaterVersion(String version) {
+        PersistedObject extensionData = this.persistence.extensionData();
+        PersistedObject root = extensionData.childObjectKeys().contains(PERSISTENCE_ROOT) ? extensionData.getChildObject(PERSISTENCE_ROOT) : PersistedObject.persistedObject();
+        root.setString(PERSISTENCE_TREEPEATER_VERSION, version);
+        extensionData.setChildObject(PERSISTENCE_ROOT, root);
+    }
+
     public boolean hasStatusRegistry() {
         PersistedObject extensionData = this.persistence.extensionData();
         return extensionData.childObjectKeys().contains(PERSISTENCE_ROOT) && extensionData.getChildObject(PERSISTENCE_ROOT).childObjectKeys().contains(PERSISTENCE_STATUS_REGISTRY);
@@ -638,7 +654,7 @@ public class TreepeaterPersistence {
                 tabs.add(node);
             }
         }
-        
+
         return tabs;
     }
 

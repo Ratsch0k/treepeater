@@ -21,7 +21,12 @@ public class CustomTreeCellRenderer extends DefaultTreeCellRenderer {
         if (this.cell == null) {
             this.cell = new CustomTreeCell();
         }
-        this.cell.setNode((TreepeaterNode) value);
+        this.cell.setNode((TreepeaterNode) value, matchFor(tree, (TreepeaterNode) value));
         return this.cell;
+    }
+
+    /** Search-filter display state from the hosting tree, when it keeps one. */
+    static FilteredTreeModel.NodeMatch matchFor(JTree tree, TreepeaterNode node) {
+        return tree instanceof RequestTree requestTree ? requestTree.getNodeMatch(node) : null;
     }
 }

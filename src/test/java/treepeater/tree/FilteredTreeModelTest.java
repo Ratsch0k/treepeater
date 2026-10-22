@@ -277,4 +277,43 @@ class FilteredTreeModelTest {
         assertTrue(this.filtered.isLeaf(gamma));
         assertNull(this.filtered.getNodeMatch(gamma));
     }
-}
+
+    @Test
+    void listenersAreNotifiedLastRegisteredFirstLikeDefaultTreeModel() {
+        List<String> order = new ArrayList<>();
+        this.filtered.addTreeModelListener(orderRecorder("B", order));
+        this.filtered.addTreeModelListener(orderRecorder("C", order));
+
+        FolderTreeNode folderA = folder(1, "Alpha");
+        this.source.insertNodeInto(folderA, this.root, 0);
+
+        // The default listener from the constructor does not record; B was registered before C.
+        assertEquals(List.of("C", "B"), order);
+
+        order.clear();
+        this.filtered.setQuery(TreeTitleMatcher.parse("alpha"));
+        assertEquals(List.of("C", "B"), order);
+    }
+
+    private static TreeModelListener orderRecorder(String name, List<String> order) {
+        return new TreeModelListener() {
+            @Override
+            public void treeNodesChanged(TreeModelEvent e) {
+            }
+
+            @Override
+            public void treeNodesInserted(TreeModelEvent e) {
+                order.add(name);
+            }
+
+            @Override
+            public void treeNodesRemoved(TreeModelEvent e) {
+                order.add(name);
+            }
+
+            @Override
+            public void treeStructureChanged(TreeModelEvent e) {
+                order.add(name);
+            }
+        };
+    }}

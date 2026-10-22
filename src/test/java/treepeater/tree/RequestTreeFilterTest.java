@@ -179,4 +179,25 @@ class RequestTreeFilterTest extends ImportTestSupport {
         this.tree.setFilterQuery("");
         assertFalse(this.tree.isFiltering());
     }
-}
+
+    @Test
+    void movingNodeKeepsRowLayoutConsistent() {
+        FolderTreeNode target = addFolder("Target", root());
+        FolderTreeNode other = addFolder("Other", root());
+        RequestTreeNode moved = addRequest("Moved", other);
+        addRequest("Sibling", other);
+        syncTree();
+        this.tree.expandPath(new TreePath(other.getPath()));
+        this.tree.setSelectionPath(new TreePath(moved.getPath()));
+
+        this.tree.getTreeModel().removeNodeFromParent(moved);
+        this.tree.getTreeModel().insertNodeInto(moved, target, 0);
+        this.tree.expandPath(new TreePath(target.getPath()));
+
+        int rows = this.tree.getRowCount();
+        assertEquals(4, rows);
+        for (int row = 0; row < rows; row++) {
+            assertEquals(row, this.tree.getRowForPath(this.tree.getPathForRow(row)));
+        }
+        assertEquals(1, this.tree.getRowForPath(new TreePath(moved.getPath())));
+    }}

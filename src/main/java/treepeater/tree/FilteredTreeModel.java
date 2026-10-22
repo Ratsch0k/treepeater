@@ -220,7 +220,9 @@ public class FilteredTreeModel implements TreeModel {
             TreeModelEvent forwarded =
                     new TreeModelEvent(this, sourceEvent.getPath(), sourceEvent.getChildIndices(),
                             sourceEvent.getChildren());
-            for (TreeModelListener listener : new ArrayList<>(this.listeners)) {
+
+            for (int i = this.listeners.size() - 1; i >= 0; i--) {
+                TreeModelListener listener = this.listeners.get(i);
                 dispatch.dispatch(listener, forwarded);
             }
             return;
@@ -234,7 +236,9 @@ public class FilteredTreeModel implements TreeModel {
             this.beforeStructureChangedCallback.run();
         }
         TreeModelEvent event = new TreeModelEvent(this, new Object[] { this.getRoot() });
-        for (TreeModelListener listener : new ArrayList<>(this.listeners)) {
+
+        for (int i = this.listeners.size() - 1; i >= 0; i--) {
+            TreeModelListener listener = this.listeners.get(i);
             listener.treeStructureChanged(event);
         }
         if (this.structureChangedCallback != null) {

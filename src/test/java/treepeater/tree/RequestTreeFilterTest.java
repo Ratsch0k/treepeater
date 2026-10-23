@@ -5,8 +5,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.*;
 
 import javax.swing.tree.TreePath;
+import javax.swing.JTree.DropLocation;
+import javax.swing.TransferHandler.TransferSupport;
 
 import org.junit.jupiter.api.Test;
 
@@ -152,18 +155,18 @@ class RequestTreeFilterTest extends ImportTestSupport {
         RequestTreeNode login = this.addRequest("Login page", this.root());
         this.syncTree();
 
-        javax.swing.JTree.DropLocation dropLocation =
-                org.mockito.Mockito.mock(javax.swing.JTree.DropLocation.class);
-        org.mockito.Mockito.when(dropLocation.getPath()).thenReturn(new TreePath(folder.getPath()));
-        org.mockito.Mockito.when(dropLocation.getChildIndex()).thenReturn(-1);
+        DropLocation dropLocation =
+                mock(DropLocation.class);
+        when(dropLocation.getPath()).thenReturn(new TreePath(folder.getPath()));
+        when(dropLocation.getChildIndex()).thenReturn(-1);
 
-        javax.swing.TransferHandler.TransferSupport support =
-                org.mockito.Mockito.mock(javax.swing.TransferHandler.TransferSupport.class);
-        org.mockito.Mockito.when(support.isDrop()).thenReturn(true);
-        org.mockito.Mockito.when(support.isDataFlavorSupported(org.mockito.ArgumentMatchers.any()))
+        TransferSupport support =
+                mock(TransferSupport.class);
+        when(support.isDrop()).thenReturn(true);
+        when(support.isDataFlavorSupported(org.mockito.ArgumentMatchers.any()))
                 .thenReturn(true);
-        org.mockito.Mockito.when(support.getComponent()).thenReturn(this.tree);
-        org.mockito.Mockito.when(support.getDropLocation()).thenReturn(dropLocation);
+        when(support.getComponent()).thenReturn(this.tree);
+        when(support.getDropLocation()).thenReturn(dropLocation);
 
         TreeTransferHandler handler = new TreeTransferHandler(this.tree.getTreeModel(), this.tree);
 
@@ -178,6 +181,63 @@ class RequestTreeFilterTest extends ImportTestSupport {
 
         this.tree.setFilterQuery("");
         assertFalse(this.tree.isFiltering());
+    }
+
+    private TransferSupport dropSupportOn(TreepeaterNode destination) {
+        DropLocation dropLocation =
+                mock(DropLocation.class);
+        when(dropLocation.getPath()).thenReturn(new TreePath(destination.getPath()));
+        when(dropLocation.getChildIndex()).thenReturn(-1);
+
+        TransferSupport support =
+                mock(TransferSupport.class);
+        when(support.isDrop()).thenReturn(true);
+        when(support.isDataFlavorSupported(any()))
+                .thenReturn(true);
+        when(support.getComponent()).thenReturn(this.tree);
+        when(support.getDropLocation()).thenReturn(dropLocation);
+        return support;
+    }
+
+    @Test
+    void folderWithCollapsedSubfolderCanBeDroppedOnRoot() {
+        FolderTreeNode outer = this.addFolder("Outer", this.root());
+        FolderTreeNode inner = this.addFolder("Inner", outer);
+        this.addRequest("Leaf", inner);
+        this.syncTree();
+        this.tree.expandPath(new TreePath(outer.getPath()));
+        this.tree.collapsePath(new TreePath(inner.getPath()));
+        this.tree.setSelectionPath(new TreePath(outer.getPath()));
+
+        TreeTransferHandler handler = new TreeTransferHandler(this.tree.getTreeModel(), this.tree);
+        assertTrue(handler.canImport(this.dropSupportOn(this.root())));
+    }
+
+    @Test
+    void collapsedFolderWithChildrenCanBeDroppedOnRoot() {
+        FolderTreeNode outer = this.addFolder("Outer", this.root());
+        this.addRequest("Leaf", outer);
+        this.syncTree();
+        this.tree.collapsePath(new TreePath(outer.getPath()));
+        this.tree.setSelectionPath(new TreePath(outer.getPath()));
+
+        TreeTransferHandler handler = new TreeTransferHandler(this.tree.getTreeModel(), this.tree);
+        assertTrue(handler.canImport(this.dropSupportOn(this.root())));
+    }
+
+    @Test
+    void folderCannotBeDroppedOntoItselfOrItsDescendants() {
+        FolderTreeNode outer = this.addFolder("Outer", this.root());
+        FolderTreeNode inner = this.addFolder("Inner", outer);
+        this.addRequest("Leaf", inner);
+        this.syncTree();
+        this.tree.expandPath(new TreePath(outer.getPath()));
+        this.tree.collapsePath(new TreePath(inner.getPath()));
+        this.tree.setSelectionPath(new TreePath(outer.getPath()));
+
+        TreeTransferHandler handler = new TreeTransferHandler(this.tree.getTreeModel(), this.tree);
+        assertFalse(handler.canImport(this.dropSupportOn(outer)));
+        assertFalse(handler.canImport(this.dropSupportOn(inner)));
     }
 
     @Test

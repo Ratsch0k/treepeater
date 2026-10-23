@@ -69,23 +69,16 @@ public class TreeTransferHandler extends TransferHandler {
             return false;
         }
 
-        int dropRow = tree.getRowForPath(dl.getPath());
-        int[] selRows = tree.getSelectionRows();
-        if (selRows == null) {
+        TreePath[] selPaths = tree.getSelectionPaths();
+        if (selPaths == null) {
             return false;
         }
-        for (int i = 0; i < selRows.length; i++) {
-            if (selRows[i] == dropRow) {
+        // Compare nodes, not rows: the hidden root and nodes under collapsed folders have no row (-1).
+        TreepeaterNode dest = (TreepeaterNode) destComponent;
+        for (TreePath selPath : selPaths) {
+            if (selPath.getLastPathComponent() instanceof TreepeaterNode selected
+                    && (selected == dest || selected.isNodeDescendant(dest))) {
                 return false;
-            }
-            TreepeaterNode treeNode =
-                    (TreepeaterNode) tree.getPathForRow(selRows[i]).getLastPathComponent();
-            for (TreeNode offspring : Collections.list(treeNode.depthFirstEnumeration())) {
-                if (offspring instanceof TreepeaterNode offspringNode) {
-                    if (tree.getRowForPath(new TreePath(offspringNode.getPath())) == dropRow) {
-                        return false;
-                    }
-                }
             }
         }
         return true;

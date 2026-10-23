@@ -7,11 +7,16 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import javax.swing.tree.TreePath;
 import javax.swing.JTree.DropLocation;
 import javax.swing.TransferHandler.TransferSupport;
 
 import org.junit.jupiter.api.Test;
+
+import burp.api.montoya.http.message.requests.HttpRequest;
 
 import treepeater.ImportTestSupport;
 import treepeater.draggable.TreeTransferHandler;
@@ -147,6 +152,91 @@ class RequestTreeFilterTest extends ImportTestSupport {
     @Test
     void emptyTreeHasNoFirstVisibleRow() {
         assertFalse(this.tree.selectFirstVisibleRequestRow());
+    }
+
+    private RequestTreeNode addRequest(String name, String method, TreepeaterNode parent) {
+        HttpRequest req = mock(HttpRequest.class);
+        when(req.method()).thenReturn(method);
+        RequestTreeNode request = new RequestTreeNode((int) (Math.random() * 100000), name, req, null);
+        this.tree.getTreeModel().insertNodeInto(request, parent, parent.getChildCount());
+        return request;
+    }
+
+    @Test
+    void methodAndStatusFiltersToggleFilteringAndFireEvents() {
+        RequestTreeNode get = this.addRequest("a", "GET", this.root());
+        RequestTreeNode post = this.addRequest("b", "post", this.root());
+        this.syncTree();
+        List<TreeFilter> events = new ArrayList<>();
+        this.tree.addPropertyChangeListener(RequestTree.PROPERTY_TREE_FILTER,
+                ev -> events.add((TreeFilter) ev.getNewValue()));
+
+        this.tree.setMethodFilter(List.of("get"));
+
+        assertTrue(this.tree.isFiltering());
+        assertEquals(1, events.size());
+        assertEquals(Kind.DIRECT, this.tree.getNodeMatch(get).kind());
+        assertNull(this.tree.getNodeMatch(post));
+
+        this.tree.setMethodFilter(List.of("GET"));
+        assertEquals(1, events.size());
+
+        this.tree.setStatusFilter(List.of("todo"));
+        assertEquals(2, events.size());
+        assertFalse(this.tree.hasVisibleNodes());
+
+        this.tree.clearAttributeFilters();
+        assertFalse(this.tree.isFiltering());
+        assertEquals(3, events.size());
+    }
+
+    @Test
+    void attributeFiltersDoNotChangeTheSearchText() {
+        this.addRequest("a", "GET", this.root());
+        this.tree.setFilterQuery("a");
+
+        this.tree.setMethodFilter(List.of("GET"));
+        assertEquals("a", this.tree.getFilterQuery());
+
+        this.tree.clearFilters();
+        assertEquals("", this.tree.getFilterQuery());
+        assertFalse(this.tree.isFiltering());
+    }
+
+    @Test
+    void revealNodeClearsAttributeFiltersToo() {
+        this.addRequest("a", "GET", this.root());
+        RequestTreeNode post = this.addRequest("b", "POST", this.root());
+        this.syncTree();
+        this.tree.setMethodFilter(List.of("GET"));
+        assertNull(this.tree.getNodeMatch(post));
+
+        this.tree.revealNode(post);
+
+        assertFalse(this.tree.isFiltering());
+        assertSame(post, this.tree.getSelectionPath().getLastPathComponent());
+    }
+
+    @Test
+    void collectRequestMethodsListsDistinctUpperCasedMethodsStandardFirst() {
+        FolderTreeNode folder = this.addFolder("f", this.root());
+        this.addRequest("a", "post", folder);
+        this.addRequest("b", "GET", this.root());
+        this.addRequest("c", "PROPFIND", this.root());
+        this.addRequest("d", "get", this.root());
+        this.addRequest("no request", this.root());
+
+        assertEquals(List.of("GET", "POST", "PROPFIND"), this.tree.collectRequestMethods());
+    }
+
+    @Test
+    void retainStatusFilterDropsRemovedStatuses() {
+        this.addRequest("a", "GET", this.root());
+        this.tree.setStatusFilter(List.of("TODO", "gone"));
+
+        this.tree.retainStatusFilter(List.of("DEFAULT", "TODO"));
+
+        assertEquals(java.util.Set.of("todo"), this.tree.getTreeFilter().statusIds());
     }
 
     @Test

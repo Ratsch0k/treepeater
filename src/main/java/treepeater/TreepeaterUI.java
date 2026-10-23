@@ -51,8 +51,11 @@ import treepeater.icons.DoubleArrowRightIcon;
 import treepeater.icons.FileExportIcon;
 import treepeater.TreepeaterModel.SiblingCopyPlacement;
 import treepeater.tree.CustomTreeCellEditor.ProgrammaticEdit;
+import treepeater.requestResponse.Status;
+import treepeater.settings.StatusRegistry;
 import treepeater.tree.FolderTreeNode;
 import treepeater.tree.RequestTree;
+import treepeater.tree.TreeFilterButton;
 import treepeater.tree.RequestTreeNode;
 import treepeater.tree.TreepeaterNode;
 import treepeater.draggable.RequestTreeNodeSimple;
@@ -98,6 +101,7 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
     private CardLayout treeContentCardLayout;
     private JPanel treeContentCardPanel;
     private JTextField treeSearchField;
+    private TreeFilterButton treeFilterButton;
     private EmptyStateHint treeNoMatchesHint;
     /** Guard so reflecting tree-side filter clears into the field does not re-apply the filter. */
     private boolean updatingTreeSearchFieldFromTree;
@@ -506,6 +510,9 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         if (this.treeSearchField != null) {
             this.applyTreeSearchFieldPadding(this.treeSearchField);
         }
+        if (this.treeFilterButton != null) {
+            this.treeFilterButton.applyLocalTheme(TREE_PANEL_TOOLBAR_ICON_SIZE);
+        }
         SwingUtilities.invokeLater(this::applyExpandDividerInteractionState);
     }
 
@@ -532,7 +539,7 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
                 selected = (TreepeaterNode) comp;
             }
         }
-        this.model.getTree().setFilterQuery("");
+        this.model.getTree().clearFilters();
         FolderTreeNode folder = this.model.createFolder(selected);
         if (folder != null) {
             SwingUtilities.invokeLater(() -> {
@@ -558,7 +565,7 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
                 ? TREE_CARD_EMPTY
                 : (noMatches ? TREE_CARD_NO_MATCHES : TREE_CARD_TREE);
         if (noMatches && this.treeNoMatchesHint != null) {
-            this.treeNoMatchesHint.setMessage("No nodes match the search query");
+            this.treeNoMatchesHint.setMessage("No nodes match the search or filters");
         }
         this.treeContentCardLayout.show(this.treeContentCardPanel, card);
         if (this.treePanelSyncButton != null) {
@@ -566,6 +573,9 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         }
         if (this.treeSearchField != null) {
             this.treeSearchField.setEnabled(!empty);
+        }
+        if (this.treeFilterButton != null) {
+            this.treeFilterButton.setEnabled(!empty);
         }
     }
 
@@ -703,10 +713,24 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
             TreepeaterUI.this.updateTreeEmptyState();
         });
 
+        tree.addPropertyChangeListener(RequestTree.PROPERTY_TREE_FILTER,
+                ev -> TreepeaterUI.this.updateTreeEmptyState());
+
+        StatusRegistry statusRegistry = Treepeater.getStatusRegistry();
+        if (statusRegistry != null) {
+            statusRegistry.addChangeListener(() -> tree.retainStatusFilter(
+                    statusRegistry.getAll().stream().map(Status::getId).toList()));
+        }
+
+        TreeFilterButton filterButton = new TreeFilterButton(tree);
+        filterButton.applyLocalTheme(TREE_PANEL_TOOLBAR_ICON_SIZE);
+        this.treeFilterButton = filterButton;
+
         this.treeSearchField = searchField;
-        JPanel searchRow = new JPanel(new BorderLayout());
+        JPanel searchRow = new JPanel(new BorderLayout(4, 0));
         searchRow.setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
         searchRow.add(searchField, BorderLayout.CENTER);
+        searchRow.add(filterButton, BorderLayout.LINE_END);
         return searchRow;
     }
 

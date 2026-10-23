@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -14,6 +16,8 @@ import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreeNode;
 
 import org.junit.jupiter.api.Test;
+
+import burp.api.montoya.http.message.requests.HttpRequest;
 
 import treepeater.settings.StatusRegistry;
 import treepeater.tree.FilteredTreeModel.Kind;
@@ -293,6 +297,133 @@ class FilteredTreeModelTest {
         order.clear();
         this.filtered.setQuery(TreeTitleMatcher.parse("alpha"));
         assertEquals(List.of("C", "B"), order);
+    }
+
+    // -- status / method filters -------------------------------------------
+
+    private final StatusRegistry registry = new StatusRegistry();
+
+    private RequestTreeNode request(int id, String name, String method, String statusId) {
+        HttpRequest req = mock(HttpRequest.class);
+        when(req.method()).thenReturn(method);
+        RequestTreeNode node = new RequestTreeNode(id, name, req, null);
+        node.setStatus(this.registry.getById(statusId));
+        return node;
+    }
+
+    private FolderTreeNode folder(int id, String name, String statusId) {
+        return new FolderTreeNode(id, this.registry.getById(statusId), name);
+    }
+
+    private void insert(TreeNode child, TreeNode parent) {
+        this.source.insertNodeInto((javax.swing.tree.MutableTreeNode) child,
+                (javax.swing.tree.MutableTreeNode) parent, parent.getChildCount());
+    }
+
+    @Test
+    void statusFilterShowsMatchingFoldersByThemselvesWithoutTheirSubtree() {
+        FolderTreeNode todoFolder = folder(1, "F", "TODO");
+        insert(request(10, "plain", "GET", "DEFAULT"), todoFolder);
+        insert(request(11, "todo req", "GET", "TODO"), todoFolder);
+        insert(todoFolder, this.root);
+        FolderTreeNode plainFolder = folder(2, "G", "DEFAULT");
+        insert(request(12, "other", "GET", "DEFAULT"), plainFolder);
+        insert(plainFolder, this.root);
+
+        this.filtered.setFilter(TreeFilter.none().withStatusIds(List.of("TODO")));
+
+        assertEquals(List.of("F"), childTitles(this.filtered, this.root));
+        assertEquals(List.of("todo req"), childTitles(this.filtered, todoFolder));
+        assertEquals(Kind.DIRECT, this.filtered.getNodeMatch(todoFolder).kind());
+        assertNull(this.filtered.getNodeMatch(plainFolder));
+    }
+
+    @Test
+    void methodFilterShowsRequestsWithFoldersOnTheirPath() {
+        FolderTreeNode withGet = folder(1, "F", "DEFAULT");
+        RequestTreeNode get = request(10, "get req", "GET", "DEFAULT");
+        insert(get, withGet);
+        RequestTreeNode postReq = request(11, "post req", "POST", "DEFAULT");
+        insert(postReq, withGet);
+        insert(withGet, this.root);
+        FolderTreeNode onlyPost = folder(2, "G", "DEFAULT");
+        insert(request(12, "post only", "POST", "DEFAULT"), onlyPost);
+        insert(onlyPost, this.root);
+
+        this.filtered.setFilter(TreeFilter.none().withMethods(List.of("GET")));
+
+        assertEquals(List.of("F"), childTitles(this.filtered, this.root));
+        assertEquals(List.of("get req"), childTitles(this.filtered, withGet));
+        assertEquals(Kind.PATH, this.filtered.getNodeMatch(withGet).kind());
+        assertEquals(Kind.DIRECT, this.filtered.getNodeMatch(get).kind());
+        assertNull(this.filtered.getNodeMatch(postReq));
+        assertNull(this.filtered.getNodeMatch(onlyPost));
+        assertTrue(this.filtered.getDirectMatchNodes().contains(get));
+    }
+
+    @Test
+    void titleQueryAndAttributeFilterCombine() {
+        FolderTreeNode alpha = folder(1, "Alpha", "DEFAULT");
+        RequestTreeNode getInside = request(10, "x", "GET", "DEFAULT");
+        insert(getInside, alpha);
+        insert(request(11, "y", "POST", "DEFAULT"), alpha);
+        insert(alpha, this.root);
+        insert(request(12, "other", "GET", "DEFAULT"), this.root);
+        RequestTreeNode alphaGet = request(13, "alpha get", "GET", "DEFAULT");
+        insert(alphaGet, this.root);
+
+        this.filtered.setFilter(TreeFilter.none()
+                .withQuery(TreeTitleMatcher.parse("alpha"))
+                .withMethods(List.of("GET")));
+
+        assertEquals(List.of("Alpha", "alpha get"), childTitles(this.filtered, this.root));
+        assertEquals(List.of("x"), childTitles(this.filtered, alpha));
+        assertEquals(Kind.INHERITED, this.filtered.getNodeMatch(getInside).kind());
+        assertEquals(Kind.PATH, this.filtered.getNodeMatch(alpha).kind());
+        assertEquals(Kind.DIRECT, this.filtered.getNodeMatch(alphaGet).kind());
+        assertEquals(Tier.SUBSTRING, this.filtered.getNodeMatch(alphaGet).match().tier());
+    }
+
+    @Test
+    void nodeStaysVisibleAfterItsStatusChangesUntilTheFilterChanges() {
+        RequestTreeNode todo = request(10, "a", "GET", "TODO");
+        insert(todo, this.root);
+        insert(request(11, "b", "GET", "TODO"), this.root);
+        this.filtered.setFilter(TreeFilter.none().withStatusIds(List.of("TODO")));
+        assertEquals(List.of("a", "b"), childTitles(this.filtered, this.root));
+
+        todo.setStatus(this.registry.getById("DONE"));
+        this.source.nodeChanged(todo);
+
+        assertEquals(List.of("a", "b"), childTitles(this.filtered, this.root));
+
+        this.filtered.setFilter(TreeFilter.none().withStatusIds(List.of("todo", "finding")));
+
+        assertEquals(List.of("b"), childTitles(this.filtered, this.root));
+    }
+
+    @Test
+    void clearingAllFiltersPassesEverythingThrough() {
+        insert(request(10, "a", "GET", "TODO"), this.root);
+        insert(request(11, "b", "POST", "DONE"), this.root);
+        this.filtered.setFilter(TreeFilter.none().withMethods(List.of("GET")));
+        assertEquals(1, this.filtered.getChildCount(this.root));
+
+        this.filtered.setFilter(TreeFilter.none());
+
+        assertTrue(!this.filtered.isFiltering());
+        assertEquals(2, this.filtered.getChildCount(this.root));
+    }
+
+    @Test
+    void setQueryKeepsAttributeRestrictions() {
+        insert(request(10, "alpha get", "GET", "DEFAULT"), this.root);
+        insert(request(11, "alpha post", "POST", "DEFAULT"), this.root);
+        this.filtered.setFilter(TreeFilter.none().withMethods(List.of("POST")));
+
+        this.filtered.setQuery(TreeTitleMatcher.parse("alpha"));
+
+        assertEquals(List.of("alpha post"), childTitles(this.filtered, this.root));
     }
 
     private static TreeModelListener orderRecorder(String name, List<String> order) {

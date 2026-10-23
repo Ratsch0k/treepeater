@@ -7,8 +7,12 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Consumer;
 
 import javax.swing.AbstractAction;
@@ -37,10 +41,14 @@ public class RequestTree extends JTree {
     /** Property fired via {@link #setFilterQuery} so the search field can stay in sync. */
     public static final String PROPERTY_FILTER_QUERY = "filterQuery";
 
+    /** Property fired whenever the effective {@link TreeFilter} (query, status or method) changes. */
+    public static final String PROPERTY_TREE_FILTER = "treeFilter";
+
     private FolderTreeNode root;
     private DefaultTreeModel model;
     private FilteredTreeModel filteredModel;
     private String filterQuery = "";
+    private TreeFilter filter = TreeFilter.none();
     private TreePath selectionBeforeFilterUpdate;
     private final CustomTreeUI ui;
     private final boolean dragSupported;
@@ -261,7 +269,7 @@ public class RequestTree extends JTree {
         if (this.createFolderHandler == null) {
             return null;
         }
-        this.setFilterQuery("");
+        this.clearFilters();
         FolderTreeNode folder = this.createFolderHandler.createFolder(target);
         if (folder == null) {
             return null;
@@ -315,21 +323,87 @@ public class RequestTree extends JTree {
      */
     public void setFilterQuery(String rawQuery) {
         String next = rawQuery != null ? rawQuery : "";
-        if (next.equals(this.filterQuery)) {
+        this.applyFilter(this.filter.withQuery(TreeTitleMatcher.parse(next)), next);
+    }
+
+    public String getFilterQuery() {
+        return this.filterQuery;
+    }
+
+    /** Restricts the tree to nodes with one of the given status ids; empty means any status. */
+    public void setStatusFilter(Collection<String> statusIds) {
+        this.applyFilter(this.filter.withStatusIds(statusIds), this.filterQuery);
+    }
+
+    /** Restricts the tree to requests with one of the given methods; empty means any method. */
+    public void setMethodFilter(Collection<String> methods) {
+        this.applyFilter(this.filter.withMethods(methods), this.filterQuery);
+    }
+
+    /** Removes the status and method restrictions, keeping the search text. */
+    public void clearAttributeFilters() {
+        this.applyFilter(this.filter.withoutAttributeFilters(), this.filterQuery);
+    }
+
+    /** Clears the search text and the status/method restrictions. */
+    public void clearFilters() {
+        this.applyFilter(TreeFilter.none(), "");
+    }
+
+    /** Drops selected status ids that are no longer in {@code validIds} (e.g. deleted statuses). */
+    public void retainStatusFilter(Collection<String> validIds) {
+        Set<String> valid = new HashSet<>();
+        for (String id : validIds) {
+            valid.add(TreeFilter.normalizeStatusId(id));
+        }
+        Set<String> kept = new HashSet<>(this.filter.statusIds());
+        if (kept.retainAll(valid)) {
+            this.setStatusFilter(kept);
+        }
+    }
+
+    public TreeFilter getTreeFilter() {
+        return this.filter;
+    }
+
+    /**
+     * @return the distinct (upper-cased) request methods present in the tree, standard methods
+     * first, then the rest alphabetically.
+     */
+    public List<String> collectRequestMethods() {
+        Set<String> methods = new TreeSet<>(TreeFilter.METHOD_ORDER);
+        Enumeration<?> nodes = this.root.preorderEnumeration();
+        while (nodes.hasMoreElements()) {
+            if (nodes.nextElement() instanceof RequestTreeNode requestNode && requestNode.getRequest() != null) {
+                String method = TreeFilter.normalizeMethod(requestNode.getRequest().method());
+                if (method != null && !method.isEmpty()) {
+                    methods.add(method);
+                }
+            }
+        }
+        return new ArrayList<>(methods);
+    }
+
+    private void applyFilter(TreeFilter next, String rawQuery) {
+        TreeFilter oldFilter = this.filter;
+        String oldQuery = this.filterQuery;
+        boolean queryChanged = !rawQuery.equals(oldQuery);
+        boolean filterChanged = !next.equals(oldFilter);
+        if (!queryChanged && !filterChanged) {
             return;
         }
-        String old = this.filterQuery;
-        this.filterQuery = next;
+        this.filterQuery = rawQuery;
+        this.filter = next;
 
         // Clearing the filter must keep folders opened during the search open: the structure
         // change fired by the wrapper would otherwise reset the expansion state.
-        boolean clearing = this.filteredModel.isFiltering() && TreeTitleMatcher.parse(next).isEmpty();
+        boolean clearing = this.filteredModel.isFiltering() && next.isEmpty();
         Enumeration<TreePath> expandedToRestore = null;
         if (clearing) {
             expandedToRestore = this.getExpandedDescendants(new TreePath(this.root.getPath()));
         }
 
-        this.filteredModel.setQuery(TreeTitleMatcher.parse(next));
+        this.filteredModel.setFilter(next);
 
         if (expandedToRestore != null) {
             while (expandedToRestore.hasMoreElements()) {
@@ -337,14 +411,15 @@ public class RequestTree extends JTree {
             }
         }
         this.updateDragEnabled();
-        this.firePropertyChange(PROPERTY_FILTER_QUERY, old, next);
+        if (queryChanged) {
+            this.firePropertyChange(PROPERTY_FILTER_QUERY, oldQuery, rawQuery);
+        }
+        if (filterChanged) {
+            this.firePropertyChange(PROPERTY_TREE_FILTER, oldFilter, next);
+        }
     }
 
-    public String getFilterQuery() {
-        return this.filterQuery;
-    }
-
-    /** @return {@code true} while a non-blank search query is active. */
+    /** @return {@code true} while a search query or a status/method restriction is active. */
     public boolean isFiltering() {
         return this.filteredModel.isFiltering();
     }
@@ -371,7 +446,7 @@ public class RequestTree extends JTree {
             return;
         }
         if (this.isFiltering() && this.filteredModel.getNodeMatch(node) == null) {
-            this.setFilterQuery("");
+            this.clearFilters();
         }
         TreePath path = new TreePath(node.getPath());
         this.setSelectionPath(path);

@@ -1,9 +1,11 @@
 package treepeater.tree;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import javax.swing.event.TreeModelEvent;
 import javax.swing.event.TreeModelListener;
@@ -22,7 +24,9 @@ public class FilteredTreeModel implements TreeModel {
     /**
      * How a node is visible while filtering:
      * <ul>
-     *   <li>{@code DIRECT}: the node's own title matches (bold ranges, normal color).</li>
+     *   <li>{@code DIRECT}: the node itself matches the filter: its own title matches the query
+     *       (bold ranges) or there is no query and it passes the status/method restrictions
+     *       (no ranges); normal color.</li>
      *   <li>{@code INHERITED}: the node lives inside a matching folder but does not match itself
      *       (whole title muted, no bold).</li>
      *   <li>{@code PATH}: the node is a folder visible only because a descendant matches (normal
@@ -33,7 +37,10 @@ public class FilteredTreeModel implements TreeModel {
         DIRECT, INHERITED, PATH
     }
 
-    /** Per-node display state for the renderer. {@code match} is non-null only for {@code DIRECT}. */
+    /**
+     * Per-node display state for the renderer. {@code match} is non-null only for {@code DIRECT}
+     * nodes matched by title.
+     */
     public record NodeMatch(Kind kind, TreeTitleMatcher.Match match) {
     }
 
@@ -80,7 +87,14 @@ public class FilteredTreeModel implements TreeModel {
      */
     private Runnable beforeStructureChangedCallback;
 
-    private TreeTitleMatcher.Query query = TreeTitleMatcher.parse("");
+    private TreeFilter filter = TreeFilter.none();
+
+    /**
+     * Nodes that were visible matches and stay visible even though they no longer pass the
+     * status/method restrictions (e.g. their status was just changed). Cleared whenever the
+     * filter itself changes; identity-based.
+     */
+    private final Set<TreeNode> sticky = Collections.newSetFromMap(new IdentityHashMap<>());
 
     /** Visible nodes and their display kind; identity-based, non-null only while filtering. */
     private Map<TreeNode, NodeMatch> nodeMatches;
@@ -110,23 +124,33 @@ public class FilteredTreeModel implements TreeModel {
     }
 
     public boolean isFiltering() {
-        return !this.query.isEmpty();
+        return !this.filter.isEmpty();
     }
 
     public TreeTitleMatcher.Query getQuery() {
-        return this.query;
+        return this.filter.query();
+    }
+
+    public TreeFilter getFilter() {
+        return this.filter;
+    }
+
+    /** Sets only the title query, keeping the status/method restrictions. */
+    public void setQuery(TreeTitleMatcher.Query query) {
+        this.setFilter(this.filter.withQuery(query));
     }
 
     /**
-     * Sets the search query, recomputes visibility and fires a single structure change for the
+     * Sets the filter, recomputes visibility and fires a single structure change for the
      * root, followed by the {@link #setStructureChangedCallback callback}.
      */
-    public void setQuery(TreeTitleMatcher.Query query) {
-        TreeTitleMatcher.Query next = query != null ? query : TreeTitleMatcher.parse("");
-        if (next.equals(this.query)) {
+    public void setFilter(TreeFilter filter) {
+        TreeFilter next = filter != null ? filter : TreeFilter.none();
+        if (next.equals(this.filter)) {
             return;
         }
-        this.query = next;
+        this.filter = next;
+        this.sticky.clear();
         this.recompute();
         this.fireFilterStructureChanged();
     }
@@ -227,8 +251,26 @@ public class FilteredTreeModel implements TreeModel {
             }
             return;
         }
+        this.rememberVisibleMatchesAsSticky();
         this.recompute();
         this.fireFilterStructureChanged();
+    }
+
+    /**
+     * Keeps currently visible matches visible across a source-driven recompute even if they
+     * stopped passing the status/method restrictions in the meantime, so a node does not vanish
+     * under the user while its status is being edited.
+     */
+    private void rememberVisibleMatchesAsSticky() {
+        if (!this.filter.hasAttributeFilter() || this.nodeMatches == null) {
+            return;
+        }
+        for (Map.Entry<TreeNode, NodeMatch> entry : this.nodeMatches.entrySet()) {
+            Kind kind = entry.getValue().kind();
+            if (kind == Kind.DIRECT || kind == Kind.INHERITED) {
+                this.sticky.add(entry.getKey());
+            }
+        }
     }
 
     private void fireFilterStructureChanged() {
@@ -285,14 +327,22 @@ public class FilteredTreeModel implements TreeModel {
      */
     private Kind computeNode(TreeNode node, boolean hasMatchingAncestor,
             TreeTitleMatcher.Tier matchingAncestorTier) {
-        String title = node instanceof TreepeaterNode tp ? tp.getName() : node.toString();
-        TreeTitleMatcher.Match own = this.query.match(title == null ? "" : title).orElse(null);
+        TreeTitleMatcher.Query query = this.filter.query();
+        boolean queryEmpty = query.isEmpty();
+        TreeTitleMatcher.Match own = null;
+        if (!queryEmpty) {
+            String title = node instanceof TreepeaterNode tp ? tp.getName() : node.toString();
+            own = query.match(title == null ? "" : title).orElse(null);
+        }
+
+        boolean titleOk = queryEmpty || own != null || hasMatchingAncestor;
+        boolean attributesOk = !this.filter.hasAttributeFilter()
+                || this.sticky.contains(node)
+                || (node instanceof TreepeaterNode tp && this.filter.matchesAttributes(tp));
 
         Kind kind = null;
-        if (own != null) {
-            kind = Kind.DIRECT;
-        } else if (hasMatchingAncestor) {
-            kind = Kind.INHERITED;
+        if (titleOk && attributesOk) {
+            kind = (queryEmpty || own != null) ? Kind.DIRECT : Kind.INHERITED;
         }
 
         TreeTitleMatcher.Tier best = bestTier(own != null ? own.tier() : null, matchingAncestorTier);
@@ -313,7 +363,7 @@ public class FilteredTreeModel implements TreeModel {
             kind = Kind.PATH;
         }
         if (kind != null) {
-            this.nodeMatches.put(node, new NodeMatch(kind, own));
+            this.nodeMatches.put(node, new NodeMatch(kind, kind == Kind.DIRECT ? own : null));
             this.effectiveTiers.put(node, best);
         }
         return kind;

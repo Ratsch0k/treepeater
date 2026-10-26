@@ -60,6 +60,18 @@ public class EmptyStateHint extends JPanel {
         return new Dimension(PREFERRED_WIDTH, innerHeight + 2 * PADDING);
     }
 
+    /**
+     * Replaces the message, re-applying centered alignment (setting text resets paragraph
+     * attributes). Used for dynamic empty states such as the search "no matches" hint.
+     */
+    public void setMessage(String message) {
+        this.text.setText(message != null ? message : "");
+        StyledDocument doc = this.text.getStyledDocument();
+        SimpleAttributeSet center = new SimpleAttributeSet();
+        StyleConstants.setAlignment(center, StyleConstants.ALIGN_CENTER);
+        doc.setParagraphAttributes(0, doc.getLength(), center, false);
+    }
+
     @Override
     public void updateUI() {
         super.updateUI();

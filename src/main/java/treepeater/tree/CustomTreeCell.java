@@ -11,7 +11,6 @@ import javax.swing.BorderFactory;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
-import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
 import javax.swing.JTree;
@@ -33,11 +32,12 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
     static final int MIN_TREE_ROW_INNER_WIDTH = 160;
 
     private JComboBox<Status> box;
-    private JLabel label;
+    private HighlightedTitleLabel label;
     private JTextField field;
     private CardLayout card;
     private JPanel textPanel;
     private TreepeaterNode node;
+    private FilteredTreeModel.NodeMatch nodeMatch;
     private JButton closeButton;
     private boolean noPropagation = false;
 
@@ -72,8 +72,8 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
         gc.weightx = 0;
         gc.fill = GridBagConstraints.NONE;
         this.add(this.box, gc);
-        
-        this.label = new JLabel();
+
+        this.label = new HighlightedTitleLabel();
         this.label.setOpaque(false);
         this.field = new JTextField();
         this.field.setBorder(BorderFactory.createEmptyBorder(0, 2, 0, 2));
@@ -109,7 +109,7 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
             if (this.node == null || this.node.getParent() == null) {
                 return;
             }
-            
+
             JTree host = (JTree) SwingUtilities.getAncestorOfClass(JTree.class, CustomTreeCell.this);
             if (host != null) {
                 host.cancelEditing();
@@ -161,7 +161,15 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
     }
 
     public void setNode(TreepeaterNode node) {
+        this.setNode(node, null);
+    }
+
+    /**
+     * Binds the cell to {@code node} with optional search-filter display state
+     */
+    public void setNode(TreepeaterNode node, FilteredTreeModel.NodeMatch match) {
         this.node = node;
+        this.nodeMatch = match;
         this.updateComponents();
     }
 
@@ -186,16 +194,35 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
         this.noPropagation = true;
         // Rebuild combo model from the current registry so any user changes are reflected.
         List<Status> statuses = Treepeater.getStatusRegistry().getAll();
-        DefaultComboBoxModel<Status> model = new DefaultComboBoxModel<>(
+        DefaultComboBoxModel<Status> model = new DefaultComboBoxModel<Status>(
                 statuses.toArray(new Status[0]));
         this.box.setModel(model);
 
-        this.label.setText(this.node.getName());
-        this.field.setText(this.node.getName());
+        String name = this.node.getName();
+        this.field.setText(name);
+        this.applyTitleHighlight(name);
         this.box.setSelectedItem(this.node.getStatus());
         boolean isRoot = this.node.getParent() == null;
         this.closeButton.setVisible(!isRoot);
         this.noPropagation = false;
+    }
+
+    /**
+     * Renders the title card according to the active search filter: direct match with bold
+     * matched ranges, inherited (inside a matching folder) muted, path-only or unfiltered plain.
+     */
+    private void applyTitleHighlight(String name) {
+        FilteredTreeModel.NodeMatch match = this.nodeMatch;
+        if (match == null) {
+            this.label.setTitle(name, null, false);
+            return;
+        }
+        switch (match.kind()) {
+            case DIRECT -> this.label.setTitle(name,
+                    match.match() != null ? match.match().ranges() : null, false);
+            case INHERITED -> this.label.setTitle(name, null, true);
+            case PATH -> this.label.setTitle(name, null, false);
+        }
     }
 
     @Override
@@ -242,4 +269,3 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
         this.field.selectAll();
     }
 }
-

@@ -66,12 +66,12 @@ class RepeaterNoticeTest extends ImportTestSupport {
 
     @Test
     void createNoticeAlwaysSendsAndSavesVersion() {
-        when(this.persistence.getRepeaterNoticeVersion()).thenReturn("1.6.0");
+        when(this.persistence.getUsedTreepeaterVersion()).thenReturn("1.6.0");
 
         RepeaterNotice.createNoticeInRepeaterTab("1.6.0");
 
         verify(this.repeater).sendToRepeater(any(HttpRequest.class), eq("Treepeater 1.6.0 used"));
-        verify(this.persistence).setRepeaterNoticeVersion("1.6.0");
+        verify(this.persistence).setUsedTreepeaterVersion("1.6.0");
     }
 
     @Test
@@ -79,7 +79,7 @@ class RepeaterNoticeTest extends ImportTestSupport {
         RepeaterNotice.ensureNotice(new TreepeaterModel());
 
         verify(this.repeater, never()).sendToRepeater(any(HttpRequest.class), anyString());
-        verify(this.persistence, never()).setRepeaterNoticeVersion(anyString());
+        verify(this.persistence, never()).setUsedTreepeaterVersion(anyString());
     }
 
     @Test
@@ -88,24 +88,24 @@ class RepeaterNoticeTest extends ImportTestSupport {
         model.insertNode(rr("GET", "/api/users"));
 
         RepeaterNotice.ensureNotice(model);
-        when(this.persistence.getRepeaterNoticeVersion()).thenReturn(this.current);
+        when(this.persistence.getUsedTreepeaterVersion()).thenReturn(this.current);
         RepeaterNotice.ensureNotice(model);
 
         verify(this.repeater, times(1)).sendToRepeater(any(HttpRequest.class), anyString());
-        verify(this.persistence).setRepeaterNoticeVersion(this.current);
+        verify(this.persistence).setUsedTreepeaterVersion(this.current);
     }
 
     @Test
     void ensureNoticeSendsNewNoticeAfterUpgrade() {
         TreepeaterModel model = new TreepeaterModel();
         model.insertNode(rr("GET", "/api/users"));
-        when(this.persistence.getRepeaterNoticeVersion()).thenReturn("0.0.1");
+        when(this.persistence.getUsedTreepeaterVersion()).thenReturn("0.0.1");
 
         RepeaterNotice.ensureNotice(model);
 
         verify(this.repeater).sendToRepeater(
                 any(HttpRequest.class), eq("Treepeater " + this.current + " used"));
-        verify(this.persistence).setRepeaterNoticeVersion(this.current);
+        verify(this.persistence).setUsedTreepeaterVersion(this.current);
     }
 
     @Test
@@ -118,7 +118,7 @@ class RepeaterNoticeTest extends ImportTestSupport {
         RepeaterNotice.ensureNotice(model);
 
         verify(this.logging).logToOutput(org.mockito.ArgumentMatchers.contains("boom"));
-        verify(this.persistence, never()).setRepeaterNoticeVersion(anyString());
+        verify(this.persistence, never()).setUsedTreepeaterVersion(anyString());
     }
 
     @Test

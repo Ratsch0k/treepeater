@@ -15,6 +15,7 @@ import javax.swing.tree.*;
 
 import treepeater.Treepeater;
 import treepeater.tree.FolderTreeNode;
+import treepeater.tree.RequestTree;
 import treepeater.tree.RequestTreeNode;
 import treepeater.tree.TreepeaterNode;
 
@@ -23,9 +24,11 @@ public class TreeTransferHandler extends TransferHandler {
     private final DataFlavor nodesFlavor;
     private final DataFlavor[] flavors = new DataFlavor[1];
     private final DefaultTreeModel model;
+    private final RequestTree tree;
 
-    public TreeTransferHandler(DefaultTreeModel model) {
+    public TreeTransferHandler(DefaultTreeModel model, RequestTree tree) {
         this.model = model;
+        this.tree = tree;
         try {
             String mimeType = DataFlavor.javaJVMLocalObjectMimeType
                     + ";class=\"" + TreepeaterNode[].class.getName() + "\"";
@@ -41,6 +44,11 @@ public class TreeTransferHandler extends TransferHandler {
 
     public boolean canImport(TransferHandler.TransferSupport support) {
         if (!support.isDrop()) {
+            return false;
+        }
+        // The visible order is not the model order while a search filter is active, so
+        // drag-and-drop is refused (the tree also disables its drag source).
+        if (this.tree != null && this.tree.isFiltering()) {
             return false;
         }
         support.setShowDropLocation(true);
@@ -61,23 +69,16 @@ public class TreeTransferHandler extends TransferHandler {
             return false;
         }
 
-        int dropRow = tree.getRowForPath(dl.getPath());
-        int[] selRows = tree.getSelectionRows();
-        if (selRows == null) {
+        TreePath[] selPaths = tree.getSelectionPaths();
+        if (selPaths == null) {
             return false;
         }
-        for (int i = 0; i < selRows.length; i++) {
-            if (selRows[i] == dropRow) {
+        // Compare nodes, not rows: the hidden root and nodes under collapsed folders have no row (-1).
+        TreepeaterNode dest = (TreepeaterNode) destComponent;
+        for (TreePath selPath : selPaths) {
+            if (selPath.getLastPathComponent() instanceof TreepeaterNode selected
+                    && (selected == dest || selected.isNodeDescendant(dest))) {
                 return false;
-            }
-            TreepeaterNode treeNode =
-                    (TreepeaterNode) tree.getPathForRow(selRows[i]).getLastPathComponent();
-            for (TreeNode offspring : Collections.list(treeNode.depthFirstEnumeration())) {
-                if (offspring instanceof TreepeaterNode offspringNode) {
-                    if (tree.getRowForPath(new TreePath(offspringNode.getPath())) == dropRow) {
-                        return false;
-                    }
-                }
             }
         }
         return true;

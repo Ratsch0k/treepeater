@@ -7,7 +7,12 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Consumer;
 
 import javax.swing.AbstractAction;
@@ -21,6 +26,7 @@ import javax.swing.JViewport;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.tree.DefaultTreeModel;
+import javax.swing.tree.TreeNode;
 import javax.swing.tree.TreePath;
 import javax.swing.tree.TreeSelectionModel;
 
@@ -32,9 +38,20 @@ import treepeater.tree.CustomTreeCellEditor.ProgrammaticEdit;
 public class RequestTree extends JTree {
     private static final String MAP_KEY_ACTIVATE_SELECTION = "treepeater.activateTreeSelection";
 
+    /** Property fired via {@link #setFilterQuery} so the search field can stay in sync. */
+    public static final String PROPERTY_FILTER_QUERY = "filterQuery";
+
+    /** Property fired whenever the effective {@link TreeFilter} (query, status or method) changes. */
+    public static final String PROPERTY_TREE_FILTER = "treeFilter";
+
     private FolderTreeNode root;
     private DefaultTreeModel model;
+    private FilteredTreeModel filteredModel;
+    private String filterQuery = "";
+    private TreeFilter filter = TreeFilter.none();
+    private TreePath selectionBeforeFilterUpdate;
     private final CustomTreeUI ui;
+    private final boolean dragSupported;
     private CreateFolderHandler createFolderHandler;
     private Consumer<RequestTreeNode> activateRequestFromKeyboardFollowUp;
 
@@ -58,7 +75,8 @@ public class RequestTree extends JTree {
     public RequestTree() {
         // setDragEnabled(true) throws HeadlessException without a display; drag-and-drop is
         // meaningless headless (e.g. under unit tests), so only enable it when a display exists.
-        if (!java.awt.GraphicsEnvironment.isHeadless()) {
+        this.dragSupported = !java.awt.GraphicsEnvironment.isHeadless();
+        if (this.dragSupported) {
             this.setDragEnabled(true);
         }
         this.setDropMode(DropMode.ON_OR_INSERT);
@@ -144,11 +162,14 @@ public class RequestTree extends JTree {
         this.setUI(ui);
         this.root = new FolderTreeNode(0, StatusRegistry.getDefault(), "Treepeater");
         this.model = new DefaultTreeModel(this.root);
-        this.setTransferHandler(new TreeTransferHandler(this.model));
+        this.filteredModel = new FilteredTreeModel(this.model);
+        this.filteredModel.setBeforeStructureChangedCallback(this::beforeFilterStructureChanged);
+        this.filteredModel.setStructureChangedCallback(this::onFilterStructureChanged);
+        this.setTransferHandler(new TreeTransferHandler(this.model, this));
         this.expandRow(0);
         this.setRootVisible(false);
         this.setShowsRootHandles(true);
-        this.setModel(model);
+        this.setModel(this.filteredModel);
         this.setToggleClickCount(0);
         this.setEditable(true);
         CustomTreeCellRenderer renderer = new CustomTreeCellRenderer();
@@ -239,7 +260,8 @@ public class RequestTree extends JTree {
 
     /**
      * Creates a folder under {@code target} (the root when {@code null}) and starts renaming it.
-     * Shared by the tree's right-click menu, the empty-state hint and the toolbar button.
+     * Clears an active search filter first so the new folder is visible. Shared by the tree's
+     * right-click menu, the empty-state hint and the toolbar button.
      *
      * @return the created folder, or {@code null} when no create-folder handler is installed
      */
@@ -247,6 +269,7 @@ public class RequestTree extends JTree {
         if (this.createFolderHandler == null) {
             return null;
         }
+        this.clearFilters();
         FolderTreeNode folder = this.createFolderHandler.createFolder(target);
         if (folder == null) {
             return null;
@@ -292,6 +315,228 @@ public class RequestTree extends JTree {
     public DefaultTreeModel getTreeModel() {
         return this.model;
     }
+
+    /**
+     * Sets the raw search query shown in the tree panel's search field. An empty (or blank) value
+     * clears the filter. Fires a {@value #PROPERTY_FILTER_QUERY} property change so the field can
+     * stay in sync when the tree clears the filter itself.
+     */
+    public void setFilterQuery(String rawQuery) {
+        String next = rawQuery != null ? rawQuery : "";
+        this.applyFilter(this.filter.withQuery(TreeTitleMatcher.parse(next)), next);
+    }
+
+    public String getFilterQuery() {
+        return this.filterQuery;
+    }
+
+    /** Restricts the tree to nodes with one of the given status ids; empty means any status. */
+    public void setStatusFilter(Collection<String> statusIds) {
+        this.applyFilter(this.filter.withStatusIds(statusIds), this.filterQuery);
+    }
+
+    /** Restricts the tree to requests with one of the given methods; empty means any method. */
+    public void setMethodFilter(Collection<String> methods) {
+        this.applyFilter(this.filter.withMethods(methods), this.filterQuery);
+    }
+
+    /** Removes the status and method restrictions, keeping the search text. */
+    public void clearAttributeFilters() {
+        this.applyFilter(this.filter.withoutAttributeFilters(), this.filterQuery);
+    }
+
+    /** Clears the search text and the status/method restrictions. */
+    public void clearFilters() {
+        this.applyFilter(TreeFilter.none(), "");
+    }
+
+    /** Drops selected status ids that are no longer in {@code validIds} (e.g. deleted statuses). */
+    public void retainStatusFilter(Collection<String> validIds) {
+        Set<String> valid = new HashSet<>();
+        for (String id : validIds) {
+            valid.add(TreeFilter.normalizeStatusId(id));
+        }
+        Set<String> kept = new HashSet<>(this.filter.statusIds());
+        if (kept.retainAll(valid)) {
+            this.setStatusFilter(kept);
+        }
+    }
+
+    public TreeFilter getTreeFilter() {
+        return this.filter;
+    }
+
+    /**
+     * @return the distinct (upper-cased) request methods present in the tree, standard methods
+     * first, then the rest alphabetically.
+     */
+    public List<String> collectRequestMethods() {
+        Set<String> methods = new TreeSet<>(TreeFilter.METHOD_ORDER);
+        Enumeration<?> nodes = this.root.preorderEnumeration();
+        while (nodes.hasMoreElements()) {
+            if (nodes.nextElement() instanceof RequestTreeNode requestNode && requestNode.getRequest() != null) {
+                String method = TreeFilter.normalizeMethod(requestNode.getRequest().method());
+                if (method != null && !method.isEmpty()) {
+                    methods.add(method);
+                }
+            }
+        }
+        return new ArrayList<>(methods);
+    }
+
+    private void applyFilter(TreeFilter next, String rawQuery) {
+        TreeFilter oldFilter = this.filter;
+        String oldQuery = this.filterQuery;
+        boolean queryChanged = !rawQuery.equals(oldQuery);
+        boolean filterChanged = !next.equals(oldFilter);
+        if (!queryChanged && !filterChanged) {
+            return;
+        }
+        this.filterQuery = rawQuery;
+        this.filter = next;
+
+        // Clearing the filter must keep folders opened during the search open: the structure
+        // change fired by the wrapper would otherwise reset the expansion state.
+        boolean clearing = this.filteredModel.isFiltering() && next.isEmpty();
+        Enumeration<TreePath> expandedToRestore = null;
+        if (clearing) {
+            expandedToRestore = this.getExpandedDescendants(new TreePath(this.root.getPath()));
+        }
+
+        this.filteredModel.setFilter(next);
+
+        if (expandedToRestore != null) {
+            while (expandedToRestore.hasMoreElements()) {
+                this.expandPath(expandedToRestore.nextElement());
+            }
+        }
+        this.updateDragEnabled();
+        if (queryChanged) {
+            this.firePropertyChange(PROPERTY_FILTER_QUERY, oldQuery, rawQuery);
+        }
+        if (filterChanged) {
+            this.firePropertyChange(PROPERTY_TREE_FILTER, oldFilter, next);
+        }
+    }
+
+    /** @return {@code true} while a search query or a status/method restriction is active. */
+    public boolean isFiltering() {
+        return this.filteredModel.isFiltering();
+    }
+
+    /**
+     * @return {@code true} when the current filter leaves at least one node visible (below the
+     * root); relevant for the "no matches" empty state.
+     */
+    public boolean hasVisibleNodes() {
+        return !this.isFiltering() || this.filteredModel.getChildCount(this.root) > 0;
+    }
+
+    /** Display state of {@code node} while filtering; {@code null} when hidden or not filtering. */
+    public FilteredTreeModel.NodeMatch getNodeMatch(TreepeaterNode node) {
+        return this.filteredModel.getNodeMatch(node);
+    }
+
+    /**
+     * Reveals {@code node}: clears the filter when the node would be hidden, then selects and
+     * scrolls to it. Use for programmatic selections (e.g. after agent copies).
+     */
+    public void revealNode(TreepeaterNode node) {
+        if (node == null) {
+            return;
+        }
+        if (this.isFiltering() && this.filteredModel.getNodeMatch(node) == null) {
+            this.clearFilters();
+        }
+        TreePath path = new TreePath(node.getPath());
+        this.setSelectionPath(path);
+        this.scrollPathToVisible(path);
+    }
+
+    /**
+     * Selects the first visible request row (falling back to the first visible row) and scrolls
+     * to it. Used by the search field's Down/Enter shortcut; the caller then focuses the tree.
+     *
+     * @return {@code true} when a row was selected
+     */
+    public boolean selectFirstVisibleRequestRow() {
+        int rowCount = this.getRowCount();
+        int fallbackRow = -1;
+        for (int row = 0; row < rowCount; row++) {
+            if (fallbackRow < 0) {
+                fallbackRow = row;
+            }
+            TreePath path = this.getPathForRow(row);
+            if (path != null && path.getLastPathComponent() instanceof RequestTreeNode) {
+                this.setSelectionRow(row);
+                this.scrollRowToVisible(row);
+                return true;
+            }
+        }
+        if (fallbackRow >= 0) {
+            this.setSelectionRow(fallbackRow);
+            this.scrollRowToVisible(fallbackRow);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Callback from {@link FilteredTreeModel} right before a filtered structure change is
+     * fired: the JTree drops both selection and expansion on root structure changes, so
+     * capture the selection here for {@link #onFilterStructureChanged} to restore.
+     */
+    private void beforeFilterStructureChanged() {
+        this.selectionBeforeFilterUpdate = this.getSelectionPath();
+    }
+
+    /**
+     * Callback from {@link FilteredTreeModel} after a query or source update re-filtered the
+     * tree: expands the path to every direct match, restores a selection that survived the
+     * filter (clearing one that did not) and invalidates the row layout cache (bold text
+     * changes row widths).
+     */
+    private void onFilterStructureChanged() {
+        if (this.isFiltering()) {
+            for (TreeNode node : this.filteredModel.getDirectMatchNodes()) {
+                TreeNode parent = node.getParent();
+                if (parent instanceof TreepeaterNode parentNode) {
+                    this.expandPath(new TreePath(parentNode.getPath()));
+                }
+            }
+        }
+        this.restoreSelectionAfterFilterUpdate();
+        this.invalidateLayoutCache();
+    }
+
+    /**
+     * Keeps the selection if the node is still part of the filtered view, otherwise clears it.
+     * After a filter clear everything is visible again, so the selection is always restored.
+     */
+    private void restoreSelectionAfterFilterUpdate() {
+        TreePath selection = this.selectionBeforeFilterUpdate;
+        this.selectionBeforeFilterUpdate = null;
+        if (selection == null) {
+            return;
+        }
+        Object last = selection.getLastPathComponent();
+        if (!(last instanceof TreepeaterNode node)) {
+            return;
+        }
+        if (!this.isFiltering() || this.filteredModel.getNodeMatch(node) != null) {
+            this.setSelectionPath(selection);
+        } else {
+            this.clearSelection();
+        }
+    }
+
+    /** Drag-and-drop is refused while a filter is active (the visible order is not the model order). */
+    private void updateDragEnabled() {
+        if (this.dragSupported) {
+            this.setDragEnabled(!this.isFiltering());
+        }
+    }
+
 
     public void insertRootNode(TreepeaterNode node) {
         this.model.insertNodeInto(node, this.root, this.root.getChildCount());

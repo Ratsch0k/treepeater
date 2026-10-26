@@ -36,6 +36,8 @@ import treepeater.ai.HttpTargetSnapshot;
 import treepeater.Treepeater;
 import treepeater.TreepeaterModel;
 import treepeater.components.CustomButton;
+import treepeater.hotkeys.HotkeyHandler;
+import treepeater.hotkeys.HotkeyInstaller;
 import treepeater.settings.TreepeaterSettings;
 import treepeater.tree.RequestTree;
 import treepeater.tree.RequestTreeNode;
@@ -210,7 +212,7 @@ public class RequestResponsePanel extends JPanel {
 
         this.hotkeyHandler = new HotkeyHandler(this);
         this.populateHotkeyActions();
-        RequestResponseHotkeyInstaller.install(this, this.hotkeyHandler, this.hotkeyActions, this.hotkeyHandlerRegistered);
+        HotkeyInstaller.install(this, this.hotkeyHandler, this.hotkeyActions, this.hotkeyHandlerRegistered);
     }
 
     /**
@@ -289,7 +291,6 @@ public class RequestResponsePanel extends JPanel {
         this.hotkeyActions.put(TreepeaterSettings.EDIT_TARGET_HOTKEY_SETTING, () -> this.editTargetButton.doClick());
         this.hotkeyActions.put(TreepeaterSettings.TAB_PREVIOUS_HOTKEY_SETTING, this.selectPreviousRequestResponseTab);
         this.hotkeyActions.put(TreepeaterSettings.TAB_NEXT_HOTKEY_SETTING, this.selectNextRequestResponseTab);
-        this.hotkeyActions.put(TreepeaterSettings.FOCUS_TREE_HOTKEY_SETTING, this::handleFocusTree);
     }
 
     private void handleSendRequest() {
@@ -320,18 +321,6 @@ public class RequestResponsePanel extends JPanel {
 
     private void handleChangeStatus() {
         SwingUtilities.invokeLater(() -> this.tree.startProgrammaticEditForNode(this.node, ProgrammaticEdit.STATUS));
-    }
-
-    private void handleFocusTree() {
-        SwingUtilities.invokeLater(() -> {
-            RequestTreeNode active = this.model.getActiveNode();
-            if (active != null) {
-                TreePath path = new TreePath(active.getPath());
-                this.tree.setSelectionPath(path);
-                this.tree.scrollPathToVisible(path);
-            }
-            this.tree.requestFocusInWindow();
-        });
     }
 
     public void setRequest(HttpRequest request) {
@@ -523,9 +512,10 @@ public class RequestResponsePanel extends JPanel {
 
     /**
      * EDT. Applies host/target and optionally syncs {@code Content-Length} to the body, returning the request that
-     * will actually be sent and stored on the node. The request editor document is left untouched so the user's
-     * undo history is preserved across sends; the content-length/target adjustments live only on the outgoing
-     * snapshot.
+     * will actually be sent and stored on the node. The previous response is cleared (editor, node, persisted
+     * state), showing an empty response pane while a request is in flight. The
+     * request editor document is left untouched so the user's undo history is preserved across sends; the
+     * content-length/target adjustments live only on the outgoing snapshot.
      */
     private HttpRequest prepareAndCommitRequestForSend() {
         HttpRequest r = this.requestEditor.getRequest();
@@ -534,6 +524,7 @@ public class RequestResponsePanel extends JPanel {
             r = RequestContentLength.syncContentLengthToBody(r);
         }
         this.node.setRequest(r);
+        this.setResponse(null);
         return r;
     }
 

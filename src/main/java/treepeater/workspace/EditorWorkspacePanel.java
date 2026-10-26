@@ -1,6 +1,7 @@
 package treepeater.workspace;
 
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
 import java.awt.Component;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
@@ -18,13 +19,19 @@ import javax.swing.JSplitPane;
 
 import treepeater.Treepeater;
 import treepeater.TreepeaterModel;
+import treepeater.components.EmptyStateHint;
 import treepeater.requestResponse.RequestResponsePanel;
 import treepeater.tree.RequestTreeNode;
 
 public class EditorWorkspacePanel extends JPanel implements EditorWorkspaceInterface {
+    private static final String CARD_WORKSPACE = "workspace";
+    private static final String CARD_EMPTY = "empty";
+
     private final TreepeaterModel model;
     private final Map<String, TabGroupPanel> groupPanels = new HashMap<>();
     private final Map<RequestTreeNode, RequestResponsePanel> tabMap = new HashMap<>();
+    private final CardLayout cardLayout;
+    private final JPanel workspaceCard;
 
     /** Guards model updates while programmatically restoring divider proportions after a rebuild. */
     private boolean applyingDividerLocation;
@@ -37,8 +44,15 @@ public class EditorWorkspacePanel extends JPanel implements EditorWorkspaceInter
     private Runnable onWorkspaceLayoutChanged;
 
     public EditorWorkspacePanel(TreepeaterModel model) {
-        super(new BorderLayout());
+        this.cardLayout = new CardLayout();
+        this.setLayout(this.cardLayout);
         this.model = model;
+        this.workspaceCard = new JPanel(new BorderLayout());
+        this.add(this.workspaceCard, CARD_WORKSPACE);
+        this.add(new EmptyStateHint(
+                        "No request open. Select a request in the tree to open it here, "
+                                + "or send one to Treepeater from anywhere in Burp."),
+                CARD_EMPTY);
         this.addComponentListener(
                 new ComponentAdapter() {
                     @Override
@@ -46,7 +60,9 @@ public class EditorWorkspacePanel extends JPanel implements EditorWorkspaceInter
                         EditorWorkspacePanel.this.applyPendingSplitProportions();
                     }
                 });
+        WorkspaceFocus.installMouseTracking(this, this::onPanelFocused);
         this.rebuildStructure();
+        this.updateEmptyState();
     }
 
     public void setOnSelectionChanged(Runnable onSelectionChanged) {
@@ -219,8 +235,8 @@ public class EditorWorkspacePanel extends JPanel implements EditorWorkspaceInter
 
         List<SplitBinding> splits = new ArrayList<>();
         Component built = buildComponent(workspace.root(), splits);
-        this.removeAll();
-        this.add(built, BorderLayout.CENTER);
+        this.workspaceCard.removeAll();
+        this.workspaceCard.add(built, BorderLayout.CENTER);
         this.revalidate();
         this.validate();
         if (!applySplitProportions(splits)) {
@@ -457,9 +473,22 @@ public class EditorWorkspacePanel extends JPanel implements EditorWorkspaceInter
     }
 
     private void notifySelectionChanged() {
+        this.updateEmptyState();
         if (this.onSelectionChanged != null) {
             this.onSelectionChanged.run();
         }
+    }
+
+    /** Swaps between the empty-state hint and the workspace depending on whether any tab is open. */
+    private void updateEmptyState() {
+        boolean anyTabs = false;
+        for (TabGroupPanel group : this.groupPanels.values()) {
+            if (group.getTabCount() > 0) {
+                anyTabs = true;
+                break;
+            }
+        }
+        this.cardLayout.show(this, anyTabs ? CARD_WORKSPACE : CARD_EMPTY);
     }
 
     public void refreshTabTitles() {

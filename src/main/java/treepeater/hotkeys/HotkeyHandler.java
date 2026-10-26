@@ -1,4 +1,4 @@
-package treepeater.requestResponse;
+package treepeater.hotkeys;
 
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
@@ -12,10 +12,9 @@ import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 
 /**
- * Configurable shortcuts for {@link RequestResponsePanel}. Maps {@code actionId} to the
- * {@link KeyStroke} that should trigger it. Load or mutate via {@link #addBinding},
- * {@link #changeBinding}, and {@link #removeBinding}; {@link #withDefaults()} matches the
- * former static default list.
+ * Configurable shortcuts active while focus is inside the linked component. Maps
+ * {@code actionId} to the {@link KeyStroke} that should trigger it. Load or mutate via
+ * {@link #addBinding}, {@link #changeBinding}, and {@link #removeBinding}.
  */
 public class HotkeyHandler implements KeyEventDispatcher {
     /**

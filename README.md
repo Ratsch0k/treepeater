@@ -173,4 +173,3 @@ Build the extension by executing the following command
 
 This command will install all the necessary libraries and build one JAR that can then simply be installed to Burp.
 If successful, the JAR file is saved to `./build/libs/Treepeater.jar`.
-

@@ -73,7 +73,9 @@ public class CustomTreeCellEditor extends DefaultTreeCellEditor {
     public Component getTreeCellEditorComponent(JTree tree, Object value, boolean isSelected, boolean expanded, boolean leaf, int row) {
         this.lastRow = row;
         TreepeaterNode node = (TreepeaterNode) value;
-        this.cell.setNode(node);
+        // Same filter display state as the renderer so a hovered/edited row looks identical
+        // (the rename text field stays plain).
+        this.cell.setNode(node, CustomTreeCellRenderer.matchFor(tree, node));
 
         // Handle the programmatic edit.
         ProgrammaticEdit intent = this.programmaticEdit;

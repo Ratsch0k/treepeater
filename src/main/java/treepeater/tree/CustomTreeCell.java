@@ -63,7 +63,7 @@ public class CustomTreeCell extends JPanel implements DocumentListener {
 
         GridBagConstraints gc = new GridBagConstraints();
         gc.gridy = 0;
-        gc.insets = new Insets(2, 8, 2, 3);
+        gc.insets = new Insets(3, 8, 3, 2);
 
         this.box = box;
         this.box.setBorder(BorderFactory.createEmptyBorder(0, 4, 0, 0));

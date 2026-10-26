@@ -1,4 +1,4 @@
-package treepeater.requestResponse;
+package treepeater.hotkeys;
 
 import java.awt.KeyboardFocusManager;
 import java.util.Map;
@@ -14,14 +14,14 @@ import treepeater.settings.TreepeaterSettings;
 
 /**
  * Registers {@link HotkeyHandler} bindings from settings and attaches / detaches the dispatcher
- * when the panel is shown or hidden in the component hierarchy.
+ * when the host component is shown or hidden in the component hierarchy.
  */
-final class RequestResponseHotkeyInstaller {
+public final class HotkeyInstaller {
 
-    private RequestResponseHotkeyInstaller() {
+    private HotkeyInstaller() {
     }
 
-    static void install(JComponent host, HotkeyHandler hotkeyHandler, Map<String, Runnable> hotkeyActions, AtomicBoolean hotkeyHandlerRegistered) {
+    public static void install(JComponent host, HotkeyHandler hotkeyHandler, Map<String, Runnable> hotkeyActions, AtomicBoolean hotkeyHandlerRegistered) {
         TreepeaterSettings settings = TreepeaterSettings.getInstance();
         for (Map.Entry<String, Runnable> entry : hotkeyActions.entrySet()) {
             KeyStroke ks = HotkeyCaptureDialog.parseBurpHotkeyToKeyStroke(settings.getStringWithDefault(entry.getKey()));

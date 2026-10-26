@@ -9,9 +9,12 @@ import java.awt.event.ComponentEvent;
 import java.awt.event.KeyEvent;
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.OptionalInt;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.swing.AbstractAction;
 import javax.swing.ActionMap;
@@ -35,6 +38,7 @@ import javax.swing.event.TreeModelEvent;
 import javax.swing.event.TreeModelListener;
 import javax.swing.plaf.basic.BasicSplitPaneDivider;
 import javax.swing.plaf.basic.BasicSplitPaneUI;
+import javax.swing.tree.TreePath;
 
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.http.message.responses.HttpResponse;
@@ -45,6 +49,8 @@ import treepeater.ai.TreepeaterTabAgentBridge;
 import treepeater.ai.TreepeaterTabQueryMatcher;
 import treepeater.ai.SearchTabRow;
 import treepeater.components.EmptyStateHint;
+import treepeater.hotkeys.HotkeyHandler;
+import treepeater.hotkeys.HotkeyInstaller;
 import treepeater.icons.CreateNewFolderIcon;
 import treepeater.icons.DoubleArrowLeftIcon;
 import treepeater.icons.DoubleArrowRightIcon;
@@ -53,6 +59,7 @@ import treepeater.TreepeaterModel.SiblingCopyPlacement;
 import treepeater.tree.CustomTreeCellEditor.ProgrammaticEdit;
 import treepeater.requestResponse.Status;
 import treepeater.settings.StatusRegistry;
+import treepeater.settings.TreepeaterSettings;
 import treepeater.tree.FolderTreeNode;
 import treepeater.tree.RequestTree;
 import treepeater.tree.TreeFilterButton;
@@ -105,6 +112,10 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
     private EmptyStateHint treeNoMatchesHint;
     /** Guard so reflecting tree-side filter clears into the field does not re-apply the filter. */
     private boolean updatingTreeSearchFieldFromTree;
+
+    private final HotkeyHandler hotkeyHandler = new HotkeyHandler(this);
+    private final AtomicBoolean hotkeyHandlerRegistered = new AtomicBoolean(false);
+    private final Map<String, Runnable> hotkeyActions = new HashMap<>();
 
     public TreepeaterUI(TreepeaterModel model) {
         super(JSplitPane.HORIZONTAL_SPLIT);
@@ -214,6 +225,39 @@ public class TreepeaterUI extends JSplitPane implements RequestResponseToolbarLi
         });
 
         this.sideToolbar.applyLocalTheme();
+
+        this.hotkeyActions.put(TreepeaterSettings.FOCUS_TREE_HOTKEY_SETTING, this::focusRequestTree);
+        this.hotkeyActions.put(TreepeaterSettings.FOCUS_TREE_SEARCH_HOTKEY_SETTING, this::focusTreeSearch);
+        this.hotkeyActions.put(TreepeaterSettings.OPEN_TREE_FILTER_HOTKEY_SETTING, this::openTreeFilterMenu);
+        HotkeyInstaller.install(this, this.hotkeyHandler, this.hotkeyActions, this.hotkeyHandlerRegistered);
+    }
+
+    private void focusTreeSearch() {
+        if (this.treeSearchField == null || !this.treeSearchField.isEnabled()) {
+            return;
+        }
+        this.treeSearchField.requestFocusInWindow();
+        this.treeSearchField.selectAll();
+    }
+
+    private void openTreeFilterMenu() {
+        if (this.treeFilterButton == null || !this.treeFilterButton.isEnabled()) {
+            return;
+        }
+        this.treeFilterButton.showMenu();
+    }
+
+    private void focusRequestTree() {
+        SwingUtilities.invokeLater(() -> {
+            RequestTree tree = this.model.getTree();
+            RequestTreeNode active = this.model.getActiveNode();
+            if (active != null) {
+                TreePath path = new TreePath(active.getPath());
+                tree.setSelectionPath(path);
+                tree.scrollPathToVisible(path);
+            }
+            tree.requestFocusInWindow();
+        });
     }
 
     @Override

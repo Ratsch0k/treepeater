@@ -3,6 +3,9 @@ package treepeater.tree;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.KeyEventDispatcher;
+import java.awt.KeyboardFocusManager;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -16,7 +19,11 @@ import javax.swing.Icon;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPopupMenu;
+import javax.swing.MenuElement;
+import javax.swing.MenuSelectionManager;
 import javax.swing.UIManager;
+import javax.swing.event.PopupMenuEvent;
+import javax.swing.event.PopupMenuListener;
 
 import treepeater.Treepeater;
 import treepeater.icons.FilterIcon;
@@ -28,9 +35,15 @@ import treepeater.settings.StatusRegistry;
  * Toolbar button next to the tree search field. Opens a popup where the tree can be restricted
  * to certain node statuses and request methods. The icon is tinted while a restriction is
  * active and the tooltip summarizes it.
+ *
+ * Mouse and keyboard both keep the popup open across multiple toggles (Enter / Space on a
+ * status or method entry). "Clear filters" and other defaults close the popup as usual.
  */
 public class TreeFilterButton extends ToolbarIconButton {
     private static final String DEFAULT_TOOLTIP = "Filter by status and request method";
+
+    /** Client property used to mark a {@link JMenuItem} as one whose activation should leave the popup open. */
+    private static final String TOGGLE_ITEM_PROPERTY = "treepeater.treeFilterButton.toggleItem";
 
     private final RequestTree tree;
     private int iconSize = 20;
@@ -92,7 +105,124 @@ public class TreeFilterButton extends ToolbarIconButton {
         return String.join(" \u00b7 ", parts);
     }
 
-    private void showMenu() {
+    public void showMenu() {
+        JPopupMenu menu = this.buildMenu();
+        this.showPopupMenu(menu);
+    }
+
+    private void showPopupMenu(JPopupMenu menu) {
+        JMenuItem first = firstSelectableItem(menu);
+        // Always install the listener so the dispatcher hooks in on show and detaches on hide.
+        // Even when there are no toggle items we still want to behave the same on close.
+        menu.addPopupMenuListener(new PopupMenuListener() {
+            @Override
+            public void popupMenuWillBecomeVisible(PopupMenuEvent e) {
+                if (first == null) {
+                    return;
+                }
+                KeyEventDispatcher dispatcher = createToggleEnterOrSpaceDispatcher(menu);
+                KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(dispatcher);
+                menu.putClientProperty("treepeater.treeFilterButton.dispatcher", dispatcher);
+            }
+
+            @Override
+            public void popupMenuWillBecomeInvisible(PopupMenuEvent e) {
+                removeDispatcher(menu);
+            }
+
+            @Override
+            public void popupMenuCanceled(PopupMenuEvent e) {
+                removeDispatcher(menu);
+            }
+        });
+        int x = Math.min(0, this.getWidth() - menu.getPreferredSize().width);
+        menu.show(this, x, this.getHeight());
+    }
+
+    private static void removeDispatcher(JPopupMenu menu) {
+        Object dispatcher = menu.getClientProperty("treepeater.treeFilterButton.dispatcher");
+        if (dispatcher instanceof KeyEventDispatcher ked) {
+            KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(ked);
+            menu.putClientProperty("treepeater.treeFilterButton.dispatcher", null);
+        }
+    }
+
+    /**
+     * Builds a {@link KeyEventDispatcher} that, when a toggle item in {@code menu} is highlighted,
+     * consumes Enter/Space KEY_PRESSED (and the matching KEY_RELEASED / KEY_TYPED) so the popup
+     * stays open. Other keys fall through so Escape, arrows, and non-toggle activations keep their
+     * normal Swing behaviour.
+     */
+    private static KeyEventDispatcher createToggleEnterOrSpaceDispatcher(JPopupMenu menu) {
+        return e -> {
+            int id = e.getID();
+            if (id != KeyEvent.KEY_PRESSED && id != KeyEvent.KEY_RELEASED && id != KeyEvent.KEY_TYPED) {
+                return false;
+            }
+            // Don't suppress the modifier-only version of these keys (it never reaches Swing's
+            // menu handling anyway, but skip it explicitly).
+            int code = e.getKeyCode();
+            if (id == KeyEvent.KEY_PRESSED && (code == KeyEvent.VK_SHIFT
+                    || code == KeyEvent.VK_CONTROL
+                    || code == KeyEvent.VK_ALT
+                    || code == KeyEvent.VK_META)) {
+                return false;
+            }
+            // Only suppress if no Ctrl/Cmd/Meta/Alt is down so cross-menu shortcuts still work.
+            int unwantedMask = KeyEvent.CTRL_DOWN_MASK | KeyEvent.META_DOWN_MASK
+                    | KeyEvent.ALT_DOWN_MASK | KeyEvent.ALT_GRAPH_DOWN_MASK;
+            if ((e.getModifiersEx() & unwantedMask) != 0) {
+                return false;
+            }
+            boolean isEnter = code == KeyEvent.VK_ENTER;
+            boolean isSpace = code == KeyEvent.VK_SPACE
+                    || (id == KeyEvent.KEY_TYPED && e.getKeyChar() == ' ');
+            if (!isEnter && !isSpace) {
+                return false;
+            }
+            MenuElement[] selected = MenuSelectionManager.defaultManager().getSelectedPath();
+            if (selected == null || selected.length == 0) {
+                return false;
+            }
+            MenuElement last = selected[selected.length - 1];
+            if (!(last instanceof JMenuItem item) || !Boolean.TRUE.equals(item.getClientProperty(TOGGLE_ITEM_PROPERTY))) {
+                return false;
+            }
+            // Make sure the item belongs to our menu, so we never interfere with another open popup.
+            if (!isDescendant(menu, item)) {
+                return false;
+            }
+            if (id == KeyEvent.KEY_PRESSED) {
+                item.doClick(0);
+                item.setArmed(true);
+                // Re-arm selection in case doClick cleared it.
+                MenuSelectionManager.defaultManager().setSelectedPath(
+                        new MenuElement[] { menu, item });
+            }
+            e.consume();
+            return true;
+        };
+    }
+
+    private static boolean isDescendant(JPopupMenu menu, JMenuItem item) {
+        for (MenuElement sub : menu.getSubElements()) {
+            if (sub == item) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static JMenuItem firstSelectableItem(JPopupMenu menu) {
+        for (MenuElement element : menu.getSubElements()) {
+            if (element instanceof JMenuItem item && item.isEnabled()) {
+                return item;
+            }
+        }
+        return null;
+    }
+
+    private JPopupMenu buildMenu() {
         TreeFilter filter = this.tree.getTreeFilter();
         JPopupMenu menu = new JPopupMenu();
 
@@ -127,8 +257,7 @@ public class TreeFilterButton extends ToolbarIconButton {
         clear.addActionListener(e -> this.tree.clearAttributeFilters());
         menu.add(clear);
 
-        int x = Math.min(0, this.getWidth() - menu.getPreferredSize().width);
-        menu.show(this, x, this.getHeight());
+        return menu;
     }
 
     /**
@@ -159,6 +288,7 @@ public class TreeFilterButton extends ToolbarIconButton {
         item.setPreferredSize(new Dimension(wide.width, item.getPreferredSize().height));
 
         item.setFont(selected ? emphasized : plain);
+        item.putClientProperty(TOGGLE_ITEM_PROPERTY, Boolean.TRUE);
         item.addActionListener(e -> {
             state[0] = !state[0];
             item.setFont(state[0] ? emphasized : plain);

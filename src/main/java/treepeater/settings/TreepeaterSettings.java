@@ -33,6 +33,8 @@ public class TreepeaterSettings {
     public static final String TAB_PREVIOUS_HOTKEY_SETTING = "TAB_PREVIOUS_HOTKEY";
     public static final String TAB_NEXT_HOTKEY_SETTING = "TAB_NEXT_HOTKEY";
     public static final String FOCUS_TREE_HOTKEY_SETTING = "FOCUS_TREE_HOTKEY";
+    public static final String FOCUS_TREE_SEARCH_HOTKEY_SETTING = "FOCUS_TREE_SEARCH_HOTKEY";
+    public static final String OPEN_TREE_FILTER_HOTKEY_SETTING = "OPEN_TREE_FILTER_HOTKEY";
 
     /**
      * Base name for user preference keys of the global default status list.
@@ -154,6 +156,8 @@ public class TreepeaterSettings {
         STRING_PREFERENCE_DEFAULTS.put(TAB_PREVIOUS_HOTKEY_SETTING, "Ctrl+Alt+Left");
         STRING_PREFERENCE_DEFAULTS.put(TAB_NEXT_HOTKEY_SETTING, "Ctrl+Alt+Right");
         STRING_PREFERENCE_DEFAULTS.put(FOCUS_TREE_HOTKEY_SETTING, "Ctrl+Alt+T");
+        STRING_PREFERENCE_DEFAULTS.put(FOCUS_TREE_SEARCH_HOTKEY_SETTING, "Ctrl+Alt+F");
+        STRING_PREFERENCE_DEFAULTS.put(OPEN_TREE_FILTER_HOTKEY_SETTING, "Ctrl+Alt+Shift+F");
         STRING_PREFERENCE_DEFAULTS.put(DIRECT_IMPORT_NAME_MODE_SETTING, DirectNameMode.ID.name());
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_DEFAULT_STATUS_ID_SETTING, "DEFAULT");
         STRING_PREFERENCE_DEFAULTS.put(IMPORT_LEAF_MODE_SETTING, IMPORT_LEAF_MODE_DIRECT);
@@ -309,6 +313,24 @@ public class TreepeaterSettings {
     public void setFocusTreeHotkey(String hotkey) {
         this.preferences.setString(FOCUS_TREE_HOTKEY_SETTING, hotkey);
         this.notifyListeners(FOCUS_TREE_HOTKEY_SETTING, hotkey);
+    }
+
+    public String getFocusTreeSearchHotkey() {
+        return this.getStringWithDefault(FOCUS_TREE_SEARCH_HOTKEY_SETTING);
+    }
+
+    public void setFocusTreeSearchHotkey(String hotkey) {
+        this.preferences.setString(FOCUS_TREE_SEARCH_HOTKEY_SETTING, hotkey);
+        this.notifyListeners(FOCUS_TREE_SEARCH_HOTKEY_SETTING, hotkey);
+    }
+
+    public String getOpenTreeFilterHotkey() {
+        return this.getStringWithDefault(OPEN_TREE_FILTER_HOTKEY_SETTING);
+    }
+
+    public void setOpenTreeFilterHotkey(String hotkey) {
+        this.preferences.setString(OPEN_TREE_FILTER_HOTKEY_SETTING, hotkey);
+        this.notifyListeners(OPEN_TREE_FILTER_HOTKEY_SETTING, hotkey);
     }
 
     public DirectNameMode getDirectImportNameMode() {

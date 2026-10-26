@@ -177,7 +177,7 @@ public final class HotkeyCaptureDialog {
 
     /**
      * Parses a {@link #formatBurpHotkey formatted} shortcut string (e.g. {@code Ctrl+Shift+Space})
-     * into a {@link KeyStroke} for use with {@link treepeater.requestResponse.HotkeyHandler}.
+     * into a {@link KeyStroke} for use with {@link treepeater.hotkeys.HotkeyHandler}.
      *
      * @return the stroke, or {@code null} if the string cannot be parsed
      */

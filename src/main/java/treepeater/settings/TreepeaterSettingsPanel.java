@@ -220,7 +220,9 @@ public final class TreepeaterSettingsPanel implements SettingsPanelWithData {
         row = this.addHotkeySetting(root,row, "Edit target hotkey:", this.settings::getEditTargetHotkey, this.settings::setEditTargetHotkey);
         row = this.addHotkeySetting(root,row, "Previous request tab hotkey:", this.settings::getTabPreviousHotkey, this.settings::setTabPreviousHotkey);
         row = this.addHotkeySetting(root,row, "Next request tab hotkey:", this.settings::getTabNextHotkey, this.settings::setTabNextHotkey);
-        this.addHotkeySetting(root,row, "Focus request tree hotkey:", this.settings::getFocusTreeHotkey, this.settings::setFocusTreeHotkey);
+        row = this.addHotkeySetting(root,row, "Focus request tree hotkey:", this.settings::getFocusTreeHotkey, this.settings::setFocusTreeHotkey);
+        row = this.addHotkeySetting(root,row, "Focus tree search hotkey:", this.settings::getFocusTreeSearchHotkey, this.settings::setFocusTreeSearchHotkey);
+        this.addHotkeySetting(root,row, "Open tree filter menu hotkey:", this.settings::getOpenTreeFilterHotkey, this.settings::setOpenTreeFilterHotkey);
 
         return root;
     }
